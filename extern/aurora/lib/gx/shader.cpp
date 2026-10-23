@@ -2408,7 +2408,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }}
       // pbr-lights-end
       // The room's Remastered point and spot lights (GX_AURORA_PORT_ROOM_LIGHTS), on every surface,
-      // lightmapped or not: Lambert times a distance falloff and, for a spot, its cone.
+      // lightmapped or not: Lambert times a distance falloff and, for a spot, its cone; kind 2 is a directional light.
       for (var ri = 0u; ri < u32(ubuf.pbr_room_lights.y); ri++) {{
           let rb = bitcast<u32>(ubuf.pbr_room_lights.x) + ri * 16u;
           let r0 = bitcast<vec4f>(vec4u(abuf[rb], abuf[rb + 1u], abuf[rb + 2u], abuf[rb + 3u]));
@@ -2429,6 +2429,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
           if (r3.z > 0.5) {{
               fa *= clamp(dot(ldir, r2.xyz) * r2.w + r3.x, 0.0, 1.0);
+          }}
+          // Kind 2, a directional light (Remastered's type 1 LightDynamic): r2 is the way to it.
+          if (r3.z > 1.5) {{
+              ldir = r2.xyz;
+              fa = 1.0;
           }}
           if (fa <= 0.0) {{ continue; }}
           let rad = r1.rgb * fa;

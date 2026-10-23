@@ -2914,6 +2914,21 @@ static bool PortRoomSun(const CGameArea& area, CScriptLayerManager* layers, bool
       &l, cinematic, dir, color);
 }
 
+// The room's other directional lights, which light without a shadow, as room light records.
+static void PortRoomSunLights(const CGameArea& area, CScriptLayerManager* layers, bool cinematic,
+                              const float worldToView[3][4], std::vector< float >& out) {
+  struct Layers {
+    CScriptLayerManager* layers;
+    TAreaId area;
+  } l{layers, area.GetId()};
+  PortRoomEnv::SunLights(
+      [](int32_t layer, void* context) {
+        const Layers& l = *static_cast< const Layers* >(context);
+        return l.layers == nullptr || l.layers->IsLayerActive(l.area, TLayerId(layer));
+      },
+      &l, cinematic, worldToView, out);
+}
+
 static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CScriptLayerManager* layers,
                             bool cinematic, bool enabled, bool roomLights) {
   static const bool sOn = port::EnvFlag("MP_SHADOWS", true);
@@ -2931,7 +2946,9 @@ static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CSc
       for (int i = 0; i < 3; ++i) {
         dir[i] = -dir[i]; // the way the light travels, as a CLight's direction
       }
-    } else if (area != nullptr && area->IsPostConstructed()) {
+    } else if (area != nullptr && !PortRoomEnv::SunOwnsLighting() && area->IsPostConstructed()) {
+      // Retail lighting only: a Remastered room's directional lights are its file's, and cast
+      // only with the cast bit.
       const rstl::vector< CWorldLight >& lights = area->GetLightsA();
       for (int i = 0; i < lights.size(); ++i) {
         const CLight light = lights[i].GetAsCGraphicsLight();
@@ -2976,6 +2993,9 @@ static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CSc
   sRoomLights.clear();
   if (roomLights) {
     PortRoomEnv::RoomLights(worldToView, sRoomLights);
+    if (area != nullptr) {
+      PortRoomSunLights(*area, layers, cinematic, worldToView, sRoomLights);
+    }
   }
   GXPortSetRoomLights(sRoomLights.data(), u32(sRoomLights.size() / 16));
   return distance > 0.f;

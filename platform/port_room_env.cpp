@@ -1111,47 +1111,63 @@ void UpdateBacklight(LayerActive layerActive, void* context) {
 
 namespace {
 // What the last Sun call made of each of the camera area's suns, for SunInfo.
-enum class SunWhy : char { Picked, Weaker, Off, Below, Layer };
+enum class SunWhy : char { Picked, Weaker, Off, Layer, Lit };
 std::vector< SunWhy > sSunWhy;
-}
 
-bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]) {
-  sSunWhy.clear();
+// The room's Remastered lighting: the camera area's file, at the frame's exposure (0: none).
+const Area* SunArea(float& exposure) {
+  exposure = 0.f;
   if (!Enabled()) {
-    return false;
+    return nullptr;
   }
   const auto view = sAreas.find(sViewArea);
   if (view == sAreas.end() || !view->second.hasFile) {
-    return false;
+    return nullptr;
   }
   // Remastered's light units only mean something at its exposure.
-  const float exposure = RoomExposed() ? FrameExposure(view->second) : 0.f;
-  if (exposure <= 0.f) {
+  exposure = RoomExposed() ? FrameExposure(view->second) : 0.f;
+  return exposure > 0.f ? &view->second : nullptr;
+}
+
+// Whether a sun shines now: on (as the room geometry's script last set it, else as it starts) and, on a
+// story layer, only for its cinematic. The intro's suns are its shots' lighting: the next shot hides them,
+// but a skipped intro (randomprime's patches) never plays it, and they'd light the hangar from overhead.
+SunWhy SunState(const SunLight& s, LayerActive layerActive, void* context, bool cinematic) {
+  const int shown = s.group != PortRoomGeo::kNoGroup ? PortRoomGeo::GroupShown(sViewArea, s.group) : -1;
+  if (!(shown >= 0 ? shown == 1 : s.on)) {
+    return SunWhy::Off;
+  }
+  if (s.layer >= 0 && (!cinematic || (layerActive != nullptr && !layerActive(s.layer, context)))) {
+    return SunWhy::Layer;
+  }
+  return SunWhy::Lit;
+}
+} // namespace
+
+bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]) {
+  sSunWhy.clear();
+  float exposure = 0.f;
+  const Area* area = SunArea(exposure);
+  if (area == nullptr) {
     return false;
   }
-  const std::vector< SunLight >& suns = view->second.file.suns;
-  sSunWhy.assign(suns.size(), SunWhy::Weaker);
+  const std::vector< SunLight >& suns = area->file.suns;
+  sSunWhy.assign(suns.size(), SunWhy::Lit);
   const SunLight* pick = nullptr;
   float pickStrength = 0.f;
   for (size_t i = 0; i < suns.size(); ++i) {
     const SunLight& s = suns[i];
-    // The room geometry's script switches the hangar's suns as it does its geometry.
-    const int shown = s.group != PortRoomGeo::kNoGroup ? PortRoomGeo::GroupShown(sViewArea, s.group) : -1;
-    // A light from below the floor is a bounce fill (the hangar has warm ones), not a sun.
-    // The intro's suns are its shots' lighting: the next shot hides them, but a skipped intro
-    // (randomprime's patches) never plays it, and they'd light the hangar from overhead.
-    if (!(shown >= 0 ? shown == 1 : s.on)) {
-      sSunWhy[i] = SunWhy::Off;
+    const SunWhy state = SunState(s, layerActive, context, cinematic);
+    if (state != SunWhy::Lit) {
+      sSunWhy[i] = state;
       continue;
     }
-    if (s.toSun[2] <= 0.f) {
-      sSunWhy[i] = SunWhy::Below;
+    // Every directional LightDynamic is a scene light (SunLights); only one with the cast bit builds
+    // a shadow map (RebuildLightProxy), and the sun that casts is lit through the shadow's own slot.
+    if (!s.casts) {
       continue;
     }
-    if (s.layer >= 0 && (!cinematic || (layerActive != nullptr && !layerActive(s.layer, context)))) {
-      sSunWhy[i] = SunWhy::Layer;
-      continue;
-    }
+    sSunWhy[i] = SunWhy::Weaker;
     const float strength = s.color[0] + s.color[1] + s.color[2];
     if (std::isfinite(strength) && strength > pickStrength) {
       pick = &s;
@@ -1173,6 +1189,48 @@ bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3],
   return true;
 }
 
+bool SunOwnsLighting() {
+  float exposure = 0.f;
+  return SunArea(exposure) != nullptr;
+}
+
+void SunLights(LayerActive layerActive, void* context, bool cinematic, const float worldToView[3][4],
+               std::vector<float>& out) {
+  static const bool sOn = port::EnvFlag("MP_ROOM_LIGHTS", true);
+  float exposure = 0.f;
+  const Area* area = sOn ? SunArea(exposure) : nullptr;
+  if (area == nullptr) {
+    return;
+  }
+  const float scale = exposure * LightGain() / 3.14159265f;
+  for (const SunLight& s : area->file.suns) {
+    // A cast-bit sun is the shadow's (Sun).
+    if (s.casts || SunState(s, layerActive, context, cinematic) != SunWhy::Lit) {
+      continue;
+    }
+    float color[3];
+    bool lit = false;
+    for (int c = 0; c < 3; ++c) {
+      color[c] = std::isfinite(s.color[c]) ? std::max(s.color[c], 0.f) * scale : 0.f;
+      lit = lit || color[c] > 0.f;
+    }
+    // Kind 2 of GXPortSetRoomLights' records: a direction, no position or falloff.
+    float axis[3];
+    for (int r = 0; r < 3; ++r) {
+      const float* m = worldToView[r];
+      axis[r] = m[0] * s.toSun[0] + m[1] * s.toSun[1] + m[2] * s.toSun[2];
+    }
+    const float record[16] = {0.f,     0.f,     0.f,     0.f,   color[0], color[1], color[2], 0.f,
+                              axis[0], axis[1], axis[2], 0.f,   0.f,      0.f,      2.f,      0.f};
+    constexpr size_t kMaxRoomLights = 64;
+    if (!lit || out.size() >= kMaxRoomLights * 16 ||
+        !std::all_of(std::begin(record), std::end(record), [](float v) { return std::isfinite(v); })) {
+      continue;
+    }
+    out.insert(out.end(), std::begin(record), std::end(record));
+  }
+}
+
 std::string SunInfo() {
   const auto view = sAreas.find(sViewArea);
   if (view == sAreas.end() || !view->second.hasFile) {
@@ -1182,7 +1240,7 @@ std::string SunInfo() {
   if (suns.empty()) {
     return "the camera area's room file has no suns";
   }
-  static const char* const kWhy[] = {"PICKED", "weaker", "off", "from below", "story layer"};
+  static const char* const kWhy[] = {"PICKED (casts)", "casts, weaker", "off", "story layer", "lit, no shadow"};
   std::string out;
   for (size_t i = 0; i < suns.size(); ++i) {
     const SunLight& s = suns[i];

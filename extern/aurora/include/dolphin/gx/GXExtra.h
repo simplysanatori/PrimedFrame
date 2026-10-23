@@ -364,7 +364,7 @@ GXBool GXPortActorShadowRender(void);
 // The room's Remastered point and spot lights for the rest of the frame, added on every PBR draw
 // (lit, lightmapped or not) as the sun is. Each record is 16 f32: view-space position, A; colour
 // (linear, scaled), B; view-space axis toward the light, cone scale; cone bias, falloff (0 none,
-// 1 linear, 2 squared, 3 smooth), spot (0/1), 0. The distance falloff runs on
+// 1 linear, 2 squared, 3 smooth), spot (0 point, 1 spot, 2 directional: only the colour and the axis count), 0. The distance falloff runs on
 // t = clamp(dist * A + B, 0, 1), the cone on clamp(dot(L, axis) * scale + bias, 0, 1).
 void GXPortSetRoomLights(const f32* records, u32 count);
 
