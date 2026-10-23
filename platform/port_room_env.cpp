@@ -877,8 +877,11 @@ bool Bloom(float& threshold, float tints[5][3]) {
   if (!Enabled() || !RoomExposed() || !BloomEnabled()) {
     return false;
   }
+  // Bloom runs where the room (or its world) has a BloomEffect, tone curve or not
+  // (NPostFX::get_bloom_data 0xb4b7f0; kb topic/bloom-no-bloomeffect.md). The importer pads a
+  // BloomEffect's tints to five, so fewer means none.
   const auto view = sAreas.find(sViewArea);
-  if (view == sAreas.end() || !(view->second.tone[1][0] > 0.f) || view->second.file.bloomTints.size() < 20) {
+  if (view == sAreas.end() || view->second.file.bloomTints.size() < 20) {
     return false;
   }
   const std::vector<float>& rgba = view->second.file.bloomTints;

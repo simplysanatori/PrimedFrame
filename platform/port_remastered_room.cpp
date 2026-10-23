@@ -550,6 +550,11 @@ void Writer::ReadBloom(const RoomData& r, BloomData& out) const {
         }
       }
     }
+    // UberPost accumulates five tints from the list with no length check
+    // (FUN_006b5310; kb topic/bloom-no-bloomeffect.md): missing ones add black (inferred).
+    if (out.tints.size() < 20) {
+      out.tints.resize(20, 0.f);
+    }
     out.present = true;
     break;
   }
