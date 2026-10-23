@@ -73,7 +73,8 @@ inline constexpr const char* kImportModName = "remastered-models";
 namespace ImportStage {
 // port_remastered_convert/cmdl: how models and materials are written (models, effects, rooms,
 // room models, HUD).
-inline constexpr int kConverter = 53;
+// 54: the glow added without a room's tone data is unscaled (kPbrEmissive 1, was 0.10).
+inline constexpr int kConverter = 54;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get, Cube
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
