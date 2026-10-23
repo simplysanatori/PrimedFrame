@@ -405,7 +405,7 @@ namespace PortSaveState {
 namespace {
 
 // Bump when what SavedField picks or how a kind is written changes.
-constexpr uint32_t kFieldPolicy = 6;
+constexpr uint32_t kFieldPolicy = 7;
 
 constexpr uint32_t kUidNone = 0xFFFFFFFFu;    // kInvalidUniqueId
 constexpr uint32_t kUidDynamic = 0xFFFFFFFEu; // an object without an editor id: left alone
@@ -441,6 +441,10 @@ bool SavedField(const PortSchemaClass& cls, const PortSchemaField& f) {
   if (f.kind != PortSchemaKind::bitfield && f.addr == nullptr)
     return false;
   if (std::strcmp(cls.name, "CEntity") == 0)
+    return false;
+  // Asset streaming is this run's, not the game's: Flaahgra's copies, still loading
+  // after a load, given the saved "loaded" never built their body controller.
+  if (std::strstr(f.name, "oaded") != nullptr || std::strstr(f.name, "oading") != nullptr)
     return false;
   if (std::strcmp(cls.name, "CActor") == 0)
     return Named(f.name, {"x64_modelData", "xb4_drawFlags", "xd0_damageMag", "xe5_26_muted", "xe5_28_callTouch",
