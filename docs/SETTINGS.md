@@ -1220,7 +1220,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   the grid; adding them as well blew actors out near lamps.
   `MP_ROOM_ENV_AREA_LIGHTS=1` (console `roomenv arealights on|off`) adds them
   back. This also applies to room geometry under `MP_ROOM_GEO_AREA_LIGHTS=1`.
-  `MP_HDR_SCENE=1` opts into experimental HDR scene rendering. It is default-off and only
+  `MP_HDR_SCENE=1` (F1 > Debug > Remastered materials and lighting "HDR scene", console `roomenv hdr on|off`, both live)
+  opts into experimental HDR scene rendering. It is default-off and only
   applies to Remastered room-environment scenes with a valid tone curve in the Combat or Scan
   visor, outside visor transitions; Thermal/X-ray, HUD/UI, and inventory remain LDR. This is
   not full beam/effect parity: other legacy effects may still use inherited exposure.

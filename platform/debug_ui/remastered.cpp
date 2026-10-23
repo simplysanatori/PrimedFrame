@@ -444,6 +444,15 @@ void DrawRemasteredDebug() {
     ImGui::SetItemTooltip("Recommended: on.\nLights Remastered rooms from the room's baked light "
                           "grid, so light changes\n"
                           "across a surface. Off gives each model one ambient colour.");
+    bool hdrScene = PortRoomEnv::HdrScene();
+    if (ImGui::Checkbox("HDR scene (experimental)", &hdrScene)) {
+      PortRoomEnv::SetHdrScene(hdrScene);
+    }
+    ImGui::SetItemTooltip("Recommended: off.\nDraws the world in linear HDR light, as Remastered "
+                          "does, and tones it once\n"
+                          "for bloom and the screen. Combat and Scan visors only; some effects "
+                          "may still\n"
+                          "look off.");
     float ambient = PortRoomEnv::AmbientScale();
     if (ImGui::SliderFloat("Baked ambient scale", &ambient, 0.f, 4.f, "%.2f")) {
       PortRoomEnv::SetAmbientScale(ambient);

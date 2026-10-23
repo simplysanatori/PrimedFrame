@@ -10,6 +10,7 @@ std::vector<uint32_t> sLoadedSpare; // FrameState::loaded of the frame before la
 int sAuto = -1;
 int sStatic = -1;
 int sAreaLights = -1;
+int sHdrScene = -1;
 
 // Areas in memory; one without a file has an empty File.
 std::unordered_map<uint32_t, Area> sAreas;
@@ -896,6 +897,15 @@ bool AreaLights() {
 }
 
 void SetAreaLights(bool on) { sAreaLights = on ? 1 : 0; }
+
+bool HdrScene() {
+  if (sHdrScene < 0) {
+    sHdrScene = port::EnvFlag("MP_HDR_SCENE") ? 1 : 0;
+  }
+  return sHdrScene != 0;
+}
+
+void SetHdrScene(bool on) { sHdrScene = on ? 1 : 0; }
 
 bool AutoExposure() {
   if (sAuto < 0) {

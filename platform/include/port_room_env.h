@@ -905,6 +905,10 @@ bool StaticExposure();
 // (the console's `roomenv arealights`).
 void SetAreaLights(bool on);
 bool AreaLights();
+// Whether the world is drawn into the HDR scene frame (CMFGame's drawWorld; docs/SETTINGS.md).
+// Experimental, off unless MP_HDR_SCENE=1 (F1 > Debug, the console's `roomenv hdr`).
+void SetHdrScene(bool on);
+bool HdrScene();
 // Whether the reflection is Remastered's blend of probes around the camera (UpdateBlend,
 // drawn into one cube on the GPU) with its ambient occlusion; otherwise each model reflects
 // the one probe it stands in (PickProbe). MP_ROOM_ENV_BLEND=0, the console's `roomenv blend`.

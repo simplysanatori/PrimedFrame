@@ -349,7 +349,7 @@ void CMFGame::Draw() const {
       }
     };
     const auto drawWorld = [this]() {
-      static const bool hdrSceneEnabled = port::EnvFlag("MP_HDR_SCENE", false);
+      const bool hdrSceneEnabled = PortRoomEnv::HdrScene();
       const CPlayerState* playerState = mStateManager->GetPlayerState();
       const CPlayerState::EPlayerVisor visor = playerState->GetActiveVisor(*mStateManager);
       const bool supportedVisor = CStateManager::PortIsSceneHdrVisorSupported(
