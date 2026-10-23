@@ -2337,6 +2337,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   std::vector<RoomLiquid> liquids;
   std::vector<GeometryModel> geometry;
   std::unordered_map<ModelUuid, uint32_t, PakIdHash> geometryIds;
+  // Where the rooms put the retail models Remastered keeps under their retail ids.
+  std::mutex retailMutex;
+  std::vector<RetailPlacement> retailPlacements;
   auto geometryId = [&](const ModelUuid& uuid, uint32_t& id) {
     std::lock_guard<std::mutex> lock(takenMutex);
     const auto known = geometryIds.find(uuid);
@@ -2580,6 +2583,10 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         return carried && retail.HasId(*carried) ? *carried : 0;
       };
       io.wantsGeometry = WantsGeometry;
+      io.retailModel = [&](const RetailPlacement& placement) {
+        std::lock_guard<std::mutex> lock(retailMutex);
+        retailPlacements.push_back(placement);
+      };
       io.cancelled = [] { return sCancel.load(); };
       // One line a room (what was left out and why): too many for the panel, so the log.
       io.log = [](const std::string& line) {
@@ -2603,7 +2610,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     }
   };
   // What the room models stage needs from this one, as the record's `extra` lines:
-  // "g <uuid> <id> <joint> <liquid>" a model, "l <lava values>" a lava pool, in order.
+  // "g <uuid> <id> <joint> <liquid>" a model, "l <lava values>" a lava pool, in order;
+  // "r <uuid> <retail> <mrea> <object> <ok> <offset x y z> <room>" a retail model's placement.
   if (roomsReused) {
     StageRecord& kept = made["rooms"];
     roomFiles = int(kept.counts["files"]);
@@ -2619,6 +2627,18 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           g.uuid[b] = uint8_t(std::strtoul(uuid.substr(b * 2, 2).c_str(), nullptr, 16));
         }
         geometry.push_back(g);
+      } else if (tag == "r") {
+        std::string uuid;
+        std::string offset[3];
+        RetailPlacement& p = retailPlacements.emplace_back();
+        in >> uuid >> std::hex >> p.retail >> p.mrea >> p.object >> std::dec >> p.ok >> offset[0] >> offset[1] >>
+            offset[2] >> p.room;
+        for (size_t b = 0; b < p.model.size() && b * 2 + 1 < uuid.size(); ++b) {
+          p.model[b] = uint8_t(std::strtoul(uuid.substr(b * 2, 2).c_str(), nullptr, 16));
+        }
+        for (int i = 0; i < 3; ++i) {
+          p.offset[i] = std::strtod(offset[i].c_str(), nullptr);
+        }
       } else if (tag == "l") {
         RoomLiquid& liquid = liquids.emplace_back();
         for (float& value : liquid.lava) {
@@ -2657,9 +2677,154 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       stage.extra.push_back(line);
     }
+    for (const RetailPlacement& p : retailPlacements) {
+      char line[256];
+      std::snprintf(line, sizeof(line), "r %s %08X %08X %08X %d %a %a %a %s", UuidText(p.model).c_str(), p.retail, p.mrea,
+                    p.object, int(p.ok), p.offset[0], p.offset[1], p.offset[2], p.room.c_str());
+      stage.extra.push_back(line);
+    }
     endStage();
     if (brdfMissing) {
       made.erase("rooms");
+    }
+  }
+
+  // The retail models Remastered keeps under their retail ids that the table doesn't pair. The
+  // offset is the model's own (where its vertices sit against retail's), so one replaces its
+  // retail model when the retail objects that found their entity (RetailPlacement) all found it at
+  // one offset: "paired", or "partial" when other objects naming it found none (Remastered may have
+  // dropped those). One whose placements disagree, or that no object found, stays retail.
+  // reports/retailmodels.tsv lists each with its placements. Other assets share the id prefix
+  // (textures, effects), so only Remastered's models count.
+  {
+    std::sort(retailPlacements.begin(), retailPlacements.end(), [](const RetailPlacement& a, const RetailPlacement& b) {
+      return std::tie(a.retail, a.mrea, a.object, a.room) < std::tie(b.retail, b.mrea, b.object, b.room);
+    });
+    size_t tableCount = 0;
+    const TableEntry* tableEntries = Table(tableCount);
+    std::unordered_map<uint32_t, const TableEntry*> inTable;
+    for (size_t i = 0; i < tableCount; ++i) {
+      inTable.emplace(tableEntries[i].retail, &tableEntries[i]);
+    }
+    struct RetailModel {
+      ModelUuid uuid;
+      uint32_t retail;
+      double offset[3];
+    };
+    std::vector<RetailModel> retailModels;
+    std::string report = "retail\tstatus\toffset\ttable offset\tplacements (room object ok offset)\n";
+    std::map<std::string, int> statusCount;
+    const auto offsetText = [](const double* o) {
+      char text[96];
+      std::snprintf(text, sizeof(text), "%.3f,%.3f,%.3f", o[0], o[1], o[2]);
+      return std::string(text);
+    };
+    for (auto first = retailPlacements.begin(); first != retailPlacements.end();) {
+      const auto last = std::find_if(first, retailPlacements.end(),
+                                     [&](const RetailPlacement& p) { return p.retail != first->retail; });
+      if (!remastered.HasModel(first->model)) {
+        first = last;
+        continue;
+      }
+      const auto ok = std::find_if(first, last, [](const RetailPlacement& p) { return p.ok; });
+      const bool all = std::all_of(first, last, [](const RetailPlacement& p) { return p.ok; });
+      const bool agree = ok != last && std::all_of(first, last, [&](const RetailPlacement& p) {
+        return !p.ok || (std::fabs(p.offset[0] - ok->offset[0]) < 0.01 && std::fabs(p.offset[1] - ok->offset[1]) < 0.01 &&
+                         std::fabs(p.offset[2] - ok->offset[2]) < 0.01);
+      });
+      const auto table = inTable.find(first->retail);
+      const char* status = ok == last                  ? "unplaced"
+                           : !agree                    ? "disagree"
+                           : table != inTable.end()    ? "table"
+                           : all                       ? "paired"
+                                                       : "partial";
+      ++statusCount[status];
+      char head[32];
+      std::snprintf(head, sizeof(head), "%08X\t", first->retail);
+      report += head + std::string(status) + "\t" + (agree ? offsetText(ok->offset) : "-") + "\t" +
+                (table != inTable.end() ? offsetText(table->second->offset) : "-") + "\t";
+      for (auto p = first; p != last; ++p) {
+        char text[64];
+        std::snprintf(text, sizeof(text), " %08X %d ", p->object, int(p->ok));
+        report += (p == first ? "" : "; ") + p->room + text + offsetText(p->offset);
+      }
+      report += '\n';
+      if (agree && table == inTable.end()) {
+        RetailModel& m = retailModels.emplace_back();
+        std::copy(first->model.begin(), first->model.end(), m.uuid.begin());
+        m.retail = first->retail;
+        std::copy(ok->offset, ok->offset + 3, m.offset);
+      }
+      first = last;
+    }
+    std::string list;
+    for (const RetailModel& m : retailModels) {
+      list += UuidText(m.uuid) + " " + Hex8(m.retail) + " " + offsetText(m.offset) + "\n";
+    }
+    {
+      std::string counts;
+      for (const auto& [status, n] : statusCount) {
+        counts += " " + status + " " + std::to_string(n);
+      }
+      PortLog::Write("remastered import: retail models placed by the rooms:%s\n", counts.c_str());
+    }
+    if (!beginStage("retailmodels", std::to_string(ImportStage::kModels) + " list " + Hex64(Hash64(list)) + keyConverter,
+                    false, "reports/parts/retailmodels.materials.tsv")) {
+      std::error_code reportError;
+      fs::create_directories(staging / "reports", reportError);
+      writeFile(staging / "reports" / "retailmodels.tsv", std::vector<uint8_t>(report.begin(), report.end()));
+      std::atomic<size_t> nextRetail{0};
+      std::atomic<int> retailDone{0};
+      std::mutex retailClaimMutex;
+      std::unordered_set<uint32_t> retailClaimed;
+      auto retailWork = [&](int worker) {
+        YieldToGame();
+        ConvertIO io = makeIO(worker, staging);
+        io.claim = [&](uint32_t id) {
+          std::lock_guard<std::mutex> lock(retailClaimMutex);
+          return retailClaimed.insert(id).second;
+        };
+        Converter converter(std::move(io));
+        for (size_t i = nextRetail++; i < retailModels.size() && !sCancel; i = nextRetail++) {
+          const RetailModel& m = retailModels[i];
+          ConvertOptions options;
+          options.retail = m.retail;
+          options.source = UuidText(m.uuid);
+          std::copy(m.offset, m.offset + 3, options.offset);
+          options.pbr = true;
+          std::string modelError;
+          bool ok = false;
+          // As for the models: an exception here would terminate the game.
+          try {
+            std::vector<uint8_t> raw;
+            Model model;
+            ok = remastered.ReadModel(m.uuid, raw, modelError) && ParseModel(raw.data(), raw.size(), model, modelError) &&
+                 converter.Convert(model, options, modelError);
+          } catch (const std::exception& e) {
+            modelError = e.what();
+          }
+          if (ok) {
+            ++retailDone;
+          } else {
+            AddLine("retail model " + Hex8(m.retail) + ": " + modelError);
+          }
+        }
+      };
+      workers.clear();
+      for (int i = 1; i < std::max(threads, DefaultThreads()); ++i) {
+        workers.emplace_back(retailWork, i);
+      }
+      retailWork(0);
+      for (std::thread& worker : workers) {
+        worker.join();
+      }
+      if (sCancel) {
+        fail("Cancelled.");
+        return;
+      }
+      made["retailmodels"].counts["models"] = retailDone.load();
+      writeReportPart("retailmodels", false);
+      endStage();
     }
   }
 

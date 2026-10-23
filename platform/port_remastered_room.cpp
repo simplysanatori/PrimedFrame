@@ -210,6 +210,10 @@ private:
                        std::vector<PointLightData>& out) const;
   bool Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
             std::string& note) const;
+  // Tells RoomIO::retailModel where the room's retail models stand (RetailPlacement), and
+  // keeps the entities that placed one in m_retailEntities, for WriteGeometry to leave out.
+  void PairRetailModels(const RoomData& r, const Area& area);
+  std::set<int> m_retailEntities;
   // The room's static geometry (its ModCon components), as "<MREA id>.roomgeo".
   void WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area);
   // The room's liquid surfaces (its water and lava render volumes), as "<MREA id>.roomliquid".
@@ -2352,7 +2356,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         return o.type == kRetailActor && o.hasPos && MaxAbs(o.pos, w) < kRetailActorNear &&
                std::search(o.props.begin(), o.props.end(), id + 12, id + 16) != o.props.end();
       });
-      if (standing) {
+      if (standing || m_retailEntities.count(c->entity) != 0) {
         ++retailDrawn;
         continue;
       }
@@ -2720,6 +2724,131 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
   Log(line);
 }
 
+// Rz * Ry * Rx of `rot` (degrees), then `scale`, column by column: an editor transform.
+static void EditorBasis(const Vec3& rot, const Vec3& scale, double out[3][3]) {
+  double s[3], k[3];
+  for (int i = 0; i < 3; ++i) {
+    s[i] = std::sin(rot[size_t(i)] * (3.14159265358979323846 / 180.0));
+    k[i] = std::cos(rot[size_t(i)] * (3.14159265358979323846 / 180.0));
+  }
+  const double m[3][3] = {
+      {k[2] * k[1], k[2] * s[1] * s[0] - s[2] * k[0], k[2] * s[1] * k[0] + s[2] * s[0]},
+      {s[2] * k[1], s[2] * s[1] * s[0] + k[2] * k[0], s[2] * s[1] * k[0] - k[2] * s[0]},
+      {-s[1], k[1] * s[0], k[1] * k[0]},
+  };
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      out[row][col] = m[row][col] * scale[size_t(col)];
+    }
+  }
+}
+
+// Remastered keeps many retail models under their retail ids and places them with entities of
+// its own. Most are built around their own origin and stand where the retail object does; some
+// are built in the room's space, their entity at the room's origin (Elite Quarters' stasis tank,
+// 3C26F42B). The retail object that names the model draws it, so the model's offset in its own
+// space is where the entity puts it as the object sees it: with the same rotation and scale, the
+// object's inverse transform applied to the entity's position. Among the room's entities that
+// carry the model, the one of the object's rotation and scale that needs the least offset is it.
+void Writer::PairRetailModels(const RoomData& r, const Area& area) {
+  m_retailEntities.clear();
+  if (!m_io.retailModel) {
+    return;
+  }
+  // kR2G as a signed permutation, as WriteGeometry places an entity.
+  static const int kAxis[3] = {0, 2, 1};
+  static const double kSign[3] = {-1, 1, 1};
+  struct Placed {
+    int entity;
+    double basis[3][3];  // in GC axes, the area's rotation included
+    Vec3 pos;            // in GC world space
+  };
+  std::map<uint32_t, std::pair<Id16, std::vector<Placed>>> byRetail;
+  for (const Component& c : r.room.Components()) {
+    Vec3 pos, rot, scale;
+    if (c.entity < 0 || c.raw.size < 16 || !r.room.Xform(c, pos, rot, scale)) {
+      continue;
+    }
+    const uint8_t* b = r.room.Bytes(c.raw);
+    for (size_t at = 0; at + 16 <= c.raw.size; ++at) {
+      if (std::memcmp(b + at, kRetailIdPrefix, 12) != 0) {
+        continue;
+      }
+      auto& [model, placed] = byRetail[ReadBE32(b + at + 12)];
+      model = SwapUuid(b + at);
+      at += 15;
+      if (std::any_of(placed.begin(), placed.end(), [&](const Placed& p) { return p.entity == c.entity; })) {
+        continue;
+      }
+      Placed& p = placed.emplace_back();
+      p.entity = c.entity;
+      p.pos = Apply(area.xf, MulR2G(pos));
+      double rem[3][3], gc[3][3];
+      EditorBasis(rot, scale, rem);
+      for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+          gc[row][col] = kSign[row] * kSign[col] * rem[kAxis[row]][kAxis[col]];
+        }
+      }
+      for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+          p.basis[row][col] = area.xf[size_t(row)][0] * gc[0][col] + area.xf[size_t(row)][1] * gc[1][col] +
+                              area.xf[size_t(row)][2] * gc[2][col];
+        }
+      }
+    }
+  }
+  for (const auto& [retail, entry] : byRetail) {
+    const auto& [model, placed] = entry;
+    const uint8_t be[4] = {uint8_t(retail >> 24), uint8_t(retail >> 16), uint8_t(retail >> 8), uint8_t(retail)};
+    for (const ScriptObject& o : area.objects) {
+      if (!o.hasXf || std::search(o.props.begin(), o.props.end(), be, be + 4) == o.props.end()) {
+        continue;
+      }
+      RetailPlacement out;
+      std::copy(model.begin(), model.end(), out.model.begin());
+      out.retail = retail;
+      out.mrea = area.mrea;
+      out.object = o.id;
+      out.room = r.name;
+      double basis[3][3], inverse[3][3];
+      EditorBasis(o.rot, o.scale, basis);
+      double size = 1.0;
+      for (const double v : o.scale) {
+        size = std::max(size, std::fabs(v));
+      }
+      const Placed* best = nullptr;
+      double bestOffset[3] = {0, 0, 0}, bestLength = 1e300;
+      for (const Placed& p : placed) {
+        bool same = Invert3(basis, inverse);
+        for (int i = 0; same && i < 9; ++i) {
+          same = std::fabs(p.basis[i / 3][i % 3] - basis[i / 3][i % 3]) < 1e-3 * size;
+        }
+        if (!same) {
+          continue;
+        }
+        double offset[3];
+        for (int i = 0; i < 3; ++i) {
+          offset[i] = inverse[i][0] * (p.pos[0] - o.pos[0]) + inverse[i][1] * (p.pos[1] - o.pos[1]) +
+                      inverse[i][2] * (p.pos[2] - o.pos[2]);
+        }
+        const double length = std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]);
+        if (length < bestLength) {
+          best = &p;
+          bestLength = length;
+          std::copy(offset, offset + 3, bestOffset);
+        }
+      }
+      if (best != nullptr) {
+        out.ok = true;
+        std::copy(bestOffset, bestOffset + 3, out.offset);
+        m_retailEntities.insert(best->entity);
+      }
+      m_io.retailModel(out);
+    }
+  }
+}
+
 std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Placement>& placed, const Vec3& shift,
                               const float tonemap[5], const BloomData& worldBloom,
                               const std::vector<GradeData>& worldGrades,
@@ -2728,6 +2857,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
                               std::string& matched) {
   matched.clear();
   char head[96];
+  PairRetailModels(r, *m.area);
   WriteGeometry(r, m.mrea, *m.area);
   WriteLiquids(r, m.mrea);
   const std::vector<Vec3>& gdoors = m.area->doors;
