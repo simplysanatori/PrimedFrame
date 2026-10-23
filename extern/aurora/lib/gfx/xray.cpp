@@ -184,10 +184,9 @@ constexpr const char* EncodeLdr = R"(
 fn enc(e: vec3f) -> vec3f { return srgb_enc(vec3f(tone(e.r), tone(e.g), tone(e.b))); }
 )";
 constexpr const char* EncodeHdr = R"(
-// The level E as the HDR scene holds it (signed, unclamped); the post's tonemap applies the curve.
-// Remastered's tonemap has no clamp and a negative level comes out pale (kb
-// topic/xray-post-shader-00089f0.md); the port's HDR post holds its input at zero, so such a
-// texel is black instead. That is the shared post's rule, not this pass's.
+// The level E as the HDR scene holds it (signed, unclamped); the post's tonemap applies the curve,
+// which like Remastered's takes a negative level through the toe cubic (pale; kb
+// topic/xray-post-shader-00089f0.md).
 fn enc(e: vec3f) -> vec3f { return e; }
 )";
 
