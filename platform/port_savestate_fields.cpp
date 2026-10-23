@@ -164,6 +164,17 @@ struct PortStateCodec {
     });
     w.U8(static_cast< uint8_t >(count));
     w.bytes += cmds.bytes;
+    // What the AI state machine delivered last tick and the next Update acts on (a flyer's
+    // locomotion impulse, its animation's delta): the steering and the delivered mask.
+    const CBodyStateCmdMgr& m = bc.x4_cmdMgr;
+    for (const CVector3f* v : {&m.x0_move, &m.xc_face, &m.x18_target, &m.x24_additiveTarget})
+      for (int i = 0; i < 3; ++i)
+        w.F32((*v)[i]);
+    w.U32(static_cast< uint32_t >(m.x30_steeringMode));
+    w.F32(m.x34_steeringSpeedMin);
+    w.F32(m.x38_steeringSpeedMax);
+    w.F32(m.x3c_steeringSpeed);
+    w.U32(m.xb4_deliveredCmdMask);
   }
 
   // Moves the body into the saved state and additive state (the current one's Shutdown,
@@ -197,9 +208,18 @@ struct PortStateCodec {
       cmd = r.bytes.substr(r.pos, size);
       r.pos += size;
     }
+    float steer[12];
+    for (float& v : steer)
+      v = r.F32();
+    const uint32_t steerMode = r.U32();
+    const float steerParams[3] = {r.F32(), r.F32(), r.F32()};
+    const uint32_t deliveredMask = r.U32();
     if (!r.ok)
       return false;
     for (float v : f)
+      if (!(v == v) || v > 1e9f || v < -1e9f)
+        return false;
+    for (float v : steer)
       if (!(v == v) || v > 1e9f || v < -1e9f)
         return false;
     size_t want = 0;
@@ -241,6 +261,18 @@ struct PortStateCodec {
           info.GetCurrentAdditiveState()->Start(bc, mgr);
         }
       }
+    }
+    if (fits) {
+      CBodyStateCmdMgr& m = bc.x4_cmdMgr;
+      m.x0_move = CVector3f(steer[0], steer[1], steer[2]);
+      m.xc_face = CVector3f(steer[3], steer[4], steer[5]);
+      m.x18_target = CVector3f(steer[6], steer[7], steer[8]);
+      m.x24_additiveTarget = CVector3f(steer[9], steer[10], steer[11]);
+      m.x30_steeringMode = static_cast< ESteeringBlendMode >(steerMode);
+      m.x34_steeringSpeedMin = steerParams[0];
+      m.x38_steeringSpeedMax = steerParams[1];
+      m.x3c_steeringSpeed = steerParams[2];
+      m.xb4_deliveredCmdMask = deliveredMask;
     }
     bc.x2ec_locomotionType = loco;
     bc.x2f0_fallState = fall;
@@ -340,7 +372,7 @@ namespace PortSaveState {
 namespace {
 
 // Bump when what SavedField picks or how a kind is written changes.
-constexpr uint32_t kFieldPolicy = 4;
+constexpr uint32_t kFieldPolicy = 5;
 
 constexpr uint32_t kUidNone = 0xFFFFFFFFu;    // kInvalidUniqueId
 constexpr uint32_t kUidDynamic = 0xFFFFFFFEu; // an object without an editor id: left alone
