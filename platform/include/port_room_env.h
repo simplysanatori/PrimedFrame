@@ -134,6 +134,10 @@
 //   hint: u8 mode (1 active while the camera is inside a fluid, 2 once it has left one), u8 pad[3],
 //         f32 min, f32 max, f32 bias, f32 sigma, f32 static lerp. Remastered's fluid-mode
 //         CAutoExposureHintGOC (see ExposureHints); the plain hint stays in the header fields.
+// Version 25 uses the hint's pad: u8 mode, u8 role (0 ordinary, 1 / 2 the pair hint A / B of a
+//   CAutoExposureHintMP1, which swaps them on the thermal visor), u8 pair (its instance), u8 pad;
+//   a role hint keeps any mode (0, 1, 2, or a script mode that never registers). Older files
+//   have role 0.
 // Version 22 adds, after the hints:
 //   u32 volumes
 //   volume: f32 centre[3], f32 half[3], f32 axes[9] (retail world; axes[3 * i..] is the box's
@@ -431,9 +435,12 @@ struct PointLight {
   bool hasSpline[kLightSplines] = {};
 };
 
-// An auto exposure hint with a fluid mode (CAutoExposureHintGOC mode 1 or 2).
+// An auto exposure hint with a fluid mode (CAutoExposureHintGOC mode 1 or 2), or one of the pair a
+// CAutoExposureHintMP1 swaps between (role 1 / 2, `pair` the instance, any mode).
 struct FluidHint {
   uint8_t mode = 1;
+  uint8_t role = 0;  // 0 ordinary, 1 pair hint A (normal view), 2 pair hint B (thermal) (unverified)
+  uint8_t pair = 0;
   float exposure[2] = {};
   float bias = 0.f;
   float sigma = 32.f;
@@ -838,21 +845,43 @@ void SetFluid(bool player, bool camera, uint64_t items);
 // kSenderWorldVolume + k; an area that loads later hears the entries and exits so far
 // (WorldVolumeState::Replay).
 void SetCameraPoint(const float pos[3]);
+// Once a frame: the inputs of the exposure hint swap (CAutoExposureHintMP1GOC): the player is
+// unmorphed, the thermal visor is the active one, a cinematic camera is running. A swap
+// registers a hint in every loaded area (area.hintSnap); an area that loads later starts in
+// the current state.
+void SetExposureState(bool unmorphed, bool thermal, bool cinematic);
 
 // CAutoExposureHintGOC's fluid modes (0x539574 EntityLoaded, 0x539644 InsideFluidStateChanged):
 // the hints of a room are told whether the CAMERA is inside a fluid. Mode 1 is active while it
 // is, mode 2 once it has left one (it starts inactive, even outside). A hint that becomes
 // active registers with the post effects manager as type 1, which snaps the exposure; one
 // that stops unregisters. Of the registered hints the newest wins at equal priority.
+//
+// CAutoExposureHintMP1GOC swaps a pair of hints (role 1 = A, 2 = B) on the thermal visor: state
+// = (unmorphed && thermal) ? inCinematic : 1; state 1 enables A and disables B, state 0 the
+// reverse. A disabled hint is out of the pick whatever its mode; a pair hint of mode 0 is
+// registered from the load, one of a mode above 2 (script driven, not modelled) never.
 struct ExposureHints {
   bool inside = false; // the last fluid state told (the GOC's +0x48)
+  bool seen = false; // the fluid state has changed once (mode 2 may be active)
+  uint8_t pairState = 1; // the swap's state, see above
   std::vector<uint8_t> active; // per FluidHint
+  std::vector<uint8_t> disabled; // per FluidHint: externally disabled by the swap
   std::vector<uint64_t> order; // per FluidHint: registration number, 0 when unregistered
   uint64_t next = 1;
-  // Starts the room's hints as EntityLoaded does with the camera's current state.
-  bool Load(const std::vector<FluidHint>& hints, bool cameraInside);
+  // Starts the room's hints as EntityLoaded does with the camera's current state. The pair
+  // hints start in `pairState` (without a snap: ConnectAreaFunctors' initial disable is type 0;
+  // what it reads at +0xb70 is not traced (unverified)).
+  bool Load(const std::vector<FluidHint>& hints, bool cameraInside, uint8_t pairState = 1);
   // The camera entered or left a fluid. True when a hint registered, which snaps.
   bool Set(const std::vector<FluidHint>& hints, bool cameraInside);
+  // The swap's state of the frame (see SwapState). True when a hint registered, which snaps.
+  bool SetPair(const std::vector<FluidHint>& hints, uint8_t state);
+  static uint8_t SwapState(bool unmorphed, bool thermal, bool cinematic) {
+    return (unmorphed && thermal) ? (cinematic ? 1 : 0) : 1;
+  }
+  // Applies the flags to every hint; true when one registered (mode 0 only when `snapMode0`).
+  bool Update(const std::vector<FluidHint>& hints, bool snapMode0);
   // The registered hint that wins, or -1 for the room's plain hint.
   int Pick(size_t count) const;
 };

@@ -82,6 +82,7 @@ int sVolFog = -1;
 bool sFogRegions = true;
 bool sPlayerFluid = false;
 bool sCameraWater = false;
+uint8_t sExposureSwap = 1;
 uint64_t sItems = 0;
 std::vector<WorldVolume> sWorldVolumes;
 WorldVolumeState sWorldVolumeState;
@@ -689,9 +690,9 @@ void UpdateFrame(bool roomGeoDrawing) {
   static const bool sLog = port::EnvFlag("MP_ROOM_ENV_EXPOSURE_LOG");
   if (sLog) {
     PortLog::Write("room env exposure: area %08X jump %d shown %g %g %g %g %g %g ev %g target %g L %g fluid %d "
-                   "snap %d\n",
+                   "snap %d swap %d\n",
                    sViewArea, int(jump), f.shown[0], f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.shown[5], f.ev,
-                   f.targetEv, sAverage.L, fluidPick, int(hintSnap));
+                   f.targetEv, sAverage.L, fluidPick, int(hintSnap), int(sExposureSwap));
   }
 }
 
@@ -1786,6 +1787,19 @@ void SetFluid(bool player, bool camera, uint64_t items) {
       if (area.hasFile && area.hints.Set(area.file.fluidHints, camera)) {
         area.hintSnap = true;
       }
+    }
+  }
+}
+
+void SetExposureState(bool unmorphed, bool thermal, bool cinematic) {
+  const uint8_t state = ExposureHints::SwapState(unmorphed, thermal, cinematic);
+  if (state == sExposureSwap) {
+    return;
+  }
+  sExposureSwap = state;
+  for (auto& [mrea, area] : sAreas) {
+    if (area.hasFile && area.hints.SetPair(area.file.fluidHints, state)) {
+      area.hintSnap = true;
     }
   }
 }

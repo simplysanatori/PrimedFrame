@@ -3165,6 +3165,11 @@ void CStateManager::PortCaptureProbeFace() const {
     }
     PortRoomEnv::SetFluid(x84c_player != nullptr && x84c_player->IsInFluid(),
                           x870_cameraManager->GetFluidCounter() > 0, items);
+    // CAutoExposureHintMP1GOC's inputs: unmorphed, thermal visor active, cinematic camera.
+    PortRoomEnv::SetExposureState(
+        x84c_player != nullptr && x84c_player->GetMorphballTransitionState() == CPlayer::kMS_Unmorphed,
+        x8b8_playerState->GetActiveVisor(*this) == CPlayerState::kPV_Thermal,
+        x870_cameraManager->IsInCinematicCamera());
   }
   {
     // And the world's hints that follow the camera through the master's trigger volumes (the
@@ -3660,8 +3665,8 @@ void CStateManager::DrawWorld() const {
   // (kb topic/auto-exposure-average.md), measured in every visor too: Remastered measures the
   // visor target's opaque frame, before X-ray pass A or the thermal cold blend
   // (kb topic/visor-hdr-pipeline.md, step 5). The port draws the world at full size, so it
-  // measures the frame's own opaque copy. The visor-change exposure hint A/B swap is not
-  // implemented: the port has no CAutoExposureHintMP1GOC data (same kb, "Exposure on visor change").
+  // measures the frame's own opaque copy. The visor-change exposure hint A/B swap
+  // (CAutoExposureHintMP1GOC) is PortRoomEnv::SetExposureState.
   if (portSceneHdrRequested && !portZoomed) {
     GXPortMeasureScene(PortRoomEnv::MeasureExposure());
   }
