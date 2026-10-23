@@ -35,9 +35,16 @@
 // right after its tone curve: a 33^3 LUT over the tone-mapped linear colour, sampled at
 // c * 32/33 + 0.5/33; two LUTs mixed while a grade fades into another. The bloom is added to
 // the graded colour and clamped, as Remastered's composite runs after the tonemap pass.
-// Before either, the frame's average for auto exposure: Remastered takes the smallest mip of
-// its HDR frame; here a 16x16 grid of tiles, each the mean of 8x8 exposed samples, read back
-// a few frames later and divided by the exposure the frame was drawn at.
+// Auto exposure measures elsewhere (measure_scene): the HDR scene at the opaque/sorted boundary,
+// as Remastered's RenderPrimaryPass copies its opaque colour (CopyOpaqueColorBuffer, flags 3), in
+// a chain of mips. Mip 0 is CeilPow2(max(w >> 1, 1)) x CeilPow2(max(h >> 1, 1)), drawn from the
+// full frame; each further mip is drawn from the one before, down to 1x1, all through a bilinear
+// clamped sampler. So mip 0 is a bilinear resample of the frame and every halving after it an exact
+// 2x2 box. The 1x1 is copied to a staging buffer from a pool that grows (three to start, no cap),
+// and the newest one the GPU has finished is the one read: at least a frame late, no fixed depth.
+// Remastered's copy is R11G11B10F; this one is RGBA16F, as the device is not asked for
+// rg11b10ufloat-renderable (gpu.cpp) and RGBA16F renders and filters in core WebGPU. Remastered's
+// float11/10 rounding is not matched.
 // On the HDR scene (gfx::set_scene_hdr), which holds the exposed linear light itself, the same chain
 // reads it as it is (HdrSource): no decode, no inverse curve, no cap; the composite tones it once into
 // the display EFB, which the frame goes on drawing into.
@@ -50,12 +57,13 @@ constexpr uint32_t Levels = 5;
 constexpr uint32_t PassCount = 1 + (Levels - 1) * 2 + 1;
 constexpr uint64_t SlotSize = 256;
 constexpr auto LevelFormat = wgpu::TextureFormat::RGBA16Float;
-constexpr uint32_t AverageSize = 16;
-constexpr auto AverageFormat = wgpu::TextureFormat::RGBA32Float;
-constexpr uint32_t AverageSamples = AverageSize * 8; // the samples' grid, 8x8 to a tile
-constexpr uint32_t AverageRowBytes = AverageSize * 16; // a multiple of 256, as copies need
-constexpr uint64_t AverageBytes = uint64_t(AverageRowBytes) * AverageSize;
-constexpr size_t ReadbackCount = 3;
+constexpr auto MeasureFormat = wgpu::TextureFormat::RGBA16Float;
+constexpr uint32_t MeasureRowBytes = 256; // as copies need
+constexpr uint64_t MeasureBytes = 8;      // the 1x1's RGBA16F texel
+constexpr size_t ReadbackCount = 3;       // to start with; the pool grows
+// The measures recorded and not yet encoded: one a frame, so a ring of 8 outlives every frame in flight.
+constexpr size_t MeasureSlots = 8;
+static_assert(detail::FrameSlotCount + 1 <= MeasureSlots, "measure slots would be overwritten while pending");
 // Params::bloom's bits as the task gets them: the bloom, and the composite left to the next pass.
 constexpr uint32_t BloomOn = 1;
 constexpr uint32_t CompositeInPass = 2;
@@ -200,31 +208,11 @@ fn fs_bright(in: VertexOutput) -> @location(0) vec4f {
   return vec4f(sum * 0.25 * p.tint.rgb, 1.0);
 }
 
-const AverageSize = 16.0;
-
-// The average in two passes: one exposed sample per fragment on an 8x8 grid in each of the 16x16
-// tiles, then each tile's 64 summed. A fragment that ran all 64 inverses in turn left the GPU idle.
+// One texel of the measure chain: the source sampled bilinearly at this texel's centre (Remastered's
+// copy, bilinear and clamped). Each pow2 level averages the four texels of the one before.
 @fragment
-fn fs_average_samples(in: VertexOutput) -> @location(0) vec4f {
-  let size = vec2i(textureDimensions(src));
-  let cell = vec2i(floor(in.pos.xy));
-  let tile = vec2f(cell / 8);
-  let sub = vec2f(cell % 8);
-  let uv = (tile + (sub + 0.5) / 8.0) / AverageSize;
-  let at = min(vec2i(uv * vec2f(size)), size - vec2i(1));
-  return vec4f(exposed(textureLoad(src, at, 0).rgb), 1.0);
-}
-
-@fragment
-fn fs_average(in: VertexOutput) -> @location(0) vec4f {
-  let base = vec2i(floor(in.pos.xy)) * 8;
-  var sum = vec3f(0.0);
-  for (var y = 0; y < 8; y++) {
-    for (var x = 0; x < 8; x++) {
-      sum += textureLoad(src, base + vec2i(x, y), 0).rgb;
-    }
-  }
-  return vec4f(sum / 64.0, 1.0);
+fn fs_measure(in: VertexOutput) -> @location(0) vec4f {
+  return vec4f(textureSampleLevel(src, samp, in.uv, 0.0).rgb, 1.0);
 }
 
 @fragment
@@ -314,17 +302,6 @@ fn fs_bright_hdr(in: VertexOutput) -> @location(0) vec4f {
   return vec4f(sum * 0.25 * p.tint.rgb, 1.0);
 }
 
-@fragment
-fn fs_average_samples_hdr(in: VertexOutput) -> @location(0) vec4f {
-  let size = vec2i(textureDimensions(src));
-  let cell = vec2i(floor(in.pos.xy));
-  let tile = vec2f(cell / 8);
-  let sub = vec2f(cell % 8);
-  let uv = (tile + (sub + 0.5) / 8.0) / AverageSize;
-  let at = min(vec2i(uv * vec2f(size)), size - vec2i(1));
-  return vec4f(hdr_raw(textureLoad(src, at, 0).rgb), 1.0);
-}
-
 // The single tone of the HDR scene (hdr_display_linear: the curve, or its identity line), then the
 // grade and the bloom as fs_composite has them, encoded for the display EFB.
 @fragment
@@ -399,7 +376,6 @@ struct State {
   // The HDR entry points' module (HdrSource), made on the first HDR post.
   wgpu::ShaderModule hdrModule;
   wgpu::RenderPipeline brightHdr;
-  wgpu::RenderPipeline averageSamplesHdr;
   wgpu::BindGroupLayout layout;
   wgpu::PipelineLayout pipelineLayout;
   wgpu::Sampler sampler;
@@ -427,16 +403,14 @@ struct State {
   // Grade LUTs by id, and a 1^3 stand-in bound where a pass draws none.
   std::unordered_map<uint32_t, wgpu::TextureView> luts;
   wgpu::TextureView noLut;
-  // The frame's average, rendered here and copied into a readback buffer, from its samples (which
-  // are unfilterable, so they bind on a layout of their own).
-  wgpu::RenderPipeline averageSamples;
-  wgpu::Texture averageSamplesTexture;
-  wgpu::TextureView averageSamplesView;
-  wgpu::BindGroupLayout averageLayout;
-  wgpu::BindGroup averageGroup;
-  wgpu::RenderPipeline average;
-  wgpu::Texture averageTexture;
-  wgpu::TextureView averageView;
+  // The scene measure's task, its pipeline and its chain of mips (one view per mip, as each mip is
+  // drawn from the one before); remade when the chain's size changes.
+  EncoderTaskId measureTask = InvalidEncoderTask;
+  wgpu::RenderPipeline measure;
+  wgpu::Texture measureChain;
+  std::vector<wgpu::TextureView> measureViews;
+  uint32_t measureWidth = 0;
+  uint32_t measureHeight = 0;
   // The passes' bind groups, which only change with the targets, the frame or a LUT. A group
   // holds its views, so no view in a key can be freed and its handle reused while cached.
   std::unordered_map<BindGroupKey, wgpu::BindGroup, BindGroupKeyHash> groups;
@@ -445,50 +419,73 @@ State g_state;
 // ensure_task runs on the producer while the FIFO worker may preflight scene entry.
 std::mutex g_taskRegistrationMutex;
 
-// Readbacks of the average. Each slot goes Available -> CopySubmitted (encoded) -> MapPending
+// Readbacks of the measure's 1x1. Each slot goes Available -> CopySubmitted (encoded) -> MapPending
 // (after the submit) -> Available (mapped and read); readback_slots.hpp holds the transitions and
-// their lock, since a map callback can arrive on any thread.
+// their lock, since a map callback can arrive on any thread. The set grows when every slot is busy,
+// as Remastered's staging pool does.
 using ReadbackSlots = detail::ReadbackSlots<wgpu::Buffer, ReadbackCount>;
 wgpu::Buffer make_readback() {
   const wgpu::BufferDescriptor descriptor{
-      .label = "Frame Average Readback",
+      .label = "Scene Measure Readback",
       .usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst,
-      .size = AverageBytes,
+      .size = MeasureBytes,
   };
   return g_device.CreateBuffer(&descriptor);
 }
-ReadbackSlots g_readbacks(make_readback);
-// The frame's average, in g_radianceMutex. It is written from a map callback, under the slots'
-// lock, so the two are always taken in that order.
+ReadbackSlots g_readbacks(make_readback, true);
+// The scene's measure, in g_radianceMutex, with the claim order it came from: a map that finishes
+// after a newer one is dropped (Remastered's RetrieveLastCompleted keeps the newest finished). It is
+// written from a map callback, under the slots' lock, so the two are always taken in that order.
 std::mutex g_radianceMutex;
 float g_radiance[3] = {};
 uint32_t g_radianceSerial = 0;
+uint64_t g_radianceOrder = 0;
+
+float half_to_float(uint16_t h) {
+  const uint32_t sign = uint32_t(h >> 15) << 31;
+  const uint32_t exponent = (h >> 10) & 0x1f;
+  uint32_t mantissa = h & 0x3ff;
+  uint32_t bits = 0;
+  if (exponent == 0x1f) {
+    bits = sign | 0x7f800000u | (mantissa << 13);
+  } else if (exponent != 0) {
+    bits = sign | ((exponent + 112) << 23) | (mantissa << 13);
+  } else if (mantissa != 0) {
+    int e = 113;
+    while ((mantissa & 0x400) == 0) {
+      mantissa <<= 1;
+      --e;
+    }
+    bits = sign | (uint32_t(e) << 23) | ((mantissa & 0x3ff) << 13);
+  } else {
+    bits = sign;
+  }
+  float out;
+  std::memcpy(&out, &bits, sizeof(out));
+  return out;
+}
 
 void complete_readback(const ReadbackSlots::Key& key, wgpu::MapAsyncStatus status, wgpu::StringView message) {
   if (status != wgpu::MapAsyncStatus::Success && status != wgpu::MapAsyncStatus::CallbackCancelled &&
       status != wgpu::MapAsyncStatus::Aborted) {
-    Log.warn("frame average readback failed: {}", message);
+    Log.warn("scene measure readback failed: {}", message);
   }
-  g_readbacks.complete(key, [status](const wgpu::Buffer& buffer, float exposure) {
+  g_readbacks.complete(key, [status](const wgpu::Buffer& buffer, float exposure, uint64_t order) {
     if (status != wgpu::MapAsyncStatus::Success) {
       return;
     }
-    const auto* texels = static_cast<const float*>(buffer.GetConstMappedRange(0, AverageBytes));
-    if (texels != nullptr && exposure > 0.f) {
-      double sum[3] = {};
-      for (uint32_t y = 0; y < AverageSize; ++y) {
-        const float* row = texels + size_t(y) * AverageRowBytes / sizeof(float);
-        for (uint32_t x = 0; x < AverageSize; ++x) {
-          for (int c = 0; c < 3; ++c) {
-            sum[c] += row[x * 4 + c];
-          }
-        }
-      }
+    // A failed map keeps the last value, as Remastered's does.
+    const auto* texel = static_cast<const uint16_t*>(buffer.GetConstMappedRange(0, MeasureBytes));
+    if (texel != nullptr && exposure > 0.f) {
       const std::lock_guard lock(g_radianceMutex);
-      for (int c = 0; c < 3; ++c) {
-        g_radiance[c] = float(sum[c] / (AverageSize * AverageSize) / exposure);
+      if (order > g_radianceOrder) {
+        g_radianceOrder = order;
+        // The HDR scene holds the exposed light: undone by the exposure the frame was drawn at.
+        for (int c = 0; c < 3; ++c) {
+          g_radiance[c] = half_to_float(texel[c]) / exposure;
+        }
+        ++g_radianceSerial;
       }
-      ++g_radianceSerial;
     }
     buffer.Unmap();
   });
@@ -644,52 +641,7 @@ void ensure_pipelines() {
                 .dstFactor = wgpu::BlendFactor::One},
   };
   g_state.up = make_pipeline("Bloom Upsample", "fs_up", LevelFormat, 1, &add);
-  g_state.averageSamples = make_pipeline("Frame Average Samples", "fs_average_samples", AverageFormat, 1, nullptr);
-  const wgpu::TextureDescriptor samplesDescriptor{
-      .label = "Frame Average Samples",
-      .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
-      .size = {AverageSamples, AverageSamples, 1},
-      .format = AverageFormat,
-  };
-  AURORA_NOTE_TEXTURE(&samplesDescriptor);
-  g_state.averageSamplesTexture = g_device.CreateTexture(&samplesDescriptor);
-  g_state.averageSamplesView = g_state.averageSamplesTexture.CreateView();
-  const wgpu::BindGroupLayoutEntry samplesEntry{
-      .binding = 1,
-      .visibility = wgpu::ShaderStage::Fragment,
-      .texture = {.sampleType = wgpu::TextureSampleType::UnfilterableFloat,
-                  .viewDimension = wgpu::TextureViewDimension::e2D},
-  };
-  const wgpu::BindGroupLayoutDescriptor averageLayoutDescriptor{
-      .label = "Frame Average Bind Group Layout",
-      .entryCount = 1,
-      .entries = &samplesEntry,
-  };
-  g_state.averageLayout = g_device.CreateBindGroupLayout(&averageLayoutDescriptor);
-  const wgpu::PipelineLayoutDescriptor averagePipelineLayoutDescriptor{
-      .label = "Frame Average Pipeline Layout",
-      .bindGroupLayoutCount = 1,
-      .bindGroupLayouts = &g_state.averageLayout,
-  };
-  const wgpu::PipelineLayout averagePipelineLayout = g_device.CreatePipelineLayout(&averagePipelineLayoutDescriptor);
-  g_state.average = make_pipeline("Frame Average", "fs_average", AverageFormat, 1, nullptr, averagePipelineLayout);
-  const wgpu::BindGroupEntry samplesBinding{.binding = 1, .textureView = g_state.averageSamplesView};
-  const wgpu::BindGroupDescriptor averageGroupDescriptor{
-      .label = "Frame Average Bind Group",
-      .layout = g_state.averageLayout,
-      .entryCount = 1,
-      .entries = &samplesBinding,
-  };
-  g_state.averageGroup = g_device.CreateBindGroup(&averageGroupDescriptor);
-  const wgpu::TextureDescriptor averageDescriptor{
-      .label = "Frame Average",
-      .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc,
-      .size = {AverageSize, AverageSize, 1},
-      .format = AverageFormat,
-  };
-  AURORA_NOTE_TEXTURE(&averageDescriptor);
-  g_state.averageTexture = g_device.CreateTexture(&averageDescriptor);
-  g_state.averageView = g_state.averageTexture.CreateView();
+  g_state.measure = make_pipeline("Scene Measure", "fs_measure", MeasureFormat, 1, nullptr);
 }
 
 // The HDR entry points, in a module of their own so the LDR one keeps its source.
@@ -707,8 +659,6 @@ void ensure_hdr_pipelines() {
   g_state.hdrModule = g_device.CreateShaderModule(&moduleDescriptor);
   g_state.brightHdr =
       make_pipeline("Bloom Bright Pass (HDR)", "fs_bright_hdr", LevelFormat, 1, nullptr, {}, g_state.hdrModule);
-  g_state.averageSamplesHdr = make_pipeline("Frame Average Samples (HDR)", "fs_average_samples_hdr", AverageFormat, 1,
-                                            nullptr, {}, g_state.hdrModule);
 }
 
 void ensure_frame(uint32_t width, uint32_t height, wgpu::TextureFormat format) {
@@ -891,34 +841,14 @@ void draw_pass_composite(const DrawContext& ctx, const wgpu::RenderPassEncoder& 
   encoded = {};
 }
 
-// The frame copy's average into a free readback slot; none free skips this frame.
-void encode_average(const wgpu::CommandEncoder& cmd, float exposure, const wgpu::TextureView& frame, uint32_t slot,
-                    const wgpu::RenderPipeline& samples) {
-  const wgpu::Buffer buffer = g_readbacks.claim(exposure);
-  if (!buffer) {
-    return;
-  }
-  draw(cmd, "Bloom average samples", samples, slot, frame, frame, g_state.averageSamplesView, false);
-  draw(cmd, "Bloom average", g_state.average, g_state.averageGroup, g_state.averageView, false);
-  const wgpu::TexelCopyTextureInfo source{.texture = g_state.averageTexture};
-  const wgpu::TexelCopyBufferInfo target{
-      .layout = {.bytesPerRow = AverageRowBytes, .rowsPerImage = AverageSize},
-      .buffer = buffer,
-  };
-  const wgpu::Extent3D size{AverageSize, AverageSize, 1};
-  cmd.CopyTextureToBuffer(&source, &target, &size);
-}
-
 // The HDR scene a post recorded, checked whole: the scene format, a single-sample resolve of the same
 // size when multisampled. Anything else fails closed (no post) rather than read 16F texels as 8-bit.
-bool hdr_source_valid(const Recorded& r, uint32_t samples) {
-  const auto& c = r.color;
+bool hdr_source_valid(const webgpu::TextureWithSampler& c, const webgpu::TextureWithSampler& v, uint32_t samples) {
   if (!c.texture || !c.view || c.format != webgpu::SceneHdrFormat || c.texture.GetFormat() != webgpu::SceneHdrFormat ||
       c.texture.GetSampleCount() != samples || c.size.width == 0 || c.size.height == 0) {
     return false;
   }
   if (samples > 1) {
-    const auto& v = r.resolved;
     return v.texture && v.view && v.format == webgpu::SceneHdrFormat &&
            v.texture.GetFormat() == webgpu::SceneHdrFormat && v.texture.GetSampleCount() == 1 &&
            v.size.width == c.size.width && v.size.height == c.size.height;
@@ -950,7 +880,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   const auto& target = efb.color;
   const uint32_t samples = webgpu::g_graphicsConfig.msaaSamples > 1 ? webgpu::g_graphicsConfig.msaaSamples : 1;
   const auto format = webgpu::g_graphicsConfig.surfaceConfiguration.format;
-  if (hdr && !hdr_source_valid(recorded, samples)) {
+  if (hdr && !hdr_source_valid(recorded.color, recorded.resolved, samples)) {
     // The pass after it was retargeted to the display EFB and clears it: its composite stays undrawn.
     Log.warn("HDR post: the recorded scene is not a valid {}-sample RGBA16F target; skipped", samples);
     return;
@@ -974,15 +904,12 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   const auto lutB = find_lut(params.gradeB);
   const bool bloom = (params.bloom & BloomOn) != 0;
   const bool inPass = (params.bloom & CompositeInPass) != 0;
-  // tone[0][3] carries the exposure to measure at; the curve has no use for it.
-  const float exposure = params.tone[0][3];
+  // tone[0][3] is unused (it carried the exposure of the frame average measure_scene replaced).
   params.tone[0][3] = 0.f;
-  // The HDR scene holds the exposed light itself, curve or none.
-  const bool measure = exposure > 0.f && (hdr || params.tone[1][0] > 0.f);
   // The pass after an in-pass composite clears the frame, so it must be drawn even before a
   // LUT has been uploaded.
   const bool post = bloom || lutA || lutB || inPass;
-  if (!post && !measure) {
+  if (!post) {
     return;
   }
   if (!hdr &&
@@ -1024,13 +951,6 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   put(slot++, 0.f, 0.f, nullptr);
   ctx.queue.WriteBuffer(g_state.uniforms, uint64_t(base) * SlotSize, slots.data(), sizeof(slots));
 
-  const auto& averageSamples = hdr ? g_state.averageSamplesHdr : g_state.averageSamples;
-  if (!post) {
-    // Measuring only: nothing draws into the frame here, so it is read where it is. The copy
-    // exists for the composite, which writes the frame it reads.
-    encode_average(cmd, exposure, hdr ? hdrSource.view : source.view, base, averageSamples);
-    return;
-  }
   // The frame the chain reads: the HDR scene as it is (the composite writes another target), else a
   // copy of the EFB the composite overwrites.
   wgpu::TextureView frameView = g_state.frameView;
@@ -1045,9 +965,6 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
     }
   }
 
-  if (measure) {
-    encode_average(cmd, exposure, frameView, base, averageSamples);
-  }
   slot = base;
   auto& levels = g_state.levels;
   if (bloom) {
@@ -1073,6 +990,99 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   }
   draw(cmd, "Bloom composite", g_state.composite, slot++, frameView, levels[0].view, target.view, false,
        samples > 1 ? efb.resolved.view : wgpu::TextureView{}, lutA, lutB);
+}
+
+// The measures recorded by measure_scene, each the scene it reads and the exposure it was drawn at.
+struct Measure {
+  float exposure = 0.f;
+  webgpu::TextureWithSampler color;
+  webgpu::TextureWithSampler resolved;
+};
+std::mutex g_measureMutex;
+std::array<Measure, MeasureSlots> g_measures;
+uint32_t g_nextMeasure = 0;
+uint64_t g_measureFrame = UINT64_MAX;
+
+uint32_t ceil_pow2(uint32_t v) {
+  uint32_t p = 1;
+  while (p < v) {
+    p <<= 1;
+  }
+  return p;
+}
+
+void ensure_measure_chain(uint32_t width, uint32_t height) {
+  if (g_state.measureChain && g_state.measureWidth == width && g_state.measureHeight == height) {
+    return;
+  }
+  g_state.measureWidth = width;
+  g_state.measureHeight = height;
+  g_state.groups.clear();
+  uint32_t mips = 1;
+  for (uint32_t edge = std::max(width, height); edge > 1; edge >>= 1) {
+    ++mips;
+  }
+  const wgpu::TextureDescriptor descriptor{
+      .label = "Scene Measure Chain",
+      .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding |
+               wgpu::TextureUsage::CopySrc,
+      .size = {width, height, 1},
+      .format = MeasureFormat,
+      .mipLevelCount = mips,
+  };
+  AURORA_NOTE_TEXTURE(&descriptor);
+  g_state.measureChain = g_device.CreateTexture(&descriptor);
+  g_state.measureViews.clear();
+  for (uint32_t mip = 0; mip < mips; ++mip) {
+    const wgpu::TextureViewDescriptor view{.baseMipLevel = mip, .mipLevelCount = 1};
+    g_state.measureViews.push_back(g_state.measureChain.CreateView(&view));
+  }
+}
+
+void encode_measure(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, const void* payload,
+                    size_t payloadSize, void*) {
+  uint32_t index = 0;
+  if (payloadSize != sizeof(index)) {
+    return;
+  }
+  std::memcpy(&index, payload, sizeof(index));
+  if (index >= MeasureSlots) {
+    return;
+  }
+  Measure measure;
+  {
+    const std::lock_guard lock(g_measureMutex);
+    measure = g_measures[index];
+  }
+  const uint32_t samples = webgpu::g_graphicsConfig.msaaSamples > 1 ? webgpu::g_graphicsConfig.msaaSamples : 1;
+  if (!hdr_source_valid(measure.color, measure.resolved, samples)) {
+    Log.warn("scene measure: the recorded scene is not a valid {}-sample RGBA16F target; skipped", samples);
+    return;
+  }
+  const auto& source = samples > 1 ? measure.resolved : measure.color;
+  ensure_pipelines();
+  ensure_measure_chain(ceil_pow2(std::max(source.size.width >> 1, 1u)),
+                       ceil_pow2(std::max(source.size.height >> 1, 1u)));
+  upload_pending(ctx.queue);
+  // None free cannot happen (the pool grows); an empty buffer would only follow a failed creation.
+  const wgpu::Buffer buffer = g_readbacks.claim(measure.exposure);
+  if (!buffer) {
+    return;
+  }
+  // The shader reads no uniforms; slot 0 only fills the layout.
+  const auto& views = g_state.measureViews;
+  draw(cmd, "Scene measure", g_state.measure, 0, source.view, source.view, views[0], false);
+  for (size_t mip = 1; mip < views.size(); ++mip) {
+    draw(cmd, "Scene measure", g_state.measure, 0, views[mip - 1], views[mip - 1], views[mip], false);
+  }
+  const wgpu::TexelCopyTextureInfo copySource{.texture = g_state.measureChain,
+                                              .mipLevel = uint32_t(views.size() - 1)};
+  const wgpu::TexelCopyBufferInfo copyTarget{
+      .layout = {.bytesPerRow = MeasureRowBytes, .rowsPerImage = 1},
+      .buffer = buffer,
+  };
+  const wgpu::Extent3D copySize{1, 1, 1};
+  cmd.CopyTextureToBuffer(&copySource, &copyTarget, &copySize);
 }
 
 // A slot for a post in this frame; false (warned) past MaxPostsPerFrame. Under g_recordMutex.
@@ -1105,6 +1115,38 @@ bool ensure_task() {
     g_state.compositeDraw = register_draw_type(DrawTypeDescriptor{.label = "Bloom Composite", .draw = draw_pass_composite});
   }
   return true;
+}
+
+bool measure_scene(float exposure) {
+  {
+    const std::lock_guard registrationLock(g_taskRegistrationMutex);
+    if (g_state.measureTask == InvalidEncoderTask) {
+      g_state.measureTask =
+          register_encoder_task_type(EncoderTaskDescriptor{.label = "Scene Measure", .callback = encode_measure});
+      if (g_state.measureTask == InvalidEncoderTask) {
+        Log.warn("could not register the scene measure task");
+        return false;
+      }
+    }
+  }
+  // Pending FIFO commands first, so the measure reads what they draw.
+  gx::fifo::drain();
+  if (!scene_hdr_pass_active() || !(exposure > 0.f)) {
+    return false;
+  }
+  uint32_t slot = 0;
+  {
+    const std::lock_guard lock(g_measureMutex);
+    const uint64_t frame = current_frame();
+    if (g_measureFrame == frame) {
+      return false; // one copy per frame
+    }
+    g_measureFrame = frame;
+    slot = g_nextMeasure++ % MeasureSlots;
+    g_measures[slot] = Measure{
+        .exposure = exposure, .color = webgpu::g_sceneHdr, .resolved = webgpu::g_sceneHdrResolved};
+  }
+  return record_encoder_task(g_state.measureTask, &slot, sizeof(slot));
 }
 
 bool scene_post_available() {
@@ -1160,7 +1202,7 @@ bool record(const Params& params) {
   const bool scene = (params.bloom & ForceScene) != 0;
   Params task = params;
   task.bloom &= BloomOn | CostNoFrameCopy | CostNoDepthReload | CostKeepDepth;
-  const bool effects = (task.bloom & BloomOn) || task.gradeA != 0 || task.gradeB != 0 || task.tone[0][3] > 0.f;
+  const bool effects = (task.bloom & BloomOn) || task.gradeA != 0 || task.gradeB != 0;
   if (!hdr && scene && !effects) {
     // GXPortPostProcessScene on the display EFB with nothing to do: it is already display colour.
     return true;
@@ -1216,7 +1258,7 @@ void after_submit() noexcept {
     const auto& mapping = submitted.mappings[i];
     // The callback carries the key alone: a pending map must not hold the buffer it maps, or that
     // buffer would outlive its slot. Mapped with no lock held, as the callback takes it again.
-    mapping.buffer.MapAsync(wgpu::MapMode::Read, 0, AverageBytes, wgpu::CallbackMode::AllowSpontaneous,
+    mapping.buffer.MapAsync(wgpu::MapMode::Read, 0, MeasureBytes, wgpu::CallbackMode::AllowSpontaneous,
                             [key = mapping.key](wgpu::MapAsyncStatus status, wgpu::StringView message) {
                               complete_readback(key, status, message);
                             });
@@ -1240,9 +1282,11 @@ void shutdown() {
   auto retired = g_readbacks.retire([] {
     const std::lock_guard lock(g_radianceMutex);
     g_radianceSerial = 0;
+    g_radianceOrder = 0;
   });
   retired.clear();
   const auto task = g_state.task;
+  const auto measureTask = g_state.measureTask;
   const auto compositeDraw = g_state.compositeDraw;
   g_state = {};
   g_encoded = {};
@@ -1257,8 +1301,17 @@ void shutdown() {
     std::lock_guard lock(g_pendingMutex);
     g_pendingLuts.clear();
   }
+  {
+    const std::lock_guard lock(g_measureMutex);
+    g_measures = {};
+    g_nextMeasure = 0;
+    g_measureFrame = UINT64_MAX;
+  }
   if (task != InvalidEncoderTask) {
     unregister_encoder_task_type(task);
+  }
+  if (measureTask != InvalidEncoderTask) {
+    unregister_encoder_task_type(measureTask);
   }
   if (compositeDraw != InvalidDrawType) {
     unregister_draw_type(compositeDraw);

@@ -1130,6 +1130,43 @@ void TestWorldVolumes() {
   state.Replay(events);
   CHECK_MSG(events.empty(), "volumes: cleared");
 }
+// CPostFXManager::UpdateTonemapping 0xaffb18: L from the readback, and the start.
+void TestExposureAverage() {
+  constexpr float kGrey = 0.2158605f;
+  PortRoomEnv::ExposureAverage e;
+  float target = 0.f;
+  CHECK_MSG(e.L == -1.f && !e.created, "exposure average: starts without a measurement");
+  CHECK_MSG(e.Update(true, 1.5f, -4.f, 8.f, 0.f, 32.f, false, 1, &target) == 1.5f && target == 1.5f && !e.created,
+            "exposure average: the tonemap EV before the first L");
+  const float rgb[3] = {0.1f, 4.f * kGrey, 0.3f};
+  e.Take(rgb);
+  CHECK_MSG(e.L == 4.f * kGrey, "exposure average: L is the largest channel");
+  CHECK_MSG(e.Update(false, 1.5f, -4.f, 8.f, 0.f, 32.f, false, 1, &target) == 1.5f && !e.created,
+            "exposure average: no hint, the tonemap EV and no Gaussian");
+  // log2(4) + 3 + 0.5 = 5.5
+  CHECK_MSG(Near(e.Update(true, 1.5f, -4.f, 8.f, 0.5f, 32.f, false, 1, &target), 5.5f) && Near(target, 5.5f) &&
+                e.created,
+            "exposure average: the Gaussian starts at the first target");
+  const float bright[3] = {64.f * kGrey, 0.f, 0.f}; // log2(64) + 3 = 9, past hi
+  e.Take(bright);
+  const float before = e.ev.value;
+  const float stepped = e.Update(true, 1.5f, -4.f, 8.f, 0.f, 32.f, false, 10, &target);
+  CHECK_MSG(target == 8.f && stepped > before && stepped < 8.f, "exposure average: clamped to hi, steps towards it");
+  CHECK_MSG(e.Update(true, 1.5f, -4.f, 8.f, 0.f, 32.f, true, 0, &target) == 8.f, "exposure average: a snap sets it");
+  const float black[3] = {0.f, 0.f, 0.f}; // log2(0) = -inf, clamped to lo
+  e.Take(black);
+  CHECK_MSG(e.Update(true, 1.5f, -4.f, 8.f, 0.f, 32.f, true, 0, &target) == -4.f && target == -4.f,
+            "exposure average: L = 0 clamps to lo");
+  const float nan[3] = {std::numeric_limits<float>::quiet_NaN(), 0.f, 0.f};
+  e.Take(nan);
+  CHECK_MSG(e.Update(true, 1.5f, -4.f, 8.f, 0.f, 32.f, false, 1, &target) == 1.5f,
+            "exposure average: a NaN L fails L >= 0");
+  e.Reset();
+  CHECK_MSG(!e.created && e.L == -1.f, "exposure average: reset");
+  e.Take(rgb);
+  CHECK_MSG(Near(e.Update(true, 1.5f, -4.f, 8.f, 0.f, 32.f, false, 5, &target), 5.f) && e.created,
+            "exposure average: after a reset the Gaussian starts again at L");
+}
 } // namespace
 
 int main() {
@@ -1146,6 +1183,7 @@ int main() {
   TestLod();
   TestExposureHints();
   TestHintOutranks();
+  TestExposureAverage();
   if (port_test::Failures() == 0) {
     std::puts("port_room_env tests passed");
   }

@@ -293,7 +293,7 @@ void CMFGame::Draw() const {
 #ifdef TARGET_PC
     // Remastered's bloom and colour grade, over the world and under the visor. Thermal and
     // X-ray draw their own picture, not the room's exposed light, so they keep neither.
-    const auto postProcess = [this](bool measure, bool sceneHdr) {
+    const auto postProcess = [this](bool sceneHdr) {
       const CPlayerState::EPlayerVisor visor = mStateManager->GetPlayerState()->GetActiveVisor(*mStateManager);
       const bool normalVisor = visor != CPlayerState::kPV_Thermal && visor != CPlayerState::kPV_XRay;
       if (sceneHdr) {
@@ -320,8 +320,8 @@ void CMFGame::Draw() const {
               },
               &layers, gradeA, gradeB, gradeWeight);
         }
-        GXPortPostProcessScene(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight,
-                               toned && normalVisor && measure ? PortRoomEnv::MeasureExposure() : 0.f);
+        // The frame is measured at the opaque/sorted boundary (CStateManager::DrawWorld).
+        GXPortPostProcessScene(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, 0.f);
       } else if (normalVisor) {
         // Keep the non-experimental LDR path and its FIFO commands unchanged.
         float threshold = 0.f;
@@ -343,9 +343,8 @@ void CMFGame::Draw() const {
                      l.layers->IsLayerActive(l.area, TLayerId(layer));
             },
             &layers, gradeA, gradeB, gradeWeight);
-        // The picture is measured for the next frames' auto exposure (UpdateFrame).
-        GXPortPostProcess(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight,
-                          toned && measure ? PortRoomEnv::MeasureExposure() : 0.f);
+        // Without the HDR scene there is nothing to measure: the exposure stays the tonemap's.
+        GXPortPostProcess(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, 0.f);
       }
     };
     const auto drawWorld = [this]() {
@@ -377,7 +376,7 @@ void CMFGame::Draw() const {
         scanVisor->PortScanZoom(*mStateManager, scanZoom, scanWidth, scanHeight)) {
       CStateManager::sPortViewZoom = scanZoom;
       const bool sceneHdr = drawWorld();
-      postProcess(false, sceneHdr);
+      postProcess(sceneHdr);
       mGuiManager->PortDrawScanZoomReticles(*mStateManager);
       CStateManager::sPortViewZoom = 1.f;
       CPlayerVisor::PortCopyScanZoom(scanWidth, scanHeight, scanZoom);
@@ -395,7 +394,7 @@ void CMFGame::Draw() const {
 #endif
     (void)mStateManager->GetPlayer()->IsPlayerDeadEnough();
 #ifdef TARGET_PC
-    postProcess(true, sceneHdr);
+    postProcess(sceneHdr);
 #endif
   }
 

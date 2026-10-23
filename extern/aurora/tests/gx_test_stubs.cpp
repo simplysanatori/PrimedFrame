@@ -371,6 +371,7 @@ bool record(const Params& params) {
   return testing::task;
 }
 void set_grade_lut(uint32_t id, const uint8_t* rgba) {}
+bool measure_scene(float exposure) { return false; }
 void after_submit() noexcept {}
 bool frame_radiance(float out[3], uint32_t& serial) { return false; }
 void shutdown() {}

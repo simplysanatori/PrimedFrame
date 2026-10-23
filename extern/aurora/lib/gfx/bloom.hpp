@@ -10,7 +10,7 @@ constexpr uint32_t GradeLutSize = 33;
 struct Params {
   float threshold;
   float tints[5][3];
-  float tone[3][4];   // [0][3]: the exposure to measure the frame at (0: don't)
+  float tone[3][4];   // [0][3]: unused (0)
   uint32_t bloom;     // bit 0: the bloom (else grade only); the Cost bits below
   uint32_t gradeA;    // LUT ids from set_grade_lut; 0 is the identity
   uint32_t gradeB;
@@ -48,10 +48,15 @@ bool scene_post_available();
 bool record(const Params& params);
 // Stores a 33^3 RGBA8 LUT (red fastest) under id (non-zero), uploaded before its next use.
 void set_grade_lut(uint32_t id, const uint8_t* rgba);
-// Maps the readbacks of the frame average that the last submit carried.
+// Records the auto-exposure measure of the HDR scene as it is now (Remastered's opaque colour copy:
+// a pow2 half-size mip chain to 1x1, copied to a staging buffer). `exposure` is what the scene is
+// drawn at. Once a frame; false outside the HDR scene's pass, for exposure <= 0, or when the task
+// could not be registered. Waits for the FIFO first, and ends the current pass.
+bool measure_scene(float exposure);
+// Maps the measure readbacks that the last submit carried.
 void after_submit() noexcept;
-// The radiance (the average undone by its exposure) of the latest frame read back, and a
-// count that goes up with every new one; false before the first.
+// The radiance (the 1x1 undone by its exposure) of the newest measure the GPU has finished, and
+// a count that goes up with every new one; false before the first.
 bool frame_radiance(float out[3], uint32_t& serial);
 void shutdown();
 } // namespace aurora::gfx::bloom

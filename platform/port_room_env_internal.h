@@ -137,14 +137,9 @@ struct FrameState {
   bool started = false;
   uint32_t area = 0; // the camera's room last frame
   std::vector<uint32_t> loaded; // the areas in memory last frame
-  Convergence ev;
-  float sigma = -1.f;
+  float ev = 0.f; // the frame's EV
   float targetEv = 0.f;
   bool measuring = false; // this frame is measured (MeasureExposure)
-  bool measured = false;  // targetEv is a measurement
-  float measuredEv = 0.f;
-  uint32_t serial = 0;      // of the last measurement seen
-  uint32_t ignoreUntil = 0; // measurements up to here are of before a jump
   // The tonemap's EV, mid, contrast, toe and shoulder, and the static EV (see GlowScale),
   // moving linearly from `from` to `to`.
   float from[6] = {};

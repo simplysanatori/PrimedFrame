@@ -121,8 +121,8 @@ aurora::gfx::bloom::Params post_process_params(GXBool bloom, f32 threshold, cons
   params.gradeA = gradeA;
   params.gradeB = gradeB;
   params.gradeWeight = gradeWeight;
-  // The curve's toe has no use for row 0's w; it carries the exposure (see bloom.hpp).
-  params.tone[0][3] = tone != nullptr && exposure > 0.f ? exposure : 0.f;
+  // Row 0's w is unused: the exposure it carried went to GXPortMeasureScene, so `exposure` is ignored.
+  params.tone[0][3] = 0.f;
   return params;
 }
 
@@ -150,7 +150,7 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
     return true;
   }
   const auto params = post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
-  if (!params.bloom && gradeA == 0 && gradeB == 0 && params.tone[0][3] == 0.f) {
+  if (!params.bloom && gradeA == 0 && gradeB == 0) {
     return true;
   }
   return write_post_process(params);
@@ -377,6 +377,13 @@ GXBool GXPortActorShadowRender() {
 }
 
 void GXPortColorGradeLut(u32 id, const u8* rgba) { aurora::gfx::bloom::set_grade_lut(id, rgba); }
+
+GXBool GXPortMeasureScene(f32 exposure) {
+  if (sDrawIdMode) {
+    return false;
+  }
+  return aurora::gfx::bloom::measure_scene(exposure);
+}
 
 GXBool GXPortFrameRadiance(f32 out[3], u32* serial) {
   uint32_t count = 0;

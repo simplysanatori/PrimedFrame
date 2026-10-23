@@ -339,45 +339,11 @@ float CubeAverage(const File& file, const Cube& cube, float& peak) {
   return float((0.2126 * sum[0] + 0.7152 * sum[1] + 0.0722 * sum[2]) / count);
 }
 
-// What Remastered multiplies the room's radiance by before its tone curve: 2^(3 - EV).
-// Without auto exposure EV is the Tonemap's own. With it (CPostFXManager::
-// UpdateTonemapping), EV = log2(L / grey) + 3 + bias, held to the hint's range, where L is
-// the largest channel of the last frame's average colour and grey is sRGB 128. The port
-// has no HDR frame to average, so L is the middle one of the room's probes instead; over
-// the 275 rooms that lands inside the hint's range for most.
+// What Remastered multiplies the room's radiance by before its tone curve: 2^(3 - EV). Before
+// a frame is measured (and without auto exposure) EV is the tonemap's own (UpdateTonemapping
+// 0xaffb18 with L < 0); UpdateFrame moves it from there.
 float RoomExposure(const Area& area) {
-  constexpr float kGrey = 0.2158605f; // sRGB 128, linear
-  const File& file = area.file;
-  float ev = file.tonemap[0];
-  if (file.exposure[0] != 0.f || file.exposure[1] != 0.f) {
-    std::vector<float> levels;
-    for (const Probe& probe : file.probes) {
-      const float level = area.cubes[probe.cube].peak * probe.scale;
-      if (level > 0.f && std::isfinite(level)) {
-        levels.push_back(level);
-      }
-    }
-    float level = 0.f;
-    if (!levels.empty()) {
-      std::nth_element(levels.begin(), levels.begin() + levels.size() / 2, levels.end());
-      level = levels[levels.size() / 2];
-    } else {
-      // The grid's points are the same radiance (a version 21 area's own tiles before its
-      // grid is composed from the mapped ones).
-      for (const Grid& grid : Grids(area)) {
-        level = std::max(level, grid.average);
-      }
-      level = std::max(level, area.ownAverage);
-      if (area.file.tiles != nullptr && level <= 0.f) {
-        level = sWorld.grid.average;
-      }
-    }
-    if (!(level > 0.f)) {
-      return 0.f;
-    }
-    ev = std::log2(level / kGrey) + 3.f + file.exposureBias;
-    ev = std::min(std::max(ev, file.exposure[0]), file.exposure[1]);
-  }
+  const float ev = area.file.tonemap[0];
   if (!std::isfinite(ev)) {
     return 0.f;
   }
@@ -585,6 +551,10 @@ static bool XRayPostEnabled() {
   return sEnv && !PortDebug::OriginalExperience();
 }
 
+static ExposureAverage sAverage;
+
+void ResetExposure() { sAverage.Reset(); }
+
 void UpdateFrame(bool roomGeoDrawing) {
   if (!sBrdfSent) {
     SendBrdfLut();
@@ -600,8 +570,6 @@ void UpdateFrame(bool roomGeoDrawing) {
     sBakedLight[0] = sBakedLight[1] = sBakedLight[2] = kXRayShadowMod;
   }
   GXSetPBRBakedLightModulation(sBakedLight);
-  constexpr float kGrey = 0.2158605f; // sRGB 128, linear
-  constexpr uint32_t kInFlight = 3;   // readbacks Aurora may have queued
   using Clock = std::chrono::steady_clock;
   FinishLoads();
   TakeResults();
@@ -666,8 +634,6 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.moving = false;
     f.progress = 0.f;
     f.carry = 0.f;
-    f.measured = false;
-    f.ignoreUntil = serial + kInFlight;
   } else {
     std::memcpy(f.to, target, sizeof(target));
   }
@@ -693,48 +659,29 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.progress = tr.progress;
     f.moving = tr.moving;
   }
-  if (f.sigma != eff.sigma) {
-    f.sigma = eff.sigma;
-    f.ev.SetSigma(f.sigma);
-  }
   // Measuring settles only where the picture follows the exposure: room geometry, lit by
   // the room's own light. The retail world keeps its level whatever the exposure, and
   // measuring it would push the exposure to an end of the hint's range.
   f.measuring = hint && roomGeoDrawing && area.hasGeo && AutoExposure() && Enabled() && RoomExposed();
-  if (hasRadiance && serial != f.serial) {
-    f.serial = serial;
-    const float peak = std::max(std::max(radiance[0], radiance[1]), radiance[2]);
-    if (f.measuring && int32_t(serial - f.ignoreUntil) > 0 && peak > 0.f && std::isfinite(peak)) {
-      const float ev = std::log2(peak / kGrey) + 3.f + eff.bias;
-      f.measuredEv = std::min(std::max(ev, eff.exposure[0]), eff.exposure[1]);
-      f.measured = true;
+  if (hasRadiance && serial != sAverage.serial) {
+    sAverage.serial = serial;
+    if (f.measuring) {
+      sAverage.Take(radiance);
     }
   }
-  if (!f.measuring) {
-    f.measured = false;
-  }
-  if (!hint) {
-    f.targetEv = f.shown[0];
-  } else if (f.measured) {
-    f.targetEv = f.measuredEv;
-  } else {
-    f.targetEv = area.exposure > 0.f ? 3.f - std::log2(area.exposure) : f.shown[0];
-  }
-  // Without a hint the exposure is the tonemap's, moving linearly with it; with one it eases
-  // through the Gaussian, a step every 60th of a second.
+  // The Gaussian steps every 60th of a second.
   f.carry += std::chrono::duration<float>(now - f.last).count();
   f.last = now;
-  if (jump || !hint || hintSnap) {
-    f.ev.SetValue(f.targetEv);
+  int steps = 0;
+  if (!f.measuring || hintSnap) {
     f.carry = 0.f;
   } else {
-    const int steps = int(f.carry * 60.f);
+    steps = int(f.carry * 60.f);
     f.carry -= float(steps) / 60.f;
-    for (int i = std::min(steps, 30); i > 0; --i) {
-      f.ev.Step(f.targetEv);
-    }
   }
-  const float exposure = std::exp2(3.f - f.ev.value);
+  f.ev = sAverage.Update(f.measuring, f.shown[0], eff.exposure[0], eff.exposure[1], eff.bias, eff.sigma, hintSnap,
+                          std::min(steps, 30), &f.targetEv);
+  const float exposure = std::exp2(3.f - f.ev);
   f.exposure = std::isfinite(exposure) && exposure > 0.f ? exposure : 0.f;
   f.hasTone = f.exposure > 0.f && f.shown[1] > 0.f && f.shown[1] < 1.f;
   if (f.hasTone) {
@@ -742,9 +689,10 @@ void UpdateFrame(bool roomGeoDrawing) {
   }
   static const bool sLog = port::EnvFlag("MP_ROOM_ENV_EXPOSURE_LOG");
   if (sLog) {
-    PortLog::Write("room env exposure: area %08X jump %d shown %g %g %g %g %g %g ev %g target %g fluid %d snap %d\n",
-                   sViewArea, int(jump), f.shown[0], f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.shown[5],
-                   f.ev.value, f.targetEv, fluidPick, int(hintSnap));
+    PortLog::Write("room env exposure: area %08X jump %d shown %g %g %g %g %g %g ev %g target %g L %g fluid %d "
+                   "snap %d\n",
+                   sViewArea, int(jump), f.shown[0], f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.shown[5], f.ev,
+                   f.targetEv, sAverage.L, fluidPick, int(hintSnap));
   }
 }
 
@@ -761,7 +709,7 @@ float GlowScale() {
   }
   // The light is divided by the static exposure and the frame then multiplied by its own:
   // 2^(3 - EV) / 2^(3 - static EV).
-  const float scale = std::exp2(sFrame.shown[5] - sFrame.ev.value);
+  const float scale = std::exp2(sFrame.shown[5] - sFrame.ev);
   return std::isfinite(scale) && scale > 0.f ? scale : 1.f;
 }
 
@@ -2635,9 +2583,10 @@ std::string Info(const float pos[3]) {
   if (sFrame.started) {
     const FrameState& f = sFrame;
     std::snprintf(line, sizeof(line),
-                  "frame: EV %g towards %g (%s), exposure %g, sigma %g, measurement %u%s, tone EV %g mid %g "
+                  "frame: EV %g towards %g (L %g, %s), exposure %g, sigma %g, measurement %u%s, tone EV %g mid %g "
                   "contrast %g toe %g shoulder %g, static EV %g (glow x%g)\n",
-                  f.ev.value, f.targetEv, f.measured ? "measured" : "probes", f.exposure, f.sigma, f.serial,
+                  f.ev, f.targetEv, sAverage.L, sAverage.created ? "Gaussian" : "tonemap EV", f.exposure,
+                  sAverage.sigma, sAverage.serial,
                   f.measuring ? " (measuring)" : "", f.shown[0], f.shown[1], f.shown[2], f.shown[3], f.shown[4],
                   f.shown[5], GlowScale());
     out += line;
