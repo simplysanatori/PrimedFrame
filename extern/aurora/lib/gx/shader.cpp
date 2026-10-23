@@ -2348,7 +2348,6 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_rn = reflect(-pbr_v, pbr_n);
       let pbr_refl = pbr_rn + pbr_ng * clamp(-dot(pbr_ng, pbr_rn), 0.0, 1.0);
       var pbr_lo = vec3f(0.0);
-      var pbr_env = vec3f(0.0);
       var pbr_lsum = vec3f(0.0);
       // The lights' diffuse alone: a lightmapped surface takes it times the baked-light modulation.
       var pbr_ldiff = vec3f(0.0);
@@ -2399,10 +2398,6 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_lo += (pbr_diff * pbr_ao + select(spec * pbr_pi, vec3f(0.0), pbr_nols)) * rad * nl;
           pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
           pbr_lspec += select(spec * pbr_pi, vec3f(0.0), pbr_nols) * rad * nl;
-          // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
-          // seen along the reflection vector.
-          let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
-          pbr_env += rad * (env_w * env_w);
           pbr_lsum += rad;
           pbr_lnl += rad * nl;
       }}
@@ -2443,8 +2438,6 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_lo += (pbr_diff * pbr_ao + select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols)) * rad * nl;
           pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
           pbr_lspec += select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols) * rad * nl;
-          let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
-          pbr_env += rad * (env_w * env_w);
           pbr_lsum += rad;
           pbr_lnl += rad * nl;
       }}
@@ -2462,7 +2455,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (ubuf.pbr_light_scale.z > 0.0) {{
           pbr_ab = textureSampleLevel(pbr_brdf_lut, pbr_cube_samp, vec2f(saturate(pbr_nv), pbr_rough), 0.0).rg;
       }}
-      let pbr_amb = pow(max({6}, vec3f(0.0)), vec3f(2.2));
+      // The ambient constant is Remastered's raw sum of ambient light nodes (CFeatureAmbientSource
+      // 0x16a004): none exist in the shipped rooms, so 0. The retail area ambient has no counterpart.
+      let pbr_amb = vec3f(0.0);
       let pbr_pd = ubuf.pbr_probe[0].xyz * pbr_refl.x + ubuf.pbr_probe[1].xyz * pbr_refl.y +
                    ubuf.pbr_probe[2].xyz * pbr_refl.z;
       // A room cube (GX_AURORA_SET_PBR_CUBE) is linear HDR: x is its exposure, y the mip
@@ -2472,21 +2467,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // The LOD takes the roughness unfloored, as Remastered's does (only the BRDF floors it).
       let pbr_cubed = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, saturate(pbr_orm.g) * pbr_lod).rgb;
       let pbr_cubel = select(srgb_dec(pbr_cubed), pbr_cubed * pbr_hdr, pbr_hdr > 0.0);
-      var pbr_envspec = mix(pbr_amb + pbr_env * 0.35, pbr_cubel, min(ubuf.pbr_probe[0].w, 1.0));
-      // The room cube also shapes the ambient: its blurriest useful mip (z) along the
-      // normal says how much of the room's light comes from that side, and w scales that
-      // to 1 for the cube's average. The game's ambient keeps the level and the colour.
+      var pbr_envspec = pbr_cubel * min(ubuf.pbr_probe[0].w, 1.0);
       var pbr_ambd = pbr_amb;
       // The baked mean without the modulation (the BLPD record's mean, or the grid's mean
       // texture): the glass kinds (30) light with this alone, no lobes.
       var pbr_bmean = vec3f(0.0);
       var pbr_bmeanok = false;
-      if (pbr_hdr > 0.0 && ubuf.pbr_cube.w > 0.0) {{
-          let pbr_nd = ubuf.pbr_probe[0].xyz * pbr_n.x + ubuf.pbr_probe[1].xyz * pbr_n.y +
-                       ubuf.pbr_probe[2].xyz * pbr_n.z;
-          let pbr_irr = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_nd, ubuf.pbr_cube.z).rgb;
-          pbr_ambd = pbr_amb * clamp(dot(pbr_irr, vec3f(0.2126, 0.7152, 0.0722)) * pbr_hdr * ubuf.pbr_cube.w, 0.35, 2.5);
-      }}
       // Remastered's baked-lighting modulation (GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION, white
       // but in a power bomb's flash) multiplies the baked ambient below.
       let pbr_blcm = ubuf.pbr_light_skip.yzw;
@@ -2795,12 +2781,13 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     source.insert(out, R"""(      pbr_glow += ubuf.pbr_model_incan.rgb;
 )""");
     if (config.pbrKind == 36) {
-      // Kind 36 coverage C scales the foreground after the port's tone curve, so C = 0 leaves the scene
-      // unchanged whatever the global tone (a toe/offset cannot inject a nonzero foreground). o0 = (lit + ICMC) C
-      // of the source is not exact through the port tone; C is applied once, here.
-      const size_t at = source.find("      // A model fading (w of the light scale)");
+      // Kind 36's output is (lit + ICMC) * C (4c37625c), and the tone then acts on the scene it lands in: the
+      // coverage scales the light before the curve, as the HDR scene has it. A toe has no offset (tone(0) = 0),
+      // so C = 0 still leaves the scene unchanged.
+      const std::string_view what = "      let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));";
+      const size_t at = source.find(what);
       assert(at != std::string::npos);
-      source.insert(at, "      pbr_tm *= inv_c;\n");
+      source.replace(at, what.size(), "      let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0)) * inv_c;");
     }
     if (config.pbrKind == 36 && screen) {
       const size_t at = source.find("      // A model fading (w of the light scale)");
@@ -2869,7 +2856,6 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     cut("if (ubuf.pbr_volume[3].w > 0.0) {", "if (false) {");
   } else if (costTest == 4) {
     cut("textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, saturate(pbr_orm.g) * pbr_lod).rgb", "vec3f(0.2)");
-    cut("if (pbr_hdr > 0.0 && ubuf.pbr_cube.w > 0.0) {", "if (false) {");
   }
   if (config.sceneHdr) {
     // Into the HDR scene: the exposed light (exposure applied once, above) plus the pass-through,
@@ -2882,9 +2868,6 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     // domain) with terms that may be light. Each producer needs its own domain from the material
     // before HDR is activated or the render is called correct; until then this sum is not exact,
     // and no blanket inverse of pbr_pass stands in for that classification.
-    // Kind 36: the coverage C scales the light before the tone, which is the source's HDR coverage
-    // (source (lit + ICMC) * C); LDR's C after the tone is a port workaround. The pause inventory
-    // stays an LDR pass, so this is not its default.
     const auto put = [&](std::string_view what, std::string_view with) {
       const size_t at = source.find(what);
       if (at == std::string::npos) {
@@ -2893,9 +2876,6 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
       source.replace(at, what.size(), with);
     };
     put("      // Without a room's tone data", "      var pbr_lin = pbr_out;\n      // Without a room's tone data");
-    if (source.find("      pbr_tm *= inv_c;\n") != std::string::npos) {
-      put("      pbr_tm *= inv_c;\n", "      pbr_tm *= inv_c;\n      pbr_lin *= inv_c;\n");
-    }
     put("prev = vec4f(srgb_enc(pbr_tm + pbr_pass), pbr_alpha);", "prev = vec4f(pbr_lin + pbr_pass, pbr_alpha);");
     put("prev = vec4f(clamp(pbr_dc, vec3f(0.0), vec3f(1.0)), prev.a);",
         "prev = vec4f(hdr_exposed(pbr_dc, ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]), prev.a);");
@@ -4071,8 +4051,6 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
           let rad = ubuf.shadow_color.rgb;
           pbr_lo += (pbr_diff * pbr_ao + select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols)) * rad * (nl * sun_vis);
           pbr_ldiff += pbr_diff * pbr_ao * rad * (nl * sun_vis);
-          let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
-          pbr_env += rad * (env_w * env_w);
           pbr_lsum += rad;
           pbr_lnl += rad * (nl * sun_vis);
       })""");
