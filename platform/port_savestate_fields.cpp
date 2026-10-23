@@ -4,6 +4,7 @@
 
 #include "Kyoto/Animation/CAnimTreeNode.hpp"
 #include "MetroidPrime/BodyState/CAdditiveBodyState.hpp"
+#include "MetroidPrime/BodyState/CBSLocomotion.hpp"
 #include "MetroidPrime/BodyState/CBodyController.hpp"
 #include "MetroidPrime/BodyState/CBodyState.hpp"
 #include "MetroidPrime/CAnimData.hpp"
@@ -175,6 +176,22 @@ struct PortStateCodec {
     w.F32(m.x38_steeringSpeedMax);
     w.F32(m.x3c_steeringSpeed);
     w.U32(m.xb4_deliveredCmdMask);
+    // Which locomotion animation (idle/walk/run/strafe) the state is on and how long since it
+    // last switched: Start resets both, and the next update then picks by speed alone.
+    const CBodyStateInfo& info = bc.x2a4_bodyStateInfo;
+    const CBodyState* cur =
+        info.x0_stateMap.find(info.x14_state) != info.x0_stateMap.end() ? info.GetCurrentState() : nullptr;
+    if (const CBSBiPedLocomotion* biped = dynamic_cast< const CBSBiPedLocomotion* >(cur)) {
+      w.U8(1);
+      w.U32(static_cast< uint32_t >(biped->x3c4_anim));
+      w.F32(biped->x3c8_primeTime);
+    } else if (const CBSRestrictedLocomotion* restricted = dynamic_cast< const CBSRestrictedLocomotion* >(cur)) {
+      w.U8(2);
+      w.U32(static_cast< uint32_t >(restricted->x44_anim));
+      w.F32(0.f);
+    } else {
+      w.U8(0);
+    }
   }
 
   // Moves the body into the saved state and additive state (the current one's Shutdown,
@@ -214,7 +231,10 @@ struct PortStateCodec {
     const uint32_t steerMode = r.U32();
     const float steerParams[3] = {r.F32(), r.F32(), r.F32()};
     const uint32_t deliveredMask = r.U32();
-    if (!r.ok)
+    const uint8_t locoKind = r.U8();
+    const uint32_t locoAnim = locoKind != 0 ? r.U32() : 0;
+    const float primeTime = locoKind != 0 ? r.F32() : 0.f;
+    if (!r.ok || !(primeTime == primeTime))
       return false;
     for (float v : f)
       if (!(v == v) || v > 1e9f || v < -1e9f)
@@ -294,6 +314,19 @@ struct PortStateCodec {
     bc.x330_restrictedFlyerMoveSpeed = f[11];
     info.x30_maxPitch = f[12];
     info.x34_24_changeLocoAtEndOfAnimOnly = changeLoco;
+    // After the Start above, which reset them.
+    if (info.x14_state == state && info.x0_stateMap.find(state) != info.x0_stateMap.end() &&
+        (static_cast< int >(locoAnim) == pas::kLA_Invalid || locoAnim <= static_cast< uint32_t >(pas::kLA_StrafeDown))) {
+      const pas::ELocomotionAnim anim = static_cast< pas::ELocomotionAnim >(static_cast< int >(locoAnim));
+      CBodyState* cur = info.GetCurrentState();
+      if (CBSBiPedLocomotion* biped = dynamic_cast< CBSBiPedLocomotion* >(cur); biped && locoKind == 1) {
+        biped->x3c4_anim = anim;
+        biped->x3c8_primeTime = primeTime;
+      } else if (CBSRestrictedLocomotion* restricted = dynamic_cast< CBSRestrictedLocomotion* >(cur);
+                 restricted && locoKind == 2) {
+        restricted->x44_anim = anim;
+      }
+    }
     return true;
   }
 
@@ -372,7 +405,7 @@ namespace PortSaveState {
 namespace {
 
 // Bump when what SavedField picks or how a kind is written changes.
-constexpr uint32_t kFieldPolicy = 5;
+constexpr uint32_t kFieldPolicy = 6;
 
 constexpr uint32_t kUidNone = 0xFFFFFFFFu;    // kInvalidUniqueId
 constexpr uint32_t kUidDynamic = 0xFFFFFFFEu; // an object without an editor id: left alone
