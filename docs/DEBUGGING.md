@@ -137,8 +137,8 @@ JSON lines from `platform/port_statedump.cpp`), saves to slot 8, loads it, dumps
 
 A scenario file has one line per scenario, `ROOM [| setup ; setup]` (`#` comments). The game is held
 for the round trip so the order is exact: dump A, `state save` (taken at the start of the next tick),
-`step 1`, dump A1, `state load`, `step 1` until `[savestate] room state:` is logged, dump B (when that line ends in `neighbour areas still streaming`, B waits for `room state, neighbour areas:`: the areas resident at the save stream back in and take their saved state).
-Dumps are kept under `--out` (`NN-<room>-{A,A1,B}.jsonl`). Add `--turbo 8` for long setup waits if
+`step 1`, dump A1, `state load`, `step 1` until `[savestate] room state:` is logged, dump B (when that line ends in `neighbour areas still streaming`, B0 is dumped then and B waits for `room state, neighbour areas:`: the areas resident at the save stream back in and take their saved state; what B0 had but B lacks died in that wait, a `gone-after-restore` warning, e.g. debris near the end of its life). Generated copies the save leaves to their generators (sounds, maze walls) are warnings when missing.
+Dumps are kept under `--out` (`NN-<room>-{A,A1,B0,B,C}.jsonl`; B0 and C only when taken). Add `--turbo 8` for long setup waits if
 your `mprig` has it.
 
 Reading the report: first a per-class table (`!` strict, `~` warning, kind and count), then
