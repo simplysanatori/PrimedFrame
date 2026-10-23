@@ -101,13 +101,22 @@ bool PortBossState::PutMetroidPrime(CStateManager& mgr, CMetroidPrimeRelay& rela
     if (face->GetHealthInfo(mgr)->GetHP() > 0.f && !exo->x8f4_28_)
       faceHP = face->GetHealthInfo(mgr)->GetHP();
   }
+  bool started = exo->x1444_24_;
+  if (exo->mPortFaceHits > 0 && mode == kExoWaiting && !InState(*exo, "Retreat")) {
+    // A restored fight still in InActive's hand-over: what it hands over is the fight.
+    // Saved as waiting, a save taken in that second (quick resume) loses the stage's hits.
+    mode = kExoFighting;
+    hits = exo->mPortFaceHits;
+    faceHP = exo->mPortFaceHP;
+    started = false;
+  }
   w.U8(mode);
   w.U32(static_cast< uint32_t >(stage));
   w.U32(static_cast< uint32_t >(hits));
   w.F32(faceHP);
   w.U32(static_cast< uint32_t >(exo->x570_));
   w.U32(exo->x580_);
-  w.U8(exo->x1444_24_ ? 1 : 0);
+  w.U8(started ? 1 : 0);
   w.U8(mgr.GetBossId() == exo->GetUniqueId() ? 1 : 0);
   PutTransform(w, xf);
   // Appended after version 1's payload: a build that predates it reads up to the pose.
