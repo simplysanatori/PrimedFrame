@@ -8,6 +8,7 @@
 // $PORT_DREAD_ROMFS/textures, else <pkg dir>/../romfs/textures; otherwise it prints SKIP.
 #include "port_dread_material.h"
 #include "port_remastered_convert_internal.h"
+#include "port_remastered_pak.h"
 #include "port_test.h"
 
 #include <zlib.h>
@@ -301,6 +302,15 @@ void TestEmissive() {
       }
     }
     CHECK(found && std::fabs(icnc - 50.0) < 1e-4);
+    // REFL: the default cube, or the converter drops the env specular (black metal).
+    bool refl = false;
+    for (const auto& d : m.material.data) {
+      if (d.usage == port::FourCC('R', 'E', 'F', 'L')) {
+        refl = d.kind == PortRemastered::ModelMaterialData::Kind::Texture &&
+               PortRemastered::IdToString(d.texture.id).rfind("7b98170f", 0) == 0;
+      }
+    }
+    CHECK(refl);
   }
   // Hyper: no base emissive, vConstant3 (28, 0.08, 0.12) carries it: peak 28.
   {

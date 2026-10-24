@@ -218,6 +218,12 @@ bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, con
   add(kSuitBclr, port::FourCC('B', 'C', 'L', 'R'), std::move(bclr));
   add(kSuitMetl, port::FourCC('M', 'E', 'T', 'L'), std::move(metl));
   add(kSuitNmap, port::FourCC('N', 'M', 'A', 'P'), std::move(nmap));
+  // REFL: Remastered's default (black) cube, which every bfb300b6 material carries and which keeps
+  // the room's probe. Without it the converter marks the surface as reflecting nothing (no env
+  // specular), and the metal armour plates (at.b ~1, no diffuse) drew black.
+  ModelUuid refl{};
+  refl[0] = 0x7B, refl[1] = 0x98, refl[2] = 0x17, refl[3] = 0x0F;
+  m.data.push_back(TextureData(port::FourCC('R', 'E', 'F', 'L'), ToModelOrder(refl), wu, wv));
   if (emissive) {
     // ICAN: bc.a (the mask) x the colour normalised by its peak, sRGB-encoded (the converter
     // reads the emissive map as colour); ICNC carries the peak back as the strength.
