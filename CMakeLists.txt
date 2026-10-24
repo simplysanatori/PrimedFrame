@@ -1415,6 +1415,17 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include
         LIBRARIES ZLIB::ZLIB)
     # --- end Dread re-skin ---
+    # --- Dread suit material (step 5: mp_samuspbr -> synthetic Remastered PBR material) ---
+    # Channel remap, emissive and ids over synthetic fixtures, then through the converter's
+    # ReadMaterial; the real-data run is opt-in (PORT_DREAD_SAMUS_PKG_DIR).
+    mp_port_test(port_dread_material_tests
+        SOURCES tests/port_dread_material.cpp platform/port_dread_material.cpp platform/port_dread_bctex.cpp
+            platform/port_dread_bsmat.cpp platform/port_remastered_tegra_swizzle.cpp
+            platform/port_remastered_bcdec.cpp
+        INCLUDES platform platform/include
+        LIBRARIES mp_test_remastered_convert ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
+        TIMEOUT 120)
+    # --- end Dread suit material ---
     # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
