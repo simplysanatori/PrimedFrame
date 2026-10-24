@@ -1,5 +1,7 @@
 #include "MetroidPrime/Cameras/CGameCamera.hpp"
 
+#include "port_third_person.h"
+
 #include "Collision/CMaterialFilter.hpp"
 #include "Collision/CRayCastResult.hpp"
 
@@ -113,7 +115,13 @@ const CMatrix4f& CGameCamera::GetPerspectiveMatrix() const {
 }
 
 CVector3f CGameCamera::ConvertToScreenSpace(const CVector3f& vec) const {
+#ifdef TARGET_PC
+  // Third person draws the world from behind the shoulder, so the lock-on boxes, the target
+  // search and the reticles project from there (only the first-person camera is current then).
+  CVector3f rotated = PortThirdPerson::TickView(GetTransform()).TransposeMultiply(vec);
+#else
   CVector3f rotated = GetTransform().TransposeMultiply(vec);
+#endif
   if (rotated.IsNonZero()) {
     return GetPerspectiveMatrix().MultiplyOneOverW(rotated);
   }
