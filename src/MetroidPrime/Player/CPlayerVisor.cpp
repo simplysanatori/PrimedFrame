@@ -385,8 +385,13 @@ float CPlayerVisor::ScanWindowCopySize(const CStateManager& mgr, int vpWidth, in
                                        t * gpTweakGui->GetScanWindowScanningAspect()) +
                         (1.f - transFactor);
   const float fit = ScanWindowFit(vpWidth, vpHeight);
+#ifdef TARGET_PC
+  const float vpW = 169.218f * fit * x48_interpWindowDims.GetX() * PortWindowShapeX();
+  const float vpH = 152.218f * fit * x48_interpWindowDims.GetY() * PortWindowShapeY();
+#else
   const float vpW = 169.218f * fit * x48_interpWindowDims.GetX();
   const float vpH = 152.218f * fit * x48_interpWindowDims.GetY();
+#endif
   width = CMath::Clamp(skPixelsPerTileDimension16Bit, round_up_to_tile(vpW / divisor), vpWidth);
   height = CMath::Clamp(skPixelsPerTileDimension16Bit, round_up_to_tile(vpH / divisor), vpHeight);
   return divisor;
@@ -400,6 +405,10 @@ static bool PortScanWindowPointer(float& x, float& y) {
   return PortDebug::PresentedPointerAimPosition(CCameraManager::GetPresentationInterpolation(), x,
                                                 y);
 }
+
+// Same area as retail's window, held while the pointer is locked so the window keeps its shape.
+float CPlayerVisor::PortWindowShapeX() { return PortDebug::PointerAim() ? 0.7f : 1.f; }
+float CPlayerVisor::PortWindowShapeY() { return PortDebug::PointerAim() ? 1.4f : 1.f; }
 
 // The zoomed copy (sharp scan window), keyed apart from the spare buffer; valid for the frame
 // that made it, until DrawScanEffect takes it.
@@ -521,8 +530,14 @@ void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
   if (portPointer)
     CGraphics::SetViewPointMatrix(CTransform4f::Translate(-portShiftX, 0.f, portShiftY));
 #endif
+#ifdef TARGET_PC
+  const CTransform4f windowScale =
+      CTransform4f::Scale(x48_interpWindowDims.GetX() * PortWindowShapeX(), 1.f,
+                          x48_interpWindowDims.GetY() * PortWindowShapeY());
+#else
   const CTransform4f windowScale =
       CTransform4f::Scale(x48_interpWindowDims.GetX(), 1.f, x48_interpWindowDims.GetY());
+#endif
   const CTransform4f seventeenScale = CTransform4f::Scale(17.f * fit, 1.f, 17.f * fit);
   const CTransform4f mm = seventeenScale * windowScale;
   const CTransform4f verticalFlip = CTransform4f::Scale(1.f, 1.f, -1.f);
@@ -848,8 +863,21 @@ bool CPlayerVisor::DrawScanObjectIndicators(const CStateManager& mgr) const {
   CGraphics::SetDepthRange(0.125f, 1.f);
   gpRender->SetViewportOrtho(true, 0.f, 4096.f);
   const float fit = ScanWindowFit(CGraphics::GetViewportWidth(), CGraphics::GetViewportHeight());
+#ifdef TARGET_PC
+  // The shield masks the reticle lines outside the window by depth: it moves with the window.
+  float pointerX = 0.f;
+  float pointerY = 0.f;
+  if (PortScanWindowPointer(pointerX, pointerY))
+    CGraphics::SetViewPointMatrix(CTransform4f::Translate(
+        -pointerX * 0.5f * static_cast< float >(CGraphics::GetViewportWidth()), 0.f,
+        pointerY * 0.5f * static_cast< float >(CGraphics::GetViewportHeight())));
+  gpRender->SetModelMatrix(
+      CTransform4f::Scale(17.f * fit * x48_interpWindowDims.GetX() * PortWindowShapeX(), 1.f,
+                          17.f * fit * x48_interpWindowDims.GetY() * PortWindowShapeY()));
+#else
   gpRender->SetModelMatrix(CTransform4f::Scale(17.f * fit * x48_interpWindowDims.GetX(), 1.f,
                                                17.f * fit * x48_interpWindowDims.GetY()));
+#endif
   shield->Draw(CModelFlags::AlphaBlended(CColor(0)));
   const CGameCamera& camera = mgr.GetCameraManager()->GetCurrentCamera(mgr);
   CTransform4f cameraXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);

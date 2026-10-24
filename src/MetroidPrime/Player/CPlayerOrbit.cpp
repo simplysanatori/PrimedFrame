@@ -7,6 +7,7 @@
 #include "MetroidPrime/CHealthInfo.hpp"
 #include "MetroidPrime/Player/CPlayerCameraBob.hpp"
 #include "MetroidPrime/Player/CPlayerGun.hpp"
+#include "MetroidPrime/Player/CPlayerVisor.hpp"
 #include "MetroidPrime/Player/CGrappleArm.hpp"
 #include "MetroidPrime/CAxisAngle.hpp"
 #include "MetroidPrime/CGameCollision.hpp"
@@ -645,10 +646,20 @@ bool CPlayer::WithinOrbitScreenBox(const CVector3f& screenCoords, EPlayerZoneInf
       cx += pointerX * width / 2.f;
       cy += pointerY * height / 2.f;
     }
+    float halfWidth = CCast::LtoF(gpTweakPlayer->GetOrbitZoneWidth(zone)) * sx;
+    float halfHeight = CCast::LtoF(gpTweakPlayer->GetOrbitZoneHeight(zone)) * sy;
+    if (zone == kZI_Scan) {
+      // The zone takes the window's shape (CPlayerVisor::PortWindowShapeX).
+      halfWidth *= CPlayerVisor::PortWindowShapeX();
+      halfHeight *= CPlayerVisor::PortWindowShapeY();
+    }
+    if (CMath::AbsF(screenCoords.GetX() - cx) <= halfWidth &&
+        CMath::AbsF(screenCoords.GetY() - cy) <= halfHeight && screenCoords.GetZ() < 1.f) {
+      return true;
+    }
 #else
     const float cx = CCast::LtoF(gpTweakPlayer->GetOrbitZoneCentreX(zone)) * sx;
     const float cy = CCast::LtoF(gpTweakPlayer->GetOrbitZoneCentreY(zone)) * sy;
-#endif
     if (CMath::AbsF(screenCoords.GetX() - cx) <=
             CCast::LtoF(gpTweakPlayer->GetOrbitZoneWidth(zone)) * sx &&
         CMath::AbsF(screenCoords.GetY() - cy) <=
@@ -656,6 +667,7 @@ bool CPlayer::WithinOrbitScreenBox(const CVector3f& screenCoords, EPlayerZoneInf
         screenCoords.GetZ() < 1.f) {
       return true;
     }
+#endif
     break;
   }
   case kZT_Ellipse:
