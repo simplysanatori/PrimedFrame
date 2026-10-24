@@ -255,6 +255,7 @@ set(MP_PORT_SOURCES
     platform/port_freecam.cpp
     platform/port_third_person.cpp
     platform/port_third_person_body.cpp
+    platform/port_world_holders.cpp
     platform/port_photo.cpp
     platform/port_console.cpp
     platform/port_log_file.cpp
@@ -1442,6 +1443,11 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include)
     mp_port_test(port_third_person_body_tests
         SOURCES tests/port_third_person_body.cpp
+        INCLUDES platform/include)
+    # The order a mod reload runs in: the port's own model holders go before the PAKs reopen
+    # (port_world_holders.h), or the next world takes this one's models from the pool.
+    mp_port_test(port_world_holders_tests
+        SOURCES tests/port_world_holders.cpp platform/port_world_holders.cpp
         INCLUDES platform/include)
     # --- Dread Samus import (step 6: the dread-samus mod) ---
     # The converter's explicit-weights path, the synthetic Model of a re-skinned body, the retail

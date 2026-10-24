@@ -21,6 +21,7 @@
 #include "port_scene_copy.h"
 #include "port_skip_cutscenes.h"
 #include "port_viewmodel.h"
+#include "port_world_holders.h"
 #include "port_console.h"
 #include "port_room_effects.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
@@ -761,6 +762,10 @@ CStateManager::~CStateManager() {
   PortRoomEnv::SetLoadedAreas(nullptr, 0);
   PortRoomGeo::SetLoadedAreas(nullptr, 0);
   PortRoomLiquid::SetLoadedAreas(nullptr, 0);
+  // Likewise the port's own model holders: their tokens would keep this world's models in
+  // gpSimplePool past the teardown, and the next world would take them for its own (a mod
+  // switched off in between: models whose texture files no PAK serves any more).
+  PortWorldHolders::Release();
   CMemory::OffsetFakeStatics(
       -(x808_objectLists.size() * sizeof(CObjectList) + 0x11c)); // TODO what is this 11c?
   x88c_rumbleManager->HardStopAll();

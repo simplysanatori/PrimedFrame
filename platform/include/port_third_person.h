@@ -85,6 +85,9 @@ void SetHeight(float metres);
 
 // Once per game tick, after the camera manager's update.
 void Update(CStateManager& mgr, float dt);
+// A world is going (port_world_holders.h): drop the body it drew and the camera state computed
+// from it, so the next world builds both again. `third_person` itself is kept.
+void Reset();
 // Where the camera's centre ray meets the world or a solid actor (the far point if it meets
 // nothing), found once per tick; false when not Active().
 bool AimPoint(CVector3f& out);
