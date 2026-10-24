@@ -128,6 +128,8 @@ static std::deque<uint64_t> g_pipelinePrefetchQueue;
 static absl::flat_hash_map<uint64_t, uint32_t> g_prefetchFrames;
 constexpr uint32_t PrefetchRepeatFrames = 600;
 constexpr uint64_t MaxLoggedNewMisses = 64;
+constexpr size_t MaxRecordedUses = 65536;
+constexpr size_t MaxKnownPipelines = 65536;
 static std::atomic_uint64_t g_skippedDraws = 0;
 static std::atomic_uint64_t g_newMisses = 0;
 static std::atomic_uint64_t g_knownMisses = 0;
@@ -547,6 +549,11 @@ static void record_pipeline_use(PipelineRef hash) {
   const uint64_t context = g_pipelineContext.load(std::memory_order_relaxed);
   {
     std::lock_guard lock{g_recordedUsesMutex};
+    // Bounds the set over a long session: forgetting only re-queues uses the DB already has
+    // (INSERT OR IGNORE) and re-pins GLOBAL ones.
+    if (g_recordedUses.size() >= MaxRecordedUses) {
+      g_recordedUses.clear();
+    }
     if (!g_recordedUses.emplace(context, hash).second) {
       return;
     }
@@ -569,7 +576,8 @@ static bool note_pipeline_miss(PipelineRef hash) {
     g_knownMisses.fetch_add(1, std::memory_order_relaxed);
     return false;
   }
-  if (g_config.pipelineCacheLazy) {
+  // Past the bound a repeat miss counts as new again; only the stats tell the two apart.
+  if (g_config.pipelineCacheLazy && g_knownPipelines.size() < MaxKnownPipelines) {
     g_knownPipelines.insert(hash);
   }
   return g_newMisses.fetch_add(1, std::memory_order_relaxed) < MaxLoggedNewMisses;

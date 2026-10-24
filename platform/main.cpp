@@ -896,7 +896,26 @@ int main(int argc, char** argv) {
                            reason);
         }
     }
-    uint32_t pipelineEvictFrames = pipelineLazy ? 7200 : 0;
+    // Built pipelines stay until memory runs short (issue #187), areas left long ago included, so
+    // walking back is free. Lazy mode trims on the system's memory warnings (port_memory_log.cpp) and
+    // on a MemAvailable check every 5 s: under 1024 MiB available it releases what a minute of
+    // frames didn't draw, under 512 MiB all but what the last frames drew (GLOBAL pipelines stay).
+    // An 8 GB phone or tablet runs the game with 2-4 GB available; Android's own low-memory
+    // threshold (logged with each memory warning) is a few hundred MiB, so 1024 trims well before
+    // the system starts killing apps and 512 just above it. Overrides: MP_PIPELINE_TRIM_MIB and
+    // MP_PIPELINE_TRIM_SEVERE_MIB (0 turns a level off), MP_PIPELINE_EVICT (a fixed idle sweep).
+    uint32_t pipelineEvictFrames = 0;
+    if (pipelineLazy) {
+        const int trimMib = port::EnvInt("MP_PIPELINE_TRIM_MIB", 1024);
+        const int severeMib = port::EnvInt("MP_PIPELINE_TRIM_SEVERE_MIB", 512);
+        PortMemoryLog::SetPipelinePressure(trimMib, severeMib);
+        if (port::EnvString("MP_PIPELINE_TRIM_MIB") != nullptr ||
+            port::EnvString("MP_PIPELINE_TRIM_SEVERE_MIB") != nullptr) {
+            PortLog::Write("port: pipeline trim under %d MiB available, all idle under %d MiB "
+                           "(MP_PIPELINE_TRIM_MIB/MP_PIPELINE_TRIM_SEVERE_MIB)\n",
+                           trimMib, severeMib);
+        }
+    }
     if (const char* env = port::EnvString("MP_PIPELINE_EVICT"); env != nullptr && env[0] != '\0') {
         pipelineEvictFrames = static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
         PortLog::Write("port: pipeline eviction %u frames (MP_PIPELINE_EVICT)\n", pipelineEvictFrames);
