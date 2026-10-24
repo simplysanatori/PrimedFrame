@@ -393,8 +393,10 @@ void CElementGen::PortRenderParticlesVfx() {
     return; // a texture is not streamed in yet
   }
   // VisorRunOff is a PMDL model particle (the mesh path below), but a sprite generator sharing its
-  // material still reads CCH0..4: evaluate them rather than draw from zeroed uniforms.
-  if ((desc.features & (aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
+  // material still reads CCH0..4: evaluate them rather than draw from zeroed uniforms. VisorRain is a
+  // sprite whose CCH0 is the drop mask's scale (SMTR-animated), so it needs the same rows.
+  if ((desc.features & (aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit |
+                        aurora::gfx::vfx::VisorRain)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
   // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): AMBS and the clustered gather, and with BLIT 1 (PBLT)
@@ -968,7 +970,8 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
   }
   // VPRM's CCHn rows, with the VSMT overrides, at this frame: IceCharge* and VisorRunOff's 5 rows.
   if ((features & (aurora::gfx::vfx::IceChargeBeam | aurora::gfx::vfx::IceChargeCollision |
-                   aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
+                   aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit |
+                   aurora::gfx::vfx::VisorRain)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
   // VFX_IceChargeCollision_Lit's lighting: the clustered gather (block and mask) and the baked probe.

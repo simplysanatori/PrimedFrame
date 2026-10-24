@@ -78,6 +78,18 @@ enum Feature : uint32_t {
   // Fogged whatever the blend: the fog follows the generator's PBDM/SBDM/EBDM row (SetupFogFromBlendMode), the
   // factors its MATI's EBlendMode, so a MATI additive or premultiplied draw over a fogged row keeps the fog.
   Fogged = 1u << 27,
+  // VFX_VisorRain (0ec41df0, FS perm 000): the visor's rain splash, a sprite. TCH0 (colorSlot) is a
+  // two-channel noise map read twice, at a per-particle patch (offset by PMTR row 0's xy, scaled by
+  // CCH0.y) and at the constant texel (0, 0) (the roundEven sample lands on it across the whole
+  // quad). The two channels warp a sum of sines into the drop mask H; 0.5 < H < 1 is inside the
+  // drop, whose height Z = (H - 0.5) x 1.8 + 0.1 gives the normal n that offsets the scene copy
+  // (capture_scene) at the fragment by (1 - fade) x CCH0.w x near / view depth, and the edge
+  // darkening f = Z^4 x 10 + 0.75 + 0.25 x fade; elsewhere the fragment is discarded. The bigger
+  // drops ("runners": PMTR row 1's y < CCH0.z and size > row 2's y) slide the pattern down by
+  // min(2 x row 1's x, 0.5) x 0.33 and take their own fade (row 1's z; row 0's z otherwise).
+  // rgb = f x scene x vc.rgb x PCMD, alpha vc.a. params = CCH0 (SMTR-animated), extra 0..2 = PMTR
+  // rows 0..2. Unfogged: the visor composite pass has no fog.
+  VisorRain = 1u << 28,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31

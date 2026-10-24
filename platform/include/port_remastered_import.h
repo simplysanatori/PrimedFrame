@@ -154,7 +154,8 @@ inline constexpr int kModels = 18;     // the table's models, their looks and th
 // 98: a PART keeps its visor effect override data (PVSC/PVMC/PVTC/PVBS/PVDT).
 // 100: missile and energy tank pickups paired (#loose-chpr, kMatchedEffects).
 // 101: the lava spit's two PARTs paired with one GENP (#shared-genp), the actor's variables on them.
-inline constexpr int kEffects = 101;   // port_remastered_effect_import and the particle converters
+// 102: visor rain splash (VFX_VisorRain 0ec41df0, BC978532 paired).
+inline constexpr int kEffects = 102;   // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).

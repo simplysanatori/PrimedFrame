@@ -636,6 +636,10 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"fbfee463-1dec-4d67-bc51-c528a125043d", 0xD7FFF8D6},  // 020B6226 LCTR_MAGMOUTH
     {"fc6a3e0d-eb0d-4b81-99a9-e208ec1b80e4", 0x599B4D00},  // 76C35773 Collar
     {"fe324176-fcbe-480b-8437-fd19c3369f9e", 0x88460B49},  // 76C35773 root
+    // The visor's rain drops: the splash is drawn by the visor's own CHUDBillboardEffect, whose GENP
+    // no room or CHPR reaches (kb topic/unpaired-retail-particles.md). VFX_VisorRain (0ec41df0) is
+    // its shader, so the pair draws Remastered's drops.
+    {"45ba782d-5656-40dd-a115-9f20cac3955e", 0xBC978532},  // PART_EnvRainSplash, visor rain drops (RenderLooseDataMP1.LDTA)
     {"#script-slot", 0},  // method of the entries below
     // By script slot: Remastered keeps retail's property order, so a ROOM
     // object and the retail object it stands for name their assets in the same
@@ -851,9 +855,6 @@ constexpr MatchedEffect kMatchedEffects[] = {
     // (port_remastered_room_effects.cpp).
     {"47b4f5e0-5a5d-4a9b-a1fb-62486ec76c5a", 0x2ECE9B8C},  // bigspittle
     {"47b4f5e0-5a5d-4a9b-a1fb-62486ec76c5a", 0x68907841},  // spittle
-    // Left out: 45ba782d-5656-40dd-a115-9f20cac3955e -> BC978532 (PART_EnvRainSplash).
-    // Paired, the visor drops draw as grey noise squares (its VMAT shader 0ec41df0
-    // has no recipe), worse than retail's drops.
 };
 
 // Retail PARTs whose Remastered effect is a stub because Remastered draws them
