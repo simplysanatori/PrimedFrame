@@ -1389,8 +1389,9 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CHUDBillboardEffe
       {"x108_timeoutTimer", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CHUDBillboardEffect::x108_timeoutTimer), PES_ADDR(CHUDBillboardEffect, x108_timeoutTimer), nullptr, nullptr},
       {"xPortManagedType", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CHUDBillboardEffect::xPortManagedType), PES_ADDR(CHUDBillboardEffect, xPortManagedType), PES_GETI(CHUDBillboardEffect, xPortManagedType), PES_SETI(CHUDBillboardEffect, xPortManagedType)},
       {"xPortVisorOverride", "bool", PortSchemaKind::bool_, 0, kPortSchemaPrivate, sizeof(CHUDBillboardEffect::xPortVisorOverride), PES_ADDR(CHUDBillboardEffect, xPortVisorOverride), PES_GETI(CHUDBillboardEffect, xPortVisorOverride), PES_SETI(CHUDBillboardEffect, xPortVisorOverride)},
+      {"xPortSpawnSpread", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CHUDBillboardEffect::xPortSpawnSpread), PES_ADDR(CHUDBillboardEffect, xPortSpawnSpread), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CHUDBillboardEffect", "CEffect", fields, 10, 0x9938BA00BE1DFFF9ull};
+  static const PortSchemaClass desc = {"CHUDBillboardEffect", "CEffect", fields, 11, 0x16ECFE71EED17F63ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CIceAttackProjectile >() {
@@ -4657,4 +4658,4 @@ const PortSchemaClass* const* PortEntitySchema::Classes(int& count) {
 }
 
 const int PortEntitySchema::kClassCount = 159;
-const int PortEntitySchema::kFieldCount = 3383;
+const int PortEntitySchema::kFieldCount = 3384;
