@@ -10,6 +10,7 @@
 #include "xray.hpp"
 #include <bit>
 #include <aurora/vfx.hpp>
+#include <aurora/envfx.hpp>
 #include <aurora/water.hpp>
 #include "probe.hpp"
 #include "recording.hpp"
@@ -752,6 +753,7 @@ void shutdown() {
   actor_shadow::shutdown();
   vfx::shutdown();
   water::shutdown();
+  envfx::shutdown();
   tex_palette_conv::shutdown();
   texture_replacement::shutdown();
   gx::shutdown();
