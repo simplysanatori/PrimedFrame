@@ -847,6 +847,10 @@
   until Show cheats is ticked (`cheats`, off by default). Invulnerable
   (`invulnerable`, off by default) makes Samus take no damage; it stays on
   across runs until unticked, and `MP_GODMODE=<0|1>` overrides it for one run (see below).
+  Phazon Beam (`cheat_phazon_beam`, off by default) puts the Phazon Beam in the Power Beam's
+  place, in any room and without the Phazon Suit: selecting Wave, Ice or Plasma leaves it through
+  the game's exit morph, selecting Power enters it again, and missiles fire from it. Unticking
+  it leaves the beam at once; real phazon pools behave as in the original either way.
 - F1 > System > Log, "Write the log to a file" (`logging`, on by default; the older `log_file` key is ignored):
   everything the game prints to stdout/stderr, including the
   line Aurora prints before it aborts, also goes to `metroid_prime_port.log` in

@@ -568,6 +568,9 @@ std::string CardExportDolphin(const std::string& format = "");
 // Cheat: the player takes no damage (F1 > Debug > Cheats, MP_GODMODE, console `god`).
 bool Invulnerable();
 void SetInvulnerable(bool enabled);
+// Cheat: the Phazon Beam takes the Power Beam's place, anywhere (F1 > Debug > Cheats).
+bool PhazonBeamCheat();
+void SetPhazonBeamCheat(bool enabled);
 // Write the log to <user folder>/metroid_prime_port.log (port_log_file.h). MP_LOG_FILE=1
 // turns it on for one run without changing the setting.
 bool LogFile();

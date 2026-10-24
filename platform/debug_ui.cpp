@@ -140,6 +140,7 @@ bool sSaveStateRoomState = true;
 std::atomic<bool> sTouchBeamShift{false}; // the touch twin layout's held Beam button
 std::atomic<bool> sTouchTurboFire{false}; // the touch Turbo button, held
 bool sInvulnerable = false;
+bool sPhazonBeamCheat = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
 // setting ends it.
 int sInvulnerableRun = -1;

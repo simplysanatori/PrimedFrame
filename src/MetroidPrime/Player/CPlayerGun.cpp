@@ -1513,7 +1513,14 @@ void CPlayerGun::FireSecondary(float dt, CStateManager& mgr) {
   }
 
   CPlayerState* playerState = mgr.PlayerState();
-  if (x835_25_inPhazonBeam || int(x318_comboAmmoIdx) == 0 ||
+#ifdef TARGET_PC
+  // Port: the Phazon Beam cheat fires missiles (not combos) from the Phazon Beam.
+  const bool phazonBlocks = x835_25_inPhazonBeam && !(mPortPhazonCheat && int(x318_comboAmmoIdx) == 1 &&
+                                                      !x832_26_comboFiring);
+#else
+  const bool phazonBlocks = x835_25_inPhazonBeam;
+#endif
+  if (phazonBlocks || int(x318_comboAmmoIdx) == 0 ||
       playerState->HasPowerUp(skItemArr[x318_comboAmmoIdx]) != true || !IsWeaponStateSet(0x4)) {
     NWeaponTypes::play_sfx(SFXsam_b_malfxn_00, x834_27_underwater, false, 0x4a);
     return;
@@ -1934,6 +1941,52 @@ void CPlayerGun::PortForcePhazonBeam(const bool on) {
   }
 }
 
+#ifdef TARGET_PC
+// Port: the Phazon Beam cheat. While on, the Phazon Beam takes the Power Beam's place: it is the
+// selected Power Beam, in any room. The flags are the ones standing in phazon with the suit sets
+// (the retail code drops canFirePhazon on leaving a pool, so they are set again every frame).
+// Another beam is reached by leaving the Phazon Beam first (the game's own exit morph), then
+// changing to the beam picked; picking Power again enters Phazon again. In a real phazon pool the
+// retail code runs untouched.
+void CPlayerGun::PortApplyPhazonCheat(const CFinalInput& input, CStateManager& mgr) {
+  if (!PortDebug::PhazonBeamCheat()) {
+    if (mPortPhazonCheat) {
+      // Turned off: let go of the beam through the exit morph (a pool sets it again).
+      mPortPhazonCheat = false;
+      mPortPhazonPendingBeam = -1;
+      if (!x835_30_inPhazonPool) {
+        x835_24_canFirePhazon = false;
+      }
+    }
+    return;
+  }
+  mPortPhazonCheat = true;
+  if (IsWeaponStateSet(0x8) || x835_30_inPhazonPool) {
+    return;
+  }
+
+  if (x835_25_inPhazonBeam && x33c_phazonBeamState == kPBS_Active && mPortPhazonPendingBeam < 0) {
+    const CPlayerState& playerState = *mgr.GetPlayerState();
+    float maxInput = 0.f;
+    for (int i = 1; i < 4; ++i) {
+      if (playerState.HasPowerUp(mBeamArr[i])) {
+        const float inputVal = ControlMapper::GetAnalogInput(mBeamCtrlCmd[i], input);
+        if (inputVal > 0.65f && inputVal > maxInput) {
+          maxInput = inputVal;
+          mPortPhazonPendingBeam = i;
+        }
+      }
+    }
+  }
+
+  const bool phazon = mPortPhazonPendingBeam < 0 && x310_currentBeam == CPlayerState::kBI_Power;
+  x835_24_canFirePhazon = phazon;
+  if (phazon) {
+    x835_25_inPhazonBeam = true;
+  }
+}
+#endif
+
 void CPlayerGun::StartPhazonBeamTransition(bool active, CStateManager& mgr,
                                            CPlayerState& playerState) {
   if (x833_28_phazonBeamActive == active) {
@@ -1963,6 +2016,9 @@ void CPlayerGun::HandleWeaponChange(const CFinalInput& input, CStateManager& mgr
   if (ControlMapper::GetPressInput(ControlMapper::kC_Morph, input)) {
     StopContinuousBeam(mgr, true);
   }
+#ifdef TARGET_PC
+  PortApplyPhazonCheat(input, mgr);
+#endif
   if (!IsWeaponStateSet(0x8)) {
     if (!x835_25_inPhazonBeam) {
       HandleBeamChange(input, mgr);
@@ -1987,6 +2043,13 @@ void CPlayerGun::HandleBeamChange(const CFinalInput& input, CStateManager& mgr) 
     }
   }
 
+#ifdef TARGET_PC
+  // Port: the Phazon Beam cheat's pending pick, once the Phazon Beam has been left.
+  if (mPortPhazonPendingBeam >= 0) {
+    beam = mPortPhazonPendingBeam;
+    mPortPhazonPendingBeam = -1;
+  }
+#endif
   if (beam > -1) {
     x833_25_ = true;
     if (x310_currentBeam != beam && playerState.HasPowerUp(mBeamArr[beam])) {
@@ -2354,7 +2417,11 @@ void CPlayerGun::UpdateWeaponFire(float dt, CPlayerState& playerState, CStateMan
           x300_remainingMissiles = missileCount;
           if (static_cast< int >(x300_remainingMissiles) > 5)
             x300_remainingMissiles = 5;
-          if (!x835_25_inPhazonBeam) {
+          if (!x835_25_inPhazonBeam
+#ifdef TARGET_PC
+              || mPortPhazonCheat // Port: Phazon Beam cheat, missiles work in it
+#endif
+          ) {
             ResetToMissile();
           }
           FireSecondary(dt, mgr);

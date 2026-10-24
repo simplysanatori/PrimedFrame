@@ -1075,6 +1075,9 @@ void SetInvulnerable(bool enabled) {
   MarkDirty();
 }
 
+bool PhazonBeamCheat() { return Loaded(sPhazonBeamCheat); }
+void SetPhazonBeamCheat(bool enabled) { StoreSetting(sPhazonBeamCheat, enabled); }
+
 bool LogFile() { return Loaded(sLogFile); }
 void SetLogFile(bool enabled) { StoreSetting(sLogFile, enabled); }
 

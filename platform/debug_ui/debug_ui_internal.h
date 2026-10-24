@@ -113,6 +113,7 @@ extern bool sSaveStateRoomState;
 extern std::atomic< bool > sTouchBeamShift;
 extern std::atomic< bool > sTouchTurboFire;
 extern bool sInvulnerable;
+extern bool sPhazonBeamCheat;
 extern int sInvulnerableRun;
 extern bool sLogFile;
 extern std::mutex sRandoMutex;

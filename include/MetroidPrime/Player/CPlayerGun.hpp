@@ -153,6 +153,11 @@ public:
   void StartPhazonBeamTransition(bool, CStateManager&, CPlayerState&);
   // Port: console `phazongun`: sets the same flags standing in phazon with the Phazon Suit does.
   void PortForcePhazonBeam(bool on);
+#ifdef TARGET_PC
+  // Port: the Phazon Beam cheat (PortDebug::PhazonBeamCheat), applied once a frame from
+  // HandleWeaponChange.
+  void PortApplyPhazonCheat(const CFinalInput&, CStateManager&);
+#endif
   void HandleWeaponChange(const CFinalInput&, CStateManager&);
   void HandleBeamChange(const CFinalInput&, CStateManager&);
 #ifdef TARGET_PC
@@ -488,6 +493,10 @@ private:
   void PortStartRapidCharge();
   bool PortRapidChargeShot(float dt, CStateManager& mgr);
   bool mPortRapidCharge;
+  // Phazon Beam cheat: it was on last frame (so turning it off releases the beam), and the
+  // beam picked while in the Phazon Beam, switched to once the exit morph is done (-1: none).
+  bool mPortPhazonCheat = false;
+  int mPortPhazonPendingBeam = -1;
   int mPortRapidShots;
   float mPortRapidTimer;
   bool mPortPointerAimValid;

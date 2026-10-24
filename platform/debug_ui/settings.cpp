@@ -460,6 +460,7 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { out << PortRoomGeo::LodDistance(); }, false, "0.5", "2"},
     {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteControlSettings(out); }, false, nullptr, nullptr},
     BoolKey< &sInvulnerable >("invulnerable"),
+    BoolKey< &sPhazonBeamCheat >("cheat_phazon_beam"),
     // Not "log_file": builds from before the log was on by default wrote
     // log_file=0 into every settings file, which kept it off after an update.
     BoolKey< &sLogFile >("logging"),
