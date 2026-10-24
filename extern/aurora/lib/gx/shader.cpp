@@ -2025,6 +2025,57 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                           underlying(config.tevStages[mapStage[6]].texCoordId),
                           underlying(config.tevStages[mapStage[0]].texMapId));
     }
+    // Kind 43, Remastered's SimpleGlass (084A8DB5, kb material/084a8db5.md): kind 29 less TCH1, TCH2
+    // and DIFC. Map 0 is BCLR (alpha = roughness, raw), map 4 TCH0 an indirect offset bending both
+    // the scrolled BCLR and the screen copy (map 7, mipped as kind 29's; no depth scale here), whose
+    // blur follows the scrolled BCLR's alpha. Rows 0-3 are CCH0..CCH3, row 4 x the object's phase
+    // (inferred as kind 29's) and row 6 w whether the material has a cube of its own. Unlit and
+    // alpha blended by the vertex alpha: the sum is all glow, the bent room comes through pbr_pass.
+    // The vertex colour's 2 x linear decode is kind 29's, unverified for this shader.
+    if (screen && mapStage[0] != -1 && mapStage[4] != -1) {
+      liquid += fmt::format(R"""(
+      if (pbr_kind > 42.5 && pbr_kind < 43.5) {{
+          let pbr_h0 = ubuf.pbr_shield[0];
+          let pbr_h2 = ubuf.pbr_shield[2];
+          let pbr_h3 = ubuf.pbr_shield[3];
+          let pbr_ph = ubuf.pbr_shield[4].x;
+          let pbr_t = ubuf.pbr_param.x;
+          let pbr_uvb = tex{1}_uv;
+          let pbr_uva = tex{3}_uv;
+          let pbr_gd = textureSampleGrad(tex{2}, tex{2}_samp, pbr_uva, dpdx(pbr_uva), dpdy(pbr_uva)).xy - 0.5;
+          let pbr_r = {0}.a;
+          let pbr_uvb2 = pbr_uvb + pbr_gd * pbr_h0.x + (pbr_h0.z * pbr_t * 0.5 + pbr_ph);
+          let pbr_gbc = textureSampleGrad(tex{4}, tex{4}_samp, pbr_uvb2, dpdx(pbr_uvb), dpdy(pbr_uvb));
+          let pbr_v5 = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a);
+          let pbr_suv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 + pbr_gd * pbr_h3.x * vec2f(1.0, -1.0);
+          let pbr_sdim = vec2f(textureDimensions(tex7));
+          let pbr_smips = ceil(log2(max(pbr_sdim.x, pbr_sdim.y))) + 1.0;
+          let pbr_slod = max(0.0, pbr_smips * pbr_h3.w * (1.0 - pbr_gbc.a) - 1.0);
+          let pbr_gscene = srgb_dec(textureSampleLevel(tex7, tex7_samp, clamp(pbr_suv, vec2f(0.0), vec2f(1.0)), pbr_slod).rgb);
+          let pbr_snv = saturate(-dot(normalize(in.pbr_pos), pbr_n));
+          let pbr_sq = pbr_r * pbr_c0 + pbr_c1;
+          let pbr_sa = min(pbr_sq.x * pbr_sq.x, exp2(-9.28 * pbr_snv)) * pbr_sq.x + pbr_sq.y;
+          var pbr_sab = vec2f(-1.04, 1.04) * pbr_sa + pbr_sq.zw;
+          if (ubuf.pbr_light_scale.z > 0.0) {{
+              pbr_sab = textureSampleLevel(pbr_brdf_lut, pbr_cube_samp, vec2f(pbr_snv, pbr_r), 0.0).rg;
+          }}
+          var pbr_scube = vec3f(0.0);
+          if (ubuf.pbr_shield[6].w > 0.0) {{
+              let pbr_sqc = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_r * pbr_lod).rgb;
+              pbr_scube = select(srgb_dec(pbr_sqc), pbr_sqc * pbr_hdr, pbr_hdr > 0.0);
+          }}
+          pbr_alpha = clamp(pbr_v5.a, 0.0, 1.0);
+          pbr_lo = vec3f(0.0);
+          pbr_glow = pbr_scube * (pbr_sab.x * (pbr_v5.a * pbr_h0.y) + pbr_sab.y) + pbr_gbc.rgb * pbr_h0.w +
+                     pbr_v5.rgb * pbr_h2.x;
+          pbr_pass = pbr_gscene * pbr_h3.z;
+      }})""",
+                          base,
+                          underlying(config.tevStages[mapStage[0]].texCoordId),
+                          underlying(config.tevStages[mapStage[4]].texMapId),
+                          underlying(config.tevStages[mapStage[4]].texCoordId),
+                          underlying(config.tevStages[mapStage[0]].texMapId));
+    }
     // Kind 15, Remastered's PickUp (3E95A9FE, the item pickups' rings and beams), permutation 000_0.
     // Its constants are GXSetPBRShield's rows: CCH0..CCH3, rows 4 and 5 (world x and y as a dot
     // of the view-space position with xyz, plus w; the game fills them) and DIFC in row 7. Map 0
@@ -3057,6 +3108,9 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
          "pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a;\n"
          "              pbr_vfw = pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a));\n"
          "              pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);");
+    kind("pbr_pass = pbr_gscene * pbr_h3.z;",
+         "pbr_pass = pbr_gscene * pbr_h3.z;\n"
+         "          pbr_vfw = vec3f(pbr_alpha);\n          pbr_vfk = true;");
     kind("pbr_pass = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w * pbr_xscene;",
          "let pbr_xw = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w;\n"
          "          pbr_keep = pbr_xw * pbr_xscene;\n"

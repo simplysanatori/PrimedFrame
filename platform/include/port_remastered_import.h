@@ -92,7 +92,8 @@ namespace ImportStage {
 // 69: 664ee5ca draws as Remastered's unlit matcap, DIFT x DIFC + REFS x REFV (kind 40).
 // 70: 67053ffe draws as Remastered's unlit METL-weighted BCLR + ICAN (kind 41).
 // 71: 8c7a939f draws as kind 25 (its maths), 1fbafbca as kind 42 (25 plus ICAN x ICNC).
-inline constexpr int kConverter = 71;
+// 72: 084a8db5 draws as kind 43 (HoloGlass less TCH1/TCH2/DIFC).
+inline constexpr int kConverter = 72;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
