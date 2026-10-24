@@ -69,14 +69,19 @@
   touch controls, bindings, cheats, save states, the randomizer and Archipelago,
   rich presence and the timer stay available; the settings it forces are greyed
   out in F1.
-- EFB scale (F1 > Video > Quality, persisted as `render_scale`): 1x-4x of the GameCube's
-  640x528 EFB, or the window's own size with "Auto render scale". Above 2x it
+- Resolution scale (F1 > Video > Quality, persisted as `render_scale`): 1x-4x of the GameCube's
+  640x528 EFB, shown with the lines it draws (1x is 480p), or the window's own size with
+  "Auto render scale". Above 2x it
   supersamples (4x at 16:9 is 3755x2112; with MSAA 4 the targets take
   several hundred MB). "Dynamic
-  resolution" (`dynamic_res`, `dynamic_res_target` in fps, 0 = the display's
-  rate) lowers the scale while the GPU cannot hold the target, down to "Lowest
-  scale" (`dynamic_res_min`: 0.5, 0.75 or 1, default 1), and raises it back when
-  there is room. Where the GPU can time itself (timestamp queries, Aurora's
+  resolution" (`dynamic_res`) lowers the scale while the GPU cannot hold the
+  "Frame rate target" (`dynamic_res_target`, 30-240 fps, 0 = "Display", the
+  display's rate; never above the frame rate cap), down to "Minimum resolution
+  scale" (`dynamic_res_min`, 0.25x up to the top, default 1), and raises it back when
+  there is room. Its mode is the two settings together: Auto (`render_scale` 0)
+  goes up to the window's own scale, its pixel height over 480, and starts over
+  when the window is resized; User goes up to "Maximum resolution scale" (the
+  `render_scale` set). Where the GPU can time itself (timestamp queries, Aurora's
   `gpu_prof`, switched on while dynamic resolution is) it reads the GPU's time per
   frame: a slow scene whose GPU has time to spare is CPU-bound and left alone, and
   a GPU-bound one goes toward the scale predicted to fit 85% of the frame budget

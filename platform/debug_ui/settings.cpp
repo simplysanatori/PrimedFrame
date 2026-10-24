@@ -425,7 +425,7 @@ const SettingKey kSettingKeys[] = {
      [](const std::string& value) {
        const float f = static_cast< float >(std::atof(value.c_str()));
        if (std::isfinite(f)) {
-         sDynamicResMin = std::clamp(f, 0.5f, 1.f);
+         sDynamicResMin = std::clamp(f, PortDebug::kDynamicResMinLowest, 4.f);
        }
      },
      [](std::ostream& out) { out << sDynamicResMin; }, false, "0.5", "0.75"},

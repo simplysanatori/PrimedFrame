@@ -163,7 +163,9 @@ void SetRenderScale(float scale);
 float BaseRenderScale();
 void SetCaptureRenderScale(float scale);
 // Dynamic resolution: draws the EFB between DynamicResMin and RenderScale to
-// hold DynamicResTarget fps (0 = the frame cap). False when off.
+// hold DynamicResTarget fps (0 = the frame cap). False when off. With auto render
+// scale the top is the window's own scale.
+constexpr float kDynamicResMinLowest = 0.25f;
 bool DynamicRes();
 int DynamicResTarget();
 float DynamicResMin();

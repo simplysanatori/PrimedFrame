@@ -353,6 +353,7 @@ void EndOriginalLocked(bool locked);
 extern PortDynamicRes::Controller sDynController;
 extern double sDynGpuMs;
 float EffectiveRenderScale();
+float DynamicResTop();
 int EffectiveMsaa();
 void ApplyPresentSharpness();
 double DynamicResTargetFps();
