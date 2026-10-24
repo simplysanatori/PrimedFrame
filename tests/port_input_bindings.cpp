@@ -449,9 +449,109 @@ void TestTouchButtons() {
   Input back;
   REQUIRE(InputFromText("touch:k9", back) && back == In(Device::Touch, 73));
 }
+// Polls `p` with nothing down, then with `buttons` (pad bits) and `mouse` down.
+const Output& PollWith(Runtime& runtime, const Profile& p, uint16_t contexts, uint32_t buttons,
+                       uint32_t mouse = 0, float rightTrigger = 0.f) {
+  runtime.SetProfile(&p);
+  RawState raw;
+  runtime.Poll(raw, contexts, 1000);
+  raw.padButtons = buttons;
+  raw.mouseButtons = mouse;
+  raw.padAxes[5] = rightTrigger;
+  return runtime.Poll(raw, contexts, 1100);
+}
+
+// Issue #167: a Morph Ball row's input does only that row in the ball and keeps
+// everything it does elsewhere; an unbound row changes nothing.
+void TestBallButtons() {
+  REQUIRE(FindBallRow(Action::BallBomb)->game == Action::PadA);
+  REQUIRE(BallRowForGame(Action::PadR)->row == Action::BallSpider);
+  REQUIRE(FindBallRow(Action::PadA) == nullptr && BallRowForGame(Action::PadZ) == nullptr);
+  REQUIRE(ActionFromKey("ball_power_bomb") == Action::BallPowerBomb);
+  REQUIRE(!TouchButtonAction(Action::BallBomb));
+
+  const Input lb = In(Device::PadButton, 9), rb = In(Device::PadButton, 10);
+  const uint32_t kLB = 1u << 9, kRB = 1u << 10;
+  Binding springOnRb = Bind(Action::SpringBall, {rb});
+  springOnRb.contexts = kCtxMorphBall;
+  Profile base;
+  base.chordWindowMs = 0;
+  base.bindings = {Bind(Action::PadR, {rb}), Bind(Action::VisorNext, {rb}), springOnRb,
+                   Bind(Action::Layer1, {lb})};
+  Profile p = base;
+  ApplyBallButtons(p);
+  REQUIRE(p == base);
+
+  // Outside the ball nothing changes, ranks included: RB still does R and Next visor.
+  p.bindings.push_back(Bind(Action::BallBomb, {rb}));
+  ApplyBallButtons(p);
+  REQUIRE(p.bindings[0].contexts == kCtxAll && p.bindings[0].blocked == kCtxMorphBall);
+  REQUIRE(p.bindings[2].contexts == kCtxMorphBall && p.bindings[2].blocked == kCtxMorphBall);
+  REQUIRE(p.bindings[3].blocked == 0);
+  Runtime runtime;
+  const Output& play = PollWith(runtime, p, kCtxGameplay, kRB);
+  REQUIRE(play.Held(Action::PadR) && play.Held(Action::VisorNext) && !play.Held(Action::BallBomb));
+  const Output& ball = PollWith(runtime, p, kCtxMorphBall, kRB);
+  REQUIRE(ball.Held(Action::BallBomb) && !ball.Held(Action::PadR) && !ball.Held(Action::VisorNext) &&
+          !ball.Held(Action::SpringBall));
+  // A held layer doesn't bring them back in the ball.
+  const Output& layered = PollWith(runtime, p, kCtxMorphBall, kLB | kRB);
+  REQUIRE(layered.Held(Action::Layer1) && layered.Held(Action::BallBomb));
+  REQUIRE(!layered.Held(Action::PadR) && !layered.Held(Action::SpringBall));
+
+  // The same mouse button under another code, and an axis at another threshold.
+  Profile m;
+  m.bindings = {Bind(Action::PadA, {In(Device::MouseButton, 0)}), Bind(Action::PadA, {In(Device::MouseButton, 16)}),
+                Bind(Action::BallPowerBomb, {In(Device::MouseButton, 8)}),
+                Bind(Action::PadR, {In(Device::PadAxis, 5, 1)}),
+                Bind(Action::BallSpider, {In(Device::PadAxis, 5, 1, 75)})};
+  ApplyBallButtons(m);
+  const Output& mouse = PollWith(runtime, m, kCtxMorphBall, 0, (1u << 8) | (1u << 16), 1.f);
+  REQUIRE(mouse.Held(Action::BallPowerBomb) && mouse.Held(Action::BallSpider));
+  REQUIRE(!mouse.Held(Action::PadA) && !mouse.Held(Action::PadR));
+  REQUIRE(SamePhysicalInput(In(Device::MouseButton, 2), In(Device::MouseButton, 26)));
+  REQUIRE(!SamePhysicalInput(In(Device::MouseButton, 2), In(Device::MouseButton, 1)));
+  REQUIRE(!SamePhysicalInput(In(Device::PadAxis, 5, 1), In(Device::PadAxis, 5, -1)));
+
+  // A chord row blocks the same chord; its members alone keep theirs, as with any
+  // chord (they are its modifiers).
+  Profile c;
+  c.chordWindowMs = 0;
+  Binding spring = Bind(Action::SpringBall, {lb});
+  spring.contexts = kCtxMorphBall;
+  c.bindings = {Bind(Action::BeamWave, {lb, rb}), spring, Bind(Action::BallBomb, {lb, rb})};
+  ApplyBallButtons(c);
+  REQUIRE(c.bindings[0].blocked == kCtxMorphBall && c.bindings[1].blocked == 0);
+  REQUIRE(PollWith(runtime, c, kCtxGameplay, kLB | kRB).Held(Action::BeamWave));
+
+  // A row with a layer: in the ball while the layer is held, nowhere else.
+  Profile l;
+  l.chordWindowMs = 0;
+  Binding layerBomb = Bind(Action::BallBomb, {rb});
+  layerBomb.contexts = kCtxMorphBall | kCtxLayer1;
+  Binding ballOrLayer = Bind(Action::SpringBall, {rb});
+  ballOrLayer.contexts = kCtxMorphBall | kCtxLayer1;
+  l.bindings = {Bind(Action::Layer1, {lb}), ballOrLayer, layerBomb};
+  ApplyBallButtons(l);
+  REQUIRE(l.bindings[1].contexts == (kCtxMorphBall | kCtxLayer1)); // its rank stays a context's
+  REQUIRE(l.bindings[2].contexts == kCtxLayer1);
+  const Output& inBall = PollWith(runtime, l, kCtxMorphBall, kLB | kRB);
+  REQUIRE(inBall.Held(Action::BallBomb) && !inBall.Held(Action::SpringBall));
+  REQUIRE(!PollWith(runtime, l, kCtxGameplay, kLB | kRB).Held(Action::BallBomb));
+  REQUIRE(!PollWith(runtime, l, kCtxMorphBall, kRB).Held(Action::BallBomb));
+
+  // everywhereOnly (the Menu rows) leaves bindings scoped under Advanced alone.
+  Profile e;
+  Binding mapOnly = Bind(Action::PadZ, {In(Device::Key, 4)});
+  mapOnly.contexts = kCtxMap;
+  e.bindings = {Bind(Action::PadA, {In(Device::Key, 4)}), mapOnly, Bind(Action::MenuA, {In(Device::Key, 4)})};
+  BlockRowInputs(e, [](const Binding& b) { return b.action == Action::MenuA; }, kCtxMap, true);
+  REQUIRE(e.bindings[0].blocked == kCtxMap && e.bindings[1].blocked == 0 && e.bindings[2].blocked == 0);
+}
 } // namespace
 
 int main() {
+  TestBallButtons();
   TestTouchButtons();
   TestDuplicateBindings();
   TestFamilyEditing();

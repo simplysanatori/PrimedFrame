@@ -727,6 +727,10 @@ void DrawAdvancedEditor(const Binding& parsed, bool inputsOk) {
     ImGui::Checkbox("Invert", &sDraft.invert);
   }
 
+  if (PortInput::FindBallRow(sDraft.action) != nullptr) {
+    ImGui::TextDisabled("Works only in Morph Ball, where its inputs do nothing else.");
+    return;
+  }
   bool everywhere = sDraft.contexts == PortInput::kCtxAll;
   if (ImGui::Checkbox("Works everywhere", &everywhere)) {
     sDraft.contexts = everywhere ? PortInput::kCtxAll : PortInput::kCtxGameplay;
@@ -911,7 +915,11 @@ const std::vector<SGroup>& Groups() {
          {Action::VisorCombat, Action::VisorScan, Action::VisorThermal, Action::VisorXray, Action::VisorNext,
           Action::VisorPrev},
          true},
-        {"Morph Ball", {Action::SpringBall}, true},
+        // Issue #167: the ball's own buttons; an input on one does only that in the ball.
+        {"Morph Ball",
+         {Action::BallBomb, Action::BallPowerBomb, Action::BallBoost, Action::BallSpider, Action::BallUnmorph,
+          Action::SpringBall},
+         true},
         {"Gyro", {Action::GyroAim, Action::ResetAim}, true},
         // Read instead of the game buttons in menus and on the map ("Separate menu buttons").
         {"Menus and map",
@@ -980,8 +988,10 @@ const char* GameHint(Action a) {
   case Action::MenuDown:
   case Action::MenuLeft:
   case Action::MenuRight: return "Navigate";
-  default: return nullptr;
+  default: break;
   }
+  const PortInput::BallRow* ball = PortInput::FindBallRow(a);
+  return ball != nullptr ? ball->hint : nullptr;
 }
 
 // A binding's non-default settings, in words ("" when it has none).

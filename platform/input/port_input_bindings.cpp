@@ -914,12 +914,81 @@ void ClearFamily(UserProfile& user, Family family) {
   std::erase_if(user.bindings, [&](const Binding& b) { return b.count > 0 && BindingFamily(b) == family; });
 }
 
+bool SamePhysicalInput(const Input& a, const Input& b) {
+  if (a.device != b.device || a.dir != b.dir)
+    return false;
+  // Each run of mouse codes holds the five buttons (port_input_devices.h).
+  if (a.device == Device::MouseButton)
+    return a.code % 8 == b.code % 8;
+  return a.code == b.code;
+}
+
+void BlockRowInputs(Profile& profile, bool (*isRow)(const Binding&), uint16_t ctx, bool everywhereOnly) {
+  std::vector<const Binding*> rows;
+  for (const Binding& b : profile.bindings)
+    if (b.count > 0 && isRow(b))
+      rows.push_back(&b);
+  const auto covered = [&](const Binding& b) {
+    for (const Binding* r : rows) {
+      if (r->count != b.count)
+        continue;
+      bool all = true;
+      for (int k = 0; k < b.count && all; ++k)
+        all = std::any_of(r->inputs.begin(), r->inputs.begin() + r->count,
+                          [&](const Input& in) { return SamePhysicalInput(in, b.inputs[k]); });
+      if (all)
+        return true;
+    }
+    return false;
+  };
+  std::vector<size_t> hit;
+  for (size_t i = 0; i < profile.bindings.size(); ++i) {
+    const Binding& b = profile.bindings[i];
+    if (b.count == 0 || isRow(b) || (everywhereOnly && b.contexts != kCtxAll))
+      continue;
+    if (covered(b))
+      hit.push_back(i);
+  }
+  for (size_t i : hit)
+    profile.bindings[i].blocked |= ctx;
+}
+
+const BallRow* FindBallRow(Action a) {
+  for (const BallRow& r : kBallRows)
+    if (r.row == a)
+      return &r;
+  return nullptr;
+}
+
+const BallRow* BallRowForGame(Action game) {
+  for (const BallRow& r : kBallRows)
+    if (r.game == game)
+      return &r;
+  return nullptr;
+}
+
+void ApplyBallButtons(Profile& profile) {
+  for (Binding& b : profile.bindings) {
+    if (FindBallRow(b.action) == nullptr)
+      continue;
+    // Contexts match any bit, so a row with layers keeps them and blocks every
+    // context but the ball: Morph Ball while a layer is held, ranked as a layer's.
+    const uint16_t layers = b.contexts == kCtxAll ? 0 : uint16_t(b.contexts & kCtxLayers);
+    b.contexts = layers != 0 ? layers : uint16_t(kCtxMorphBall);
+    b.blocked = layers != 0 ? uint16_t(kCtxAll & ~(kCtxMorphBall | kCtxLayers)) : 0;
+  }
+  BlockRowInputs(
+      profile,
+      [](const Binding& b) { return FindBallRow(b.action) != nullptr && BindingFamily(b) != Family::Touch; },
+      kCtxMorphBall, false);
+}
+
 bool TouchButtonAction(Action a) {
   if (a == Action::None || Info(a).kind != ActionKind::Digital)
     return false;
   if (a >= Action::Layer1 && a <= Action::Layer4)
     return false;
-  return !(a >= Action::MenuA && a <= Action::MenuRight);
+  return !(a >= Action::MenuA && a <= Action::MenuRight) && FindBallRow(a) == nullptr;
 }
 
 std::vector<TouchButton> ParseTouchButtons(std::string_view layout) {

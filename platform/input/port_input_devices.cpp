@@ -1011,7 +1011,7 @@ static void ApplyMenuButtons(Profile& p) {
       kept.push_back(b.inputs[0]);
     } else if (IsPadFamily(b.inputs[0]) && FindMenuAction(b.action, false) != nullptr &&
                b.contexts == PortInput::kCtxAll) {
-      b.contexts &= ~kMenus;
+      b.blocked |= kMenus;
     }
   }
   std::erase_if(p.bindings, [&](const Binding& b) {
@@ -1019,14 +1019,12 @@ static void ApplyMenuButtons(Profile& p) {
   });
   // Issue #84: a key or mouse button on a Menu row replaces what it does in
   // gameplay while in menus and the map, rather than doing both.
-  std::vector< Input > rows;
-  for (const Binding& b : p.bindings) {
-    if (isMenu(b) && b.count == 1 && !IsPadFamily(b.inputs[0])) rows.push_back(b.inputs[0]);
-  }
-  for (Binding& b : p.bindings) {
-    if (isMenu(b) || b.count != 1 || b.contexts != PortInput::kCtxAll) continue;
-    if (std::find(rows.begin(), rows.end(), b.inputs[0]) != rows.end()) b.contexts &= ~kMenus;
-  }
+  PortInput::BlockRowInputs(
+      p,
+      [](const Binding& b) {
+        return FindMenuAction(b.action, true) != nullptr && b.count == 1 && !IsPadFamily(b.inputs[0]);
+      },
+      kMenus, true);
 }
 
 // A single pad input as the native button the prompts look up, or invalid.
@@ -1064,14 +1062,16 @@ static void UpdatePromptBindings(const Profile& p) {
 }
 
 // The first of `actions` with a single input from `family`: one that applies in
-// the current context, else one that applies anywhere outside the user layers.
+// the current context, else one that applies anywhere outside the user layers;
+// never one blocked in the current context (its input does something else here).
 static bool PromptInputFor(std::initializer_list< Action > actions, PortInput::Family family, Input& out) {
   const uint16_t contexts = GameContexts();
   std::lock_guard lock(sPromptMutex);
   for (const uint16_t want : {contexts, static_cast< uint16_t >(~PortInput::kCtxLayers)}) {
     for (const Action a : actions) {
       for (const Binding& b : sPromptBindings) {
-        if (b.action == a && (b.contexts & want) != 0 && PortInput::BindingFamily(b) == family) {
+        if (b.action == a && (b.contexts & want) != 0 && (b.blocked & contexts) == 0 &&
+            PortInput::BindingFamily(b) == family) {
           out = b.inputs[0];
           return true;
         }
@@ -1089,7 +1089,13 @@ bool PromptButtonInput(unsigned padButton, PortInput::Family family, Input& out)
   for (const SMenuAction& m : kMenuActions) {
     if (m.padButton == padButton) menu = &m;
   }
+  // In Morph Ball a bound Morph Ball row comes first.
   const Action game = PadBitAction(padButton);
+  const PortInput::BallRow* ball = PortInput::BallRowForGame(game);
+  if (ball != nullptr && (GameContexts() & PortInput::kCtxMorphBall) != 0 &&
+      PromptInputFor({ball->row}, family, out)) {
+    return true;
+  }
   if (menu == nullptr) return PromptInputFor({game}, family, out);
   const bool l = padButton == PAD_TRIGGER_L;
   const bool r = padButton == PAD_TRIGGER_R;
@@ -1111,7 +1117,8 @@ PADStatus Synthesize(const PortInput::Output& out) {
                                           PAD_TRIGGER_Z,   PAD_BUTTON_START, PAD_TRIGGER_L,   PAD_TRIGGER_R,
                                           PAD_BUTTON_UP,   PAD_BUTTON_DOWN,  PAD_BUTTON_LEFT, PAD_BUTTON_RIGHT};
   for (unsigned b : kButtons) {
-    if (out.Held(PadBitAction(b))) s.button |= static_cast< u16 >(b);
+    const PortInput::BallRow* ball = PortInput::BallRowForGame(PadBitAction(b));
+    if (out.Held(PadBitAction(b)) || (ball != nullptr && out.Held(ball->row))) s.button |= static_cast< u16 >(b);
   }
   for (const SMenuAction& m : kMenuActions) {
     if (m.padButton != 0 && out.Held(m.menu)) s.button |= static_cast< u16 >(m.padButton);
@@ -1138,6 +1145,7 @@ SPoll Poll(unsigned mouseHeld, bool focused) {
   Profile next;
   BuildProfile(next);
   ApplyMenuButtons(next);
+  PortInput::ApplyBallButtons(next);
   if (!sInit || next != sProfile) {
     UpdatePromptBindings(next);
     sProfile = std::move(next);
