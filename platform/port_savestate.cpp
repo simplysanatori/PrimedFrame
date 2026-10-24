@@ -859,7 +859,12 @@ void SetInFrontEnd(bool inFrontEnd) {
     // armed for it belong to a game that was left.
     sRoomPending = false;
     sRoomLate = false;
-    sRoomMusic = false;
+    if (sRoomMusic) {
+      // The restore that was to play the music never finished: the next world
+      // destroyed must not keep the track as a state load would.
+      sRoomMusic = false;
+      PortEndStateLoadMusic();
+    }
     DisarmSpawnLayers();
     std::lock_guard< std::mutex > lock(sSnapMutex);
     sSnap.valid = false;
