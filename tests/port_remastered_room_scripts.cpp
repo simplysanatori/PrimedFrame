@@ -481,6 +481,38 @@ void TestRoomEffects() {
   taken.objects.push_back(RetailObject(PortRoomEffects::AddOnId(0, 0x1A, 3), 7, near));
   const std::string refused = WriteRoomEffects("room", p.room, area.mrea, taken, scripts, io);
   CHECK_MSG(refused.find("is in the add-on id range") != std::string::npos && written.empty(), refused.c_str());
+  // A GENP several retail PARTs share: the object matched to the actor keeps its own retail id
+  // (the mod converted the GENP under it) and takes the actor's particle variables, which set
+  // what differs between them (the lava spit's big and small).
+  {
+    Fixture g;
+    g.comps = {EffectActor(0, true)};
+    const Parsed q(g);
+    constexpr uint32_t kSharedPart = 0x99998888;  // the object's own PART, one the GENP is shared with
+    Area shared = area;
+    shared.objects = {RetailObject(0x041A0016, 7, Apply(area.xf, MulR2G({0, 0, 0})), {}, kSharedPart)};
+    SceneryScripts sharedScripts;
+    sharedScripts.retail[int(g.Entity(0))] = 0;
+    std::map<std::string, Bytes> out;
+    RoomIO io2;
+    io2.write = [&](const std::string& name, const Bytes& data) {
+      out[name] = data;
+      return true;
+    };
+    io2.effect = [](const std::array<uint8_t, 16>&) -> uint32_t { return 0; };  // no PART under the GENP's id
+    io2.matched = [](const std::array<uint8_t, 16>& genp) -> std::vector<uint32_t> {
+      return genp == SwapUuid(Guid(100).data()) ? std::vector<uint32_t>{kSharedPart} : std::vector<uint32_t>{};
+    };
+    const std::string l = WriteRoomEffects("room", q.room, area.mrea, shared, sharedScripts, io2);
+    CHECK_MSG(l.find("1 retail effect(s) take Remastered's effect, 0 connected") != std::string::npos, l.c_str());
+    PortRoomEffects::File f2;
+    std::string e2;
+    REQUIRE_MSG(out.count("1A2B3C4D.roomfx") == 1 && PortRoomEffects::Parse(out["1A2B3C4D.roomfx"], f2, e2), e2.c_str());
+    REQUIRE_MSG(f2.overrides.size() == 1, "one override");
+    CHECK(f2.overrides[0].id == 0x041A0016 && f2.overrides[0].part == kSharedPart);
+    REQUIRE(f2.overrides[0].vars.size() == 1 && f2.overrides[0].vars[0].real == 0.65f);
+    CHECK_MSG(f2.layers.empty() && f2.skips.empty(), "nothing added, nothing skipped");
+  }
   // Without an effect lookup the stage writes nothing and says nothing.
   io.effect = nullptr;
   CHECK(WriteRoomEffects("room", p.room, area.mrea, area, scripts, io).empty() && written.empty());

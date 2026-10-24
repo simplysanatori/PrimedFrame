@@ -134,7 +134,12 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
       ++noPart;
       continue;
     }
-    const uint32_t part = io.effect(SwapUuid(room.Bytes(genp->second)));
+    const std::array<uint8_t, 16> genpId = SwapUuid(room.Bytes(genp->second));
+    uint32_t part = io.effect(genpId);
+    // The retail PARTs the effects step wrote this GENP under by its table: one GENP can stand
+    // for several, the lava spit's big and small. A retail object drawing one of them keeps its
+    // own id, which is now the mod's conversion of that GENP.
+    const std::vector<uint32_t> paired = io.matched != nullptr ? io.matched(genpId) : std::vector<uint32_t>();
     // One the matcher paired with a retail object is that object, which stays, whatever
     // connects to it; if Remastered gave it an effect of its own, or it has particle
     // variables, the object takes those (an override).
@@ -152,8 +157,12 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
         vars.clear();
       }
       // The variables are the GENP's: they go only with its PART, the Remastered-only one or
-      // the one the mod gives the object's own retail id.
+      // the one the mod gives the object's own retail id (its own of the GENP's, as big and
+      // small spit share one).
       const uint32_t own = o.props.size() >= 40 ? ReadBE32(&o.props[36]) : 0;
+      if (std::find(paired.begin(), paired.end(), own) != paired.end()) {
+        part = own;
+      }
       const bool ownPart = part != 0 && (part >> 24) == 0xFE && part != own;
       if (!ownPart && (part == 0 || part != own || vars.empty())) {
         ++keptOwn;

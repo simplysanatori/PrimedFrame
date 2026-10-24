@@ -153,7 +153,8 @@ inline constexpr int kModels = 18;     // the table's models, their looks and th
 // 97: a sprite/swoosh/ELC2 VMAT takes its MATI's EBlendMode over the PBDM/SBDM/EBDM row (Fogged pins the row's fog).
 // 98: a PART keeps its visor effect override data (PVSC/PVMC/PVTC/PVBS/PVDT).
 // 100: missile and energy tank pickups paired (#loose-chpr, kMatchedEffects).
-inline constexpr int kEffects = 100;   // port_remastered_effect_import and the particle converters
+// 101: the lava spit's two PARTs paired with one GENP (#shared-genp), the actor's variables on them.
+inline constexpr int kEffects = 101;   // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
@@ -164,7 +165,8 @@ inline constexpr int kEffects = 100;   // port_remastered_effect_import and the 
 // 28: retail model placements (RetailPlacement); their entities leave the room's geometry.
 // 29: a retail model's objects pair with its entities by order (RetailPlacement orient, entity).
 // 30: roomenv version 26, the EnvironmentFX colour intensity (a RelayAutoFire-fired density controller).
-inline constexpr int kRooms = 33;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+// 34: a retail Effect object drawing a PART its GENP is shared with takes the actor's variables (the lava spit).
+inline constexpr int kRooms = 34;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 // 9: envfx.bin, the EnvironmentFX flake textures (port_envfx_file.h).

@@ -2638,6 +2638,19 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         const std::optional<uint32_t> carried = EffectRetailId(property);
         return carried && retail.HasId(*carried) ? *carried : 0;
       };
+      // The retail PARTs the effects step wrote this GENP under by its own table (one GENP can
+      // stand for two, the lava spit's): only those the mod has a PART for, or the retail object
+      // would be pointed at nothing.
+      io.matched = [&](const std::array<uint8_t, 16>& genp) {
+        std::vector<uint32_t> out;
+        for (uint32_t id : MatchedRetailEffects(genp)) {
+          std::error_code ec;
+          if (fs::exists(staging / PathFromString(Hex8(id) + ".PART"), ec)) {
+            out.push_back(id);
+          }
+        }
+        return out;
+      };
       io.wantsGeometry = WantsGeometry;
       io.retailModel = [&](const RetailPlacement& placement) {
         std::lock_guard<std::mutex> lock(retailMutex);

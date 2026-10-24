@@ -112,6 +112,11 @@ struct RoomIO {
   // as "<MREA id>.roomfx" (read by port_room_effects.h). The PART the mod or the disc has for
   // a GENP (in a pak's byte order), 0 for none: such an actor is left out.
   std::function<uint32_t(const std::array<uint8_t, 16>& genp)> effect;
+  // Optional; used with `effect`: the retail PARTs the effects step paired with a GENP (in a
+  // pak's byte order) that several retail PARTs share (MatchedRetailEffects). A retail Effect
+  // object drawing one of them keeps its own retail id, now the mod's conversion of that GENP,
+  // and takes the effect actor's particle variables.
+  std::function<std::vector<uint32_t>(const std::array<uint8_t, 16>& genp)> matched;
   // Optional: told each retail model placement (RetailPlacement) of every placed room, from
   // the world's worker thread. The entity of an ok one is not written into the room's geometry.
   std::function<void(const RetailPlacement& placement)> retailModel;
