@@ -380,12 +380,8 @@ public:
   void Update(float dt, CStateManager& mgr);
   bool MouseControlsAllowed(const CStateManager& mgr) const;
   bool MouseLookIsFree(const CStateManager& mgr) const;
-  // port: lock-on free aim, a combat lock the pointer stays free under.
+  // port: lock-on free aim, a combat lock a pointer moves under.
   bool PortLockFreeAim(const CStateManager& mgr) const;
-  // port: the pointer (or free-aim crosshair) steers: free look or lock-on free aim.
-  bool PortAimIsFree(const CStateManager& mgr) const {
-    return MouseLookIsFree(mgr) || PortLockFreeAim(mgr);
-  }
   // port: direct aim, locked onto an empty orbit point (keeps the camera pitch).
   bool PortEmptyLockKeepsPitch(const CStateManager& mgr) const;
   void UpdateMouseAim(CStateManager& mgr);

@@ -546,7 +546,10 @@ void SetPointerAim(bool on) {
 }
 int PointerAimBox() { EnsureInitialized(); return sInput.pointerAimBox; }
 int PointerAimTurn() { EnsureInitialized(); return sInput.pointerAimTurn; }
-bool PointerAimLock() { EnsureInitialized(); return sInput.pointerAimLock; }
+bool LockOnFreeAim() {
+  EnsureInitialized();
+  return sInput.lockOnFreeAim && DirectAim() && !sOriginalExperience;
+}
 void SetPointerAimPosition(float x, float y) {
   sPointerAim.Center();
   sPointerAim.Move(x, y);
@@ -605,10 +608,11 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z, bool po
   SetMouseGameplayActive(active);
   const PortMouse::AimState lastAim = sMouseAimState;
   const PortMouse::PointerAim lastPointer = sPointerAim;
-  const bool pointer = PointerAim();
-  // Lock-on free aim: the lock owns the view and the pointer stays free over it. It
-  // starts and ends a lock at the centre, where the target is.
-  const bool lockFree = pointer && active && locked && pointerLock;
+  // Lock-on free aim: the lock owns the view and a pointer moves over it, pointer aim's
+  // or, without pointer aim, one for the lock only. It starts and ends a lock at the
+  // centre, where the target is.
+  const bool lockFree = active && locked && pointerLock && LockOnFreeAim();
+  const bool pointer = PointerAim() || lockFree;
   if (lockFree != sPointerAimLocked) {
     sPointerAim.Center();
     sPointerAimLocked = lockFree;

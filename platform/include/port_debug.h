@@ -668,9 +668,10 @@ bool PointerAim();
 void SetPointerAim(bool on);
 int PointerAimBox();
 int PointerAimTurn();
-// Lock-on free aim: under a combat lock the pointer keeps moving (no edge turn: the
-// lock owns the view). CPlayer::PortLockFreeAim reads it.
-bool PointerAimLock();
+// Lock-on free aim: under a combat lock any direct aim moves a pointer, with or
+// without pointer aim (no edge turn: the lock owns the view). CPlayer::PortLockFreeAim
+// reads it.
+bool LockOnFreeAim();
 // The pointer (-1..1 of the half view, right/down positive) as of the last tick;
 // false (and centre) unless it steered that tick's free look.
 bool PointerAimPosition(float& x, float& y);
