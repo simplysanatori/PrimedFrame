@@ -631,6 +631,27 @@ void CElementGen::SetLocalScale(const CVector3f& scale) {
   }
 }
 
+#ifdef TARGET_PC
+// The children take it from the update loop, before their own update, around this system's
+// translation. A particle system sits on its parent's translation, so it needs no origin.
+void CElementGen::PortSetSpawnSpread(const CVector3f& spread, const CVector3f&) {
+  xPortSpawnSpread = spread;
+}
+
+// `rel` is a new particle's offset from the system origin. With the emitter followed (XFMD 3) the
+// offset is already turned by the global orientation, so spread it in the unturned axes.
+CVector3f CElementGen::PortSpreadSpawn(const CVector3f& rel) const {
+  if (xPortSpawnSpread == CVector3f(1.f, 1.f, 1.f)) {
+    return rel;
+  }
+  if (PortFollowsEmitter() && !PortHasMover()) {
+    return x22c_globalOrientation.Rotate(CVector3f::ByElementMultiply(
+        x22c_globalOrientation.TransposeRotate(rel), xPortSpawnSpread));
+  }
+  return CVector3f::ByElementMultiply(rel, xPortSpawnSpread);
+}
+#endif
+
 void CElementGen::SetOrientation(const CTransform4f& orientation) {
 #ifdef TARGET_PC
   if (xPortIntFrame) {
@@ -1283,18 +1304,26 @@ void CElementGen::CreateNewParticles(int count) {
       if (PortFollowsEmitter()) {
         // Also turned by the global orientation, which PortFollowEmitter follows.
         const CTransform4f frame = PortEmitterFrame();
-        particle.x4_pos = frame * particle.x4_pos + xf4_POFS;
+        particle.x4_pos =
+            frame.GetTranslation() + PortSpreadSpawn(frame.Rotate(particle.x4_pos) + xf4_POFS);
         if (!x28_loadedGenDesc->xPortNoIvse) {
           particle.x1c_vel = frame.Rotate(particle.x1c_vel);
         }
       } else
 #endif
       {
+#ifdef TARGET_PC
+        particle.x4_pos =
+            PortSpreadSpawn(x1d8_orientation.Rotate(particle.x4_pos) + xf4_POFS) +
+            ((x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) *
+             xdc_translation);
+#else
         particle.x4_pos =
             x1d8_orientation.Rotate(particle.x4_pos) +
             ((x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) *
              xdc_translation) +
             xf4_POFS;
+#endif
         // IVSE 0 (PIVS): the velocity is not turned by the system orientation
         if (!x28_loadedGenDesc->xPortNoIvse) {
           particle.x1c_vel = x1d8_orientation.Rotate(particle.x1c_vel);
@@ -2104,6 +2133,9 @@ update_children:
   AUTO(it, x290_activePartChildren.begin());
   while (it != x290_activePartChildren.end()) {
     CParticleGen* child = *it;
+#ifdef TARGET_PC
+    child->PortSetSpawnSpread(xPortSpawnSpread, xdc_translation);
+#endif
     child->Update(dt);
 #ifdef TARGET_PC
     PortKssmChild* placed = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(child);

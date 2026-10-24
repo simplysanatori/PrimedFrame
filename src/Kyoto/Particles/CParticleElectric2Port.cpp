@@ -194,6 +194,8 @@ void CParticleElectric2Port::CreateBolt(int frame, const Ctx& ctx) {
   if (mDesc->x1c_FEMT != nullptr) {
     mDesc->x1c_FEMT->GetValue(frame, end, endDir);
   }
+  start = ctx.spread * start;
+  end = ctx.spread * end;
   if (ctx.ipos != nullptr) {
     start = *ctx.ipos;
   }

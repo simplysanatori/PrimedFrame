@@ -53,6 +53,10 @@ private:
   int xPortManagedType = -1;
   // Added to the visor effect override list (AddBillboardEffect).
   bool xPortVisorOverride = false;
+  // The spread last given to the generator, which passes it down to its children.
+  CVector3f xPortSpawnSpread{1.f, 1.f, 1.f};
+  void PortUpdateSpawnSpread(const CStateManager& mgr);
+  void PortApplySpawnSpread(const CVector3f& spread);
 #endif
 
   static int g_IndirectTexturedBillboardCount;
