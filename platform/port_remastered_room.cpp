@@ -3057,7 +3057,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  AppendLE32(out, 24);
+  AppendLE32(out, 26);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -3363,6 +3363,19 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
   for (int i = 0; i < 3; ++i) {
     AppendLEFloat(out, float(shift[size_t(i)]));
+  }
+  {
+    std::vector<std::string> notes;
+    const float intensity = EnvFxIntensity(r.room, notes);
+    AppendLEFloat(out, intensity);
+    if (intensity != 1.f) {
+      char text[96];
+      std::snprintf(text, sizeof text, "EnvironmentFX colour intensity %g set at load", intensity);
+      Log("  " + r.name + ": " + text);
+    }
+    for (const std::string& n : notes) {
+      Log("  " + r.name + ": " + n);
+    }
   }
   if (!fogs.empty() || !regions.empty()) {
     Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(regions.size()) +

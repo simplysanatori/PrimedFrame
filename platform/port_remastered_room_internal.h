@@ -615,6 +615,13 @@ constexpr uint32_t kEventRelayFired = 0xb4a0c8c1;
 constexpr uint32_t kActionCounterIncrement = 0x787f7b2b;
 constexpr uint32_t kActionCounterDecrement = 0x93c513fb;
 constexpr uint32_t kActionRelayFire = 0xd432447e;
+// The EnvironmentFX colour intensity: CEnvFxDensityControllerMP1GOC applies its float property
+// kPropEnvFxIntensity (default 1) to CEnvFxManagerMP1 on the script action kActionEnvFxApply;
+// a RelayAutoFire fires its links when its layer loads (kb topic/rain-snow-splash-render.md (3)).
+constexpr uint32_t kEnvFxDensityController = 0x3c832ec7;
+constexpr uint32_t kRelayAutoFire = 0x7f6d1cba;
+constexpr uint32_t kPropEnvFxIntensity = 0x19da7ec9;
+constexpr uint32_t kActionEnvFxApply = 0x582c90b4;
 constexpr uint32_t kActionTriggerActivate = 0x3067f115;
 constexpr uint32_t kActionTriggerDeactivate = 0xb5dd4543;
 // An ActorKeyframe's Play (retail kSS_Play) tells its actor to play the keyframe's
@@ -696,6 +703,10 @@ std::vector<Connection> ReadConnections(const Room& room);
 std::vector<int> ReadEntityLinks(const Room& room, size_t i);
 // The same links with their link ids: (u32 id, linked component or -1).
 std::vector<std::pair<uint32_t, int>> ReadEntityLinkIds(const Room& room, size_t i);
+// The EnvironmentFX colour intensity the room sets when it loads: the density controller (kEnvFxDensityController)
+// that a RelayAutoFire reaches, through Relays, with kActionEnvFxApply, else 1. A controller
+// nothing reaches at load (fired by a trigger, or by nothing) is left out, and noted in `notes`.
+float EnvFxIntensity(const Room& room, std::vector<std::string>& notes);
 double MaxAbs(const Vec3& a, const Vec3& b);
 
 // What drives the scenery actors of a room.
