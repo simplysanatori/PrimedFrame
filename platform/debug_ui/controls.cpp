@@ -95,6 +95,11 @@ void DrawControlsOptions() {
     MarkDirty();
   }
   ImGui::SetItemTooltip("Turn speed with the crosshair at the screen edge.");
+  if (ImGui::Checkbox("Lock-on free aim", &sInput.pointerAimLock)) {
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("As in Remastered: while locked on, the crosshair still moves and shots "
+                        "follow it.\nCentred, shots and missiles go for the locked target as before.");
   ImGui::EndDisabled();
   bool resetAimBoth = sInput.resetAimBoth;
   if (ImGui::Checkbox("Reset aim resets pointer and camera", &resetAimBoth)) {

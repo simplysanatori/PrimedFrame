@@ -668,6 +668,9 @@ bool PointerAim();
 void SetPointerAim(bool on);
 int PointerAimBox();
 int PointerAimTurn();
+// Lock-on free aim: under a combat lock the pointer keeps moving (no edge turn: the
+// lock owns the view). CPlayer::PortLockFreeAim reads it.
+bool PointerAimLock();
 // The pointer (-1..1 of the half view, right/down positive) as of the last tick;
 // false (and centre) unless it steered that tick's free look.
 bool PointerAimPosition(float& x, float& y);
@@ -700,7 +703,7 @@ unsigned MouseHeldButtons();
 bool UpdateToastShowing();
 bool TapUpdateToast(float x, float y);
 // Called during simulation, using the effective unbobbed camera direction.
-bool UpdateMouseAim(bool active, bool locked, float x, float y, float z);
+bool UpdateMouseAim(bool active, bool locked, float x, float y, float z, bool pointerLock = false);
 void SynchronizeMouseAim(float x, float y, float z);
 // Turns the mouse-look yaw by dyaw radians (the game turned the player: a rotating
 // platform's rider carry). No effect until the aim is initialized.

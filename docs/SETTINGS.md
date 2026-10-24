@@ -1083,6 +1083,13 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   sensitivity slider scales the pointer speed for every input (the default follows the
   cursor), on top of the stick aim, gyro and touch aim speeds; Invert X/Y do not apply. The crosshair is always shown. Lock-on, scanning and grappling
   re-centre the pointer and aim as before; auto-aim does not bend pointer shots.
+  Lock-on free aim (`pointer_aim_lock`, default off, F1 "Lock-on free aim" under the
+  pointer aim sliders), as in Remastered: under a combat lock the pointer keeps moving
+  while the lock steers the view (no edge turn). It starts and ends each lock at the
+  centre, where shots and homing go for the locked target as before; off the centre
+  shots head for the pointer and beams and missiles do not home. With gyro aim the
+  twin stick moves the pointer too while locked, so either or both can aim. Scan
+  locks and grapples still re-centre it.
   Lock-on owns the camera while held; releasing it resumes at the actual locked
   direction rather than at accumulated mouse angles. Jump/fall auto-pitch is
   bypassed during free mouse aim. Capture/UI transitions cancel held charges and
