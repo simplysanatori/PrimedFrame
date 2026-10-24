@@ -42,6 +42,12 @@ struct PrimeSkeleton {
 // is never listed).
 bool ParseCinf(const uint8_t* data, size_t size, PrimeSkeleton& out, std::string* error);
 
+// `cinf` (a CINF ParseCinf accepts) with each joint's head replaced by the head of the joint
+// with the same id in `skeleton`; links, build order and names stay byte for byte. Fails when
+// the file does not parse or a joint is missing from `skeleton`.
+bool PatchCinfHeads(const uint8_t* cinf, size_t size, const PrimeSkeleton& skeleton, std::vector<uint8_t>& out,
+                    std::string* error);
+
 // Retail weights of the Prime body that matches the target skeleton (its CMDL positions and CSKR
 // groups expanded per vertex), for the nearest-retail-vertex votes. Optional.
 struct RetailSkinRef {
@@ -65,7 +71,7 @@ struct ReskinMesh {
   std::string material_name;
   std::string bsmat_path;
   uint32_t vertex_count = 0;
-  std::vector<float> pos;          // 3 per vertex, Prime bind pose, metres
+  std::vector<float> pos;          // 3 per vertex, Prime bind pose (repose off: skeleton's), metres
   std::vector<float> normal;       // 3, unit
   std::vector<float> tangent;      // 4 (w = +-1); empty when the mesh has none
   std::vector<float> uv[3];        // 2 each; empty where the mesh lacks the set
@@ -98,6 +104,11 @@ struct ReskinResult {
   // -1 for a vote joint, and the repose transform (fitted Dread space -> Prime bind space).
   std::vector<int> weight_joint;
   std::vector<Mat4> repose;
+  // Prime's skeleton (same ids, parents, names) at Dread's proportions: a joint kBind pairs
+  // with a Dread joint takes that joint's fitted head; the others keep their Prime offset
+  // from their parent. The bind of the meshes when ReskinOptions::repose is off.
+  PrimeSkeleton skeleton;
+  size_t skeleton_mapped = 0;      // joints placed on a Dread joint (the rest are carried)
   ReskinStats stats;
   std::vector<std::string> log;    // one line per notable decision (frame, scale, votes)
 };
@@ -105,6 +116,10 @@ struct ReskinResult {
 struct ReskinOptions {
   bool enabled_only = true;              // only meshes drawn by default (no FX, cine, missiles)
   const RetailSkinRef* retail = nullptr; // votes for the vote rows; table fallback without it
+  // On: the meshes are reposed into Prime's bind pose (Prime's skeleton drives them). Off: they
+  // stay at Dread's proportions, only fitted, bound to ReskinResult::skeleton (votes still
+  // look up retail vertices from the reposed positions, which match the retail body).
+  bool repose = true;
 };
 
 // Fit, repose and re-weight `model` onto `skeleton`. Fails (false, *error) when the skeleton or

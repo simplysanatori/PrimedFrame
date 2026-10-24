@@ -238,6 +238,37 @@ const Tail kMarkers[] = {
     {"L01_Foot_SKN", "L_ankle"},         {"R01_Foot_SKN", "R_ankle"},
 };
 
+// Joints of the Dread-proportioned Prime skeleton placed on a Dread joint's head. Prime's
+// Skeleton_Root, Pelvis and Spine_1 share one head at the hips; Dread's spine starts higher, and
+// Spine_1 takes it so the mesh's spine bends where it was built to. Prime's collars, eyes, SDK
+// pads and locators have no Dread joint and keep their offsets from their parents.
+const Tail kBind[] = {
+    {"C01_Master_SKN", "Skeleton_Root"},
+    {"C01_Master_SKN", "Pelvis"},
+    {"C01_Spine0_SKN", "Spine_1"},
+    {"C01_Spine1_SKN", "Spine_2"},
+    {"C01_Spine2_SKN", "Collar"},
+    {"C01_Neck_SKN", "Neck_1"},
+    {"C01_Head_SKN", "Head_1"},
+    {"{S}01_UpperArm_SKN", "{s}_shoulder"},
+    {"{S}01_Forearm_SKN", "{s}_elbow"},
+    {"L01_Hand_SKN", "L_wrist"},
+    {"L01_Finger0_SKN", "L_thumb_1"},
+    {"L01_Finger01_SKN", "L_thumb_2"},
+    {"L01_Finger1_SKN", "L_Index_1"},
+    {"L01_Finger11_SKN", "L_Index_2"},
+    {"L01_Finger2_SKN", "L_middle_1"},
+    {"Cine_L01_Finger02_02_SKN", "L_middle_2"},
+    {"Cine_L01_Finger03_01_SKN", "L_Ring_1"},
+    {"Cine_L01_Finger03_02_SKN", "L_Ring_2"},
+    {"Cine_L01_Finger04_01_SKN", "L_Pinky_1"},
+    {"Cine_L01_Finger04_02_SKN", "L_Pinky_2"},
+    {"{S}01_Thigh_SKN", "{s}_hip"},
+    {"{S}01_Calf_SKN", "{s}_knee"},
+    {"{S}01_Foot_SKN", "{s}_ankle"},
+    {"{S}01_Toe_SKN", "{s}_ball"},
+};
+
 // "{S}"/"{s}" expanded for one side.
 std::string Expand(const char* pattern, char side) {
   std::string out;
@@ -373,6 +404,39 @@ bool ParseCinf(const uint8_t* data, size_t size, PrimeSkeleton& out, std::string
     if (!found) {
       j.parent = kPrimeNoParent;
     }
+  }
+  return true;
+}
+
+bool PatchCinfHeads(const uint8_t* cinf, size_t size, const PrimeSkeleton& skeleton, std::vector<uint8_t>& out,
+                    std::string* error) {
+  PrimeSkeleton check;
+  if (!ParseCinf(cinf, size, check, error)) {
+    return false;
+  }
+  out.assign(cinf, cinf + size);
+  // ParseCinf has bounds-checked the joint records this walk reads.
+  auto u32 = [&](size_t o) {
+    return (uint32_t(out[o]) << 24) | (uint32_t(out[o + 1]) << 16) | (uint32_t(out[o + 2]) << 8) | out[o + 3];
+  };
+  const uint32_t n = u32(0);
+  size_t o = 4;
+  for (uint32_t i = 0; i < n; ++i) {
+    const uint32_t id = u32(o);
+    const int j = skeleton.IndexOfId(id);
+    if (j < 0) {
+      return Fail(error, "CINF patch: joint id " + std::to_string(id) + " missing from the skeleton");
+    }
+    for (int a = 0; a < 3; ++a) {
+      uint32_t v;
+      std::memcpy(&v, &skeleton.joints[size_t(j)].head[a], 4);
+      const size_t at = o + 8 + size_t(a) * 4;
+      out[at] = uint8_t(v >> 24);
+      out[at + 1] = uint8_t(v >> 16);
+      out[at + 2] = uint8_t(v >> 8);
+      out[at + 3] = uint8_t(v);
+    }
+    o += 20 + size_t(u32(o + 20)) * 4 + 4;
   }
   return true;
 }
@@ -756,6 +820,55 @@ bool ReskinToPrime(const Bcmdl& model, const PrimeSkeleton& skel, const ReskinOp
       break;
     }
   }
+  // Prime's skeleton at Dread's proportions, parents first.
+  {
+    const size_t np = skel.joints.size();
+    std::vector<int> bind(np, -1);  // Prime index -> Dread joint
+    for (const Tail& row : kBind) {
+      for (char side : {'L', 'R'}) {
+        const int pj = skel.Find(Expand(row.prime, side)), dj = model.FindJoint(Expand(row.dread, side));
+        if (pj >= 0 && dj >= 0) {
+          bind[size_t(pj)] = dj;
+        }
+        if (!HasSide(row.prime)) {
+          break;
+        }
+      }
+    }
+    out.skeleton = skel;
+    std::vector<uint8_t> state(np, 0);
+    std::function<void(size_t)> place = [&](size_t i) {
+      if (state[i] != 0) {
+        return;  // done, or a parent cycle (left where it is)
+      }
+      state[i] = 1;
+      PrimeJoint& j = out.skeleton.joints[i];
+      const int par = j.parent == kPrimeNoParent ? -1 : skel.IndexOfId(j.parent);
+      V3 h = PrimeHead(skel, int(i));
+      const char* how = "kept";
+      if (bind[i] >= 0) {
+        h = ctx.head[size_t(bind[i])];
+        how = "mapped";
+        ++out.skeleton_mapped;
+      } else if (par >= 0) {
+        place(size_t(par));
+        h = Add(PrimeHead(out.skeleton, par), Sub(PrimeHead(skel, int(i)), PrimeHead(skel, par)));
+        how = "carried";
+      }
+      for (int a = 0; a < 3; ++a) {
+        j.head[a] = float(h[a]);
+      }
+      char buf[192];
+      std::snprintf(buf, sizeof(buf), "skel: %s %s%s%s, (%.3f, %.3f, %.3f), moved %.3f", j.name.c_str(), how,
+                    bind[i] >= 0 ? " from " : "", bind[i] >= 0 ? model.joints[size_t(bind[i])].name.c_str() : "", h[0],
+                    h[1], h[2], Len(Sub(h, PrimeHead(skel, int(i)))));
+      out.log.push_back(buf);
+      state[i] = 2;
+    };
+    for (size_t i = 0; i < np; ++i) {
+      place(i);
+    }
+  }
   out.stats.joints = nj;
   for (size_t j = 0; j < nj; ++j) {
     if (!Solve(ctx, int(j), error)) {
@@ -797,6 +910,7 @@ bool ReskinToPrime(const Bcmdl& model, const PrimeSkeleton& skel, const ReskinOp
   // ---- 4. meshes: bind pose, repose, Dread weights ----
   // Per output vertex, its Dread (joint, weight) pairs; votes need every mesh's first.
   std::vector<std::vector<std::vector<std::pair<int, float>>>> dw;
+  std::vector<std::vector<V3>> reposed;  // per vertex, in Prime's bind pose: the votes' lookup
   M3 frameN = frame;  // a rotation: its own inverse transpose
   for (const BcmdlMesh& mesh : model.meshes) {
     if (options.enabled_only && !mesh.enabled) {
@@ -847,6 +961,7 @@ bool ReskinToPrime(const Bcmdl& model, const PrimeSkeleton& skel, const ReskinOp
       }
     }
     std::vector<std::vector<std::pair<int, float>>> meshDw(nv);
+    std::vector<V3> meshReposed(nv);
     for (uint32_t v = 0; v < nv; ++v) {
       const BcmdlSubmesh& sm = mesh.submeshes[size_t(std::max(owner[v], 0))];
       // Dread joints and weights of the vertex (an unreferenced vertex whose indices do not
@@ -925,8 +1040,15 @@ bool ReskinToPrime(const Bcmdl& model, const PrimeSkeleton& skel, const ReskinOp
         rn = Add(rn, Mul(Apply(x.nrm, fn), w));
         rt = Add(rt, Mul(Apply(x.lin, ft), w));
       }
-      rn = Unit(rn);
-      rt = Unit(rt);
+      meshReposed[v] = rp;
+      if (options.repose) {
+        rn = Unit(rn);
+        rt = Unit(rt);
+      } else {
+        rp = fp;
+        rn = Unit(fn);
+        rt = Unit(ft);
+      }
       for (int a = 0; a < 3; ++a) {
         rm.pos[3 * size_t(v) + a] = float(rp[a]);
         rm.normal[3 * size_t(v) + a] = float(rn[a]);
@@ -940,6 +1062,7 @@ bool ReskinToPrime(const Bcmdl& model, const PrimeSkeleton& skel, const ReskinOp
       }
     }
     dw.push_back(std::move(meshDw));
+    reposed.push_back(std::move(meshReposed));
     out.meshes.push_back(std::move(rm));
   }
 
@@ -964,7 +1087,7 @@ bool ReskinToPrime(const Bcmdl& model, const PrimeSkeleton& skel, const ReskinOp
         if (!votes) {
           continue;
         }
-        const float* q = &rm.pos[3 * size_t(v)];
+        const V3& q = reposed[mi][v];
         double best = -1.0;
         uint32_t at = 0;
         for (size_t i = 0; i < nr; ++i) {

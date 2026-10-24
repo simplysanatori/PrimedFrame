@@ -288,6 +288,7 @@ bool Import(const Io& io, Result& result, std::string& error) {
 
   std::map<std::string, PortDread::Bcmdl> models;
   std::map<uint32_t, PortDread::PrimeSkeleton> skeletons;
+  std::map<uint32_t, std::vector<uint8_t>> cinfData;
   const size_t total = std::size(kTargets);
   for (size_t ti = 0; ti < total; ++ti) {
     const Target& t = kTargets[ti];
@@ -334,6 +335,7 @@ bool Import(const Io& io, Result& result, std::string& error) {
         continue;
       }
       skeleton = skeletons.emplace(t.cinf, std::move(parsed)).first;
+      cinfData[t.cinf] = std::move(data);
     }
     std::vector<uint8_t> retailCmdl, retailCskr;
     PortDread::RetailSkinRef retailSkin;
@@ -349,9 +351,22 @@ bool Import(const Io& io, Result& result, std::string& error) {
     }
     PortDread::ReskinOptions ro;
     ro.retail = haveVotes ? &retailSkin : nullptr;
+    ro.repose = false;
     PortDread::ReskinResult reskin;
     if (!PortDread::ReskinToPrime(model->second, skeleton->second, ro, reskin, &why)) {
       failTarget("re-skin: " + why);
+      continue;
+    }
+    // The mesh keeps Dread's proportions; the skeleton it is bound to ships as its own CINF.
+    const uint32_t dreadCinf = DreadCinf(t.cmdl);
+    std::vector<uint8_t> patchedCinf;
+    if (dreadCinf == 0 || (io.retailId && io.retailId(dreadCinf))) {
+      failTarget("CINF id " + Hex8(dreadCinf) + " is taken");
+      continue;
+    }
+    const std::vector<uint8_t>& baseCinf = cinfData[t.cinf];
+    if (!PortDread::PatchCinfHeads(baseCinf.data(), baseCinf.size(), reskin.skeleton, patchedCinf, &why)) {
+      failTarget("CINF " + Hex8(dreadCinf) + ": " + why);
       continue;
     }
     for (const std::string& line : reskin.log) {
@@ -389,14 +404,19 @@ bool Import(const Io& io, Result& result, std::string& error) {
       failTarget("convert: " + why);
       continue;
     }
+    if (!cio.write(Hex8(dreadCinf) + ".CINF", patchedCinf)) {
+      failTarget("could not write CINF " + Hex8(dreadCinf));
+      continue;
+    }
     ++result.converted;
     log("dread: " + label + ": " + std::to_string(built.meshes.size()) + " meshes, " +
-        std::to_string(built.materials.size()) + " materials");
+        std::to_string(built.materials.size()) + " materials, CINF " + Hex8(dreadCinf) + " (" +
+        std::to_string(reskin.skeleton_mapped) + " joints from Dread)");
 
-    // Where the Dread cannon's tip sits against Prime's gun locators (the bind pose; step 7).
+    // Where the Dread cannon's tip sits against the gun locators, carried at Prime's offsets (step 12).
     if (!result.measured && std::strcmp(t.skeleton, "cine50") == 0) {
-      const int gun = skeleton->second.Find("GUN_LCTR");
-      const int charge = skeleton->second.Find("Charge_LCTR");
+      const int gun = reskin.skeleton.Find("GUN_LCTR");
+      const int charge = reskin.skeleton.Find("Charge_LCTR");
       float maxX = -1e30f;
       for (const PortDread::ReskinMesh& rm : reskin.meshes) {
         if (rm.name.find("Cannon") != std::string::npos) {
@@ -423,8 +443,8 @@ bool Import(const Io& io, Result& result, std::string& error) {
         result.measured = true;
         for (int a = 0; a < 3; ++a) {
           result.cannonTip[a] = float(sum[a] / double(count));
-          result.tipFromGun[a] = result.cannonTip[a] - skeleton->second.joints[size_t(gun)].head[a];
-          result.tipFromCharge[a] = result.cannonTip[a] - skeleton->second.joints[size_t(charge)].head[a];
+          result.tipFromGun[a] = result.cannonTip[a] - reskin.skeleton.joints[size_t(gun)].head[a];
+          result.tipFromCharge[a] = result.cannonTip[a] - reskin.skeleton.joints[size_t(charge)].head[a];
         }
         char line[256];
         std::snprintf(line, sizeof(line),

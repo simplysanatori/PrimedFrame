@@ -397,6 +397,90 @@ void TestFloorSquash() {
   CHECK(logged);
 }
 
+// Repose off: the mesh only fitted, the skeleton moved onto the fitted Dread joints (kBind), the
+// joints Dread lacks carried at Prime's offsets from their parents, and the CINF patched to it.
+void TestDreadSkeleton() {
+  const PrimeSkeleton s = PrimeFigure();
+  std::vector<Vert> verts = {
+      {{45, 40, 15}, {1, 0, 0}, {{"L01_Forearm_SKN", 1.f}}},
+      {{10, -90, 5}, {0, 0, 1}, {{"L01_Foot_SKN", 1.f}}},
+      {{0, 30, 10}, {0, 0, 1}, {{"C01_Spine1_SKN", 1.f}}},
+  };
+  const std::vector<DJ> dj = DreadFigure(true);
+  const Bcmdl m = BuildModel(dj, verts);
+  ReskinOptions opt;
+  opt.repose = false;
+  ReskinResult r;
+  std::string err;
+  REQUIRE_MSG(ReskinToPrime(m, s, opt, r, &err), err);
+  auto fit = [&](float x, float y, float z, float out[3]) {
+    const float d[3] = {x, y, z};
+    for (int i = 0; i < 3; ++i) {
+      out[i] = r.offset[i];
+      for (int j = 0; j < 3; ++j) {
+        out[i] += r.frame[i][j] * d[j] * r.scale;
+      }
+    }
+  };
+  auto dread = [&](const char* name, float out[3]) {
+    for (const DJ& d : dj) {
+      if (std::strcmp(d.name, name) == 0) {
+        fit(d.x, d.y, d.z, out);
+        return;
+      }
+    }
+    REQUIRE_MSG(false, name);
+  };
+  const ReskinMesh& mesh = r.meshes[0];
+  for (size_t v = 0; v < verts.size(); ++v) {
+    float want[3];
+    fit(verts[v].p[0], verts[v].p[1], verts[v].p[2], want);
+    CHECK(Near3(&mesh.pos[v * 3], want[0], want[1], want[2], 1e-5));
+  }
+  CHECK(Near3(&mesh.normal[0], -1, 0, 0, 1e-5));  // not turned
+  const PrimeSkeleton& k = r.skeleton;
+  REQUIRE(k.joints.size() == s.joints.size());
+  auto head = [&](const PrimeSkeleton& sk, const char* n) { return sk.joints[size_t(sk.Find(n))].head; };
+  float want[3];
+  for (const auto& [prime, d] : std::vector<std::pair<const char*, const char*>>{{"L_wrist", "L01_Hand_SKN"},
+                                                                                 {"L_elbow", "L01_Forearm_SKN"},
+                                                                                 {"Pelvis", "C01_Master_SKN"},
+                                                                                 {"Spine_2", "C01_Spine1_SKN"},
+                                                                                 {"R_knee", "R01_Calf_SKN"}}) {
+    dread(d, want);
+    CHECK_MSG(Near3(head(k, prime), want[0], want[1], want[2], 1e-5), prime);
+  }
+  // L_collar (no Dread joint in the figure) rides Spine_2 at Prime's offset; root keeps its head.
+  for (int a = 0; a < 3; ++a) {
+    CHECK(Near(head(k, "L_collar")[a] - head(k, "Spine_2")[a], head(s, "L_collar")[a] - head(s, "Spine_2")[a], 1e-5));
+  }
+  CHECK(Near3(head(k, "root"), 0, 0, 0, 1e-6));
+  CHECK(r.skeleton_mapped >= 5);
+  for (size_t j = 0; j < s.joints.size(); ++j) {
+    CHECK_EQ(k.joints[j].id, s.joints[j].id);
+    CHECK_EQ(k.joints[j].parent, s.joints[j].parent);
+  }
+
+  // The patched CINF: same bytes but the heads.
+  const std::vector<uint8_t> bytes = BuildCinf(kPrimeFigure);
+  std::vector<uint8_t> patched;
+  REQUIRE_MSG(PatchCinfHeads(bytes.data(), bytes.size(), k, patched, &err), err);
+  CHECK_EQ(patched.size(), bytes.size());
+  PrimeSkeleton back;
+  REQUIRE_MSG(ParseCinf(patched.data(), patched.size(), back, &err), err);
+  REQUIRE(back.joints.size() == k.joints.size());
+  for (size_t j = 0; j < k.joints.size(); ++j) {
+    CHECK_EQ(back.joints[j].name, k.joints[j].name);
+    CHECK_EQ(back.joints[j].id, k.joints[j].id);
+    CHECK(Near3(back.joints[j].head, k.joints[j].head[0], k.joints[j].head[1], k.joints[j].head[2], 0));
+  }
+  // A skeleton missing one of the CINF's joints, or a broken CINF, is refused.
+  PrimeSkeleton fewer = k;
+  fewer.joints.pop_back();
+  CHECK(!PatchCinfHeads(bytes.data(), bytes.size(), fewer, patched, &err));
+  CHECK(!PatchCinfHeads(bytes.data(), bytes.size() / 2, k, patched, &err));
+}
+
 // A model or skeleton without the fit's joints fails with a message.
 void TestMissingJoints() {
   std::vector<CinfJoint> js = kPrimeFigure;
@@ -656,6 +740,7 @@ int main() {
   TestWeights();
   TestMissingJoints();
   TestFloorSquash();
+  TestDreadSkeleton();
   TestRealData();
   return PORT_TEST_RESULT();
 }

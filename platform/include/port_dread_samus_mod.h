@@ -66,4 +66,26 @@ inline uint32_t CutsceneSkin(uint32_t bodyCmdl) {
   }
 }
 
+// The Dread-proportioned skeleton the mod ships for a body CMDL it serves: the retail CINF's joints
+// with their heads moved to the Dread body's (one per suit and skeleton), 0 for any other. New ids,
+// as Phazon still uses the retail CINFs.
+inline uint32_t DreadCinf(uint32_t bodyCmdl) {
+  switch (bodyCmdl) {
+  case 0x4A1A8FD3:
+    return 0xD7EAD001;
+  case 0x57489AD3:
+    return 0xD7EAD002;
+  case 0xE449874A:
+    return 0xD7EAD003;
+  case 0xF39476F2:
+    return 0xD7EAD004;
+  case 0x57F5C930:
+    return 0xD7EAD005;
+  case 0x776C1A96:
+    return 0xD7EAD006;
+  default:
+    return 0;
+  }
+}
+
 }  // namespace PortDreadSamus
