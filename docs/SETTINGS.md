@@ -75,8 +75,8 @@
   supersamples (4x at 16:9 is 3755x2112; with MSAA 4 the targets take
   several hundred MB). "Dynamic
   resolution" (`dynamic_res`) lowers the scale while the GPU cannot hold the
-  "Frame rate target" (`dynamic_res_target`, 30-240 fps, 0 = "Display", the
-  display's rate; never above the frame rate cap), down to "Minimum resolution
+  "Frame rate target" (`dynamic_res_target`, 30-500 fps, 0 = "Display", the
+  display's rate, however high; never above the frame rate cap), down to "Minimum resolution
   scale" (`dynamic_res_min`, 0.25x up to the top, default 1), and raises it back when
   there is room. Its mode is the two settings together: Auto (`render_scale` 0)
   goes up to the window's own scale, its pixel height over 480, and starts over

@@ -419,7 +419,7 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { out << sRenderScale; }, false, "0.5", "2"},
     BoolKey< &sDynamicRes >("dynamic_res"),
     {"dynamic_res_target",
-     [](const std::string& value) { sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240); },
+     [](const std::string& value) { sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, kFpsCapMax); },
      [](std::ostream& out) { out << sDynamicResTarget; }, false, "0", "60"},
     {"dynamic_res_min",
      [](const std::string& value) {

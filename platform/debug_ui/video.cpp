@@ -533,7 +533,7 @@ void DrawVideoQuality() {
                           "for very high resolution displays.");
     // The left end is "Display" (saved as 0).
     constexpr int kTargetMin = 30;
-    constexpr int kTargetMax = 240;
+    constexpr int kTargetMax = kFpsCapMax;
     int target = sDynamicResTarget > 0 ? std::clamp(sDynamicResTarget, kTargetMin, kTargetMax) : kTargetMin - 1;
     if (ImGui::SliderInt("Frame rate target", &target, kTargetMin - 1, kTargetMax,
                          target < kTargetMin ? "Display" : "%d fps", ImGuiSliderFlags_AlwaysClamp)) {
