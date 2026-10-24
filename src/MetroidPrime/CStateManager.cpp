@@ -7,6 +7,7 @@
 #include "port_debug.h"
 #include "port_env.h"
 #include "port_freecam.h"
+#include "port_third_person.h"
 #include "port_photo.h"
 #include "port_pipeline_context.h"
 #include "port_discord.h"
@@ -1694,6 +1695,9 @@ void CStateManager::Update(float dt) {
 
   if (x904_gameState != kGS_SoftPaused) {
     x870_cameraManager->Update(dt, *this);
+#ifdef TARGET_PC
+    PortThirdPerson::Update(*this, dt);
+#endif
   }
 
   while (xf76_lastRelay != kInvalidUniqueId) {
@@ -3820,7 +3824,7 @@ void CStateManager::DrawWorld() const {
     }
 #endif
 #ifdef TARGET_PC
-    if (!PortViewModel::Active() && !PortFreeCam::Active())
+    if (!PortViewModel::Active() && !PortFreeCam::Active() && !PortThirdPerson::Active())
 #endif
     {
 #ifdef TARGET_PC

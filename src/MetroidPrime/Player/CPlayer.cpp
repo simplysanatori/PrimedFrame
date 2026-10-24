@@ -6,6 +6,7 @@
 #include "port_hints.h"
 #include "port_mouse.h"
 #include "port_freecam.h"
+#include "port_third_person.h"
 
 #include "Collision/CInternalCollisionStructure.hpp"
 #include "Kyoto/CDependencyGroup.hpp"
@@ -2516,7 +2517,7 @@ void CPlayer::PreRender(CStateManager& mgr, const CFrustumPlanes& frustum) {
 
   if (x2f4_cameraState != kCS_FirstPerson
 #ifdef TARGET_PC
-      || PortFreeCam::ShowPlayer()
+      || PortFreeCam::ShowPlayer() || PortThirdPerson::Active()
 #endif
   ) {
     CActor::PreRender(mgr, frustum);
@@ -2560,8 +2561,8 @@ void CPlayer::Render(const CStateManager& mgr) const {
 
   bool firstPerson = x2f4_cameraState == kCS_FirstPerson;
 #ifdef TARGET_PC
-  // Port: the free camera shows the body the first-person view leaves out.
-  if (PortFreeCam::ShowPlayer()) {
+  // Port: the free and third-person cameras show the body the first-person view leaves out.
+  if (PortFreeCam::ShowPlayer() || PortThirdPerson::Active()) {
     firstPerson = false;
   }
 #endif

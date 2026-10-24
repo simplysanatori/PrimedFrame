@@ -253,6 +253,7 @@ set(MP_PORT_SOURCES
     platform/port_viewmodel.cpp
     platform/port_actor_shadow.cpp
     platform/port_freecam.cpp
+    platform/port_third_person.cpp
     platform/port_photo.cpp
     platform/port_console.cpp
     platform/port_log_file.cpp
@@ -1434,6 +1435,10 @@ if(MP_BUILD_TESTS)
         LIBRARIES mp_test_remastered_convert ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
         TIMEOUT 120)
     # --- end Dread suit material ---
+    # Third-person camera: eye placement and wall pull-in maths (header-only, no game state).
+    mp_port_test(port_third_person_tests
+        SOURCES tests/port_third_person.cpp
+        INCLUDES platform/include)
     # --- Dread Samus import (step 6: the dread-samus mod) ---
     # The converter's explicit-weights path, the synthetic Model of a re-skinned body, the retail
     # skin reader and the mod order rule over synthetic fixtures; the whole import on real data is

@@ -17,6 +17,7 @@
 #include "port_debug.h"
 #include "port_discord.h"
 #include "port_freecam.h"
+#include "port_third_person.h"
 #include "port_gci.h"
 #include "port_photo.h"
 #include "port_pointer.h"
@@ -1961,6 +1962,37 @@ void CmdCollDump() {
   Finish();
 }
 
+// thirdperson [on|off] [distance <m>] [shoulder <m>] [height <m>]
+void CmdThirdPerson() {
+  static const char* const usage = "usage: thirdperson [on|off] [distance <m>] [shoulder <m>] [height <m>]";
+  for (size_t i = 1; i < sCmd.args.size(); ++i) {
+    const std::string arg = Lower(sCmd.args[i]);
+    float number = 0.f;
+    if (arg == "on" || arg == "off") {
+      PortThirdPerson::SetEnabled(arg == "on");
+    } else if ((arg == "distance" || arg == "shoulder" || arg == "height") && i + 1 < sCmd.args.size() &&
+               ParseFloat(sCmd.args[i + 1], number)) {
+      ++i;
+      if (arg == "distance") {
+        PortThirdPerson::SetDistance(number);
+      } else if (arg == "shoulder") {
+        PortThirdPerson::SetShoulder(number);
+      } else {
+        PortThirdPerson::SetHeight(number);
+      }
+    } else {
+      return Finish(usage);
+    }
+  }
+  const PortThirdPerson::Params p = PortThirdPerson::GetParams();
+  float cam[3] = {0.f, 0.f, 0.f};
+  PortThirdPerson::GetCameraPosition(cam);
+  Out("thirdperson %s (%s) distance %.2f shoulder %.2f height %.2f camera %.2f %.2f %.2f",
+      PortThirdPerson::Enabled() ? "on" : "off", PortThirdPerson::Active() ? "active" : "inactive",
+      p.distance, p.shoulder, p.height, cam[0], cam[1], cam[2]);
+  Finish();
+}
+
 // freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]
 void CmdFreeCam() {
   static const char* const usage =
@@ -3856,6 +3888,9 @@ const CommandSpec kCommands[] = {
     {"freecam", CmdFreeCam, nullptr,
      "freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]\n"
      "                           fly the view away from the player (HUD hidden; freeze holds the game still)"},
+    {"thirdperson", CmdThirdPerson, nullptr,
+     "thirdperson [on|off] [distance <m>] [shoulder <m>] [height <m>]\n"
+     "                           third-person gameplay camera (also third_person* settings)"},
     {"photo", nullptr, CmdPhoto,
      "photo [on|off|capture [1|2|4]|fov <n>|roll <n>|samus on|off|panel on|off|super 1|2|4|speed <n>]\n"
      "                           photo mode: frozen free camera with a roll and fov, saves a PNG"},
