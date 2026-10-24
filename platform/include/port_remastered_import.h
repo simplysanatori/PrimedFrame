@@ -78,9 +78,11 @@ namespace ImportStage {
 // 55: textures are used as authored (no flat-texture statistic, no :bare retail fallback).
 // 54: the glow added without a room's tone data is unscaled (kPbrEmissive 1, was 0.10).
 // 58: the beam glow (kind 9) is drawn as kind 9 without vertex colours too (no ramp mean).
-inline constexpr int kConverter = 58;
-// What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get, Cube
-// and Baked. Each converted texture is kept across imports under its tag and this number, so a
+// 59: a retail TEV material's diffuse slot takes the Remastered base map as authored (no AO,
+//     cavity or sheen baked into it).
+inline constexpr int kConverter = 59;
+// What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
+// Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 4;
 // 17: the inventory and cinematic guns draw the animated beam glow (kConverter 58).

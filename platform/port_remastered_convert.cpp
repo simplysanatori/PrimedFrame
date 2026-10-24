@@ -39,7 +39,7 @@ struct Converter::State {
   std::map<std::string, std::optional<uint32_t>> ids;  // tag -> texture id, or none where retail's stays
   std::map<uint32_t, std::string> owner;               // texture id -> the tag it was written for
   // The last few textures decoded: a map that was measured is usually written
-  // straight after, and a bake reads its neighbours.
+  // straight after.
   std::vector<std::pair<std::string, Image>> opened;
   int pbr = 0, tev = 0;
   uint32_t model = 0;  // the retail id being converted, for the joint log
@@ -301,51 +301,6 @@ struct Converter::State {
     return uint16_t(std::min<uint32_t>(bits + uint32_t(frac), 0x7BFF));
   }
 
-  struct Bake {
-    bool on = false;
-    const MapRef* mr = nullptr;
-    const MapRef* normal = nullptr;
-    double ao = 0.6, cavity = 0.5, spec = 0.35;
-  };
-
-  // Remastered's shading folded into the base colour, texel-local, for the TEV
-  // path: occlusion (MR red), cavities (normal-map tilt) and a sheen on smooth
-  // metal (MR blue metal, green roughness).
-  Image Baked(const Image& base, const Bake& bake) {
-    const size_t count = size_t(base.width) * size_t(base.height);
-    std::vector<float> shade(count, 1.0f), lift(count, 0.0f);
-    auto load = [&](const MapRef& map, MapKind kind) {
-      const Image& img = Open(map);
-      return img.width == base.width && img.height == base.height ? img : Resize(img, base.width, base.height, kind);
-    };
-    if (bake.mr) {
-      const Image t = load(*bake.mr, MapKind::Data);
-      for (size_t i = 0; i < count; ++i) {
-        const float r = t.rgba[i * 4] / 255.0f, g = t.rgba[i * 4 + 1] / 255.0f, b = t.rgba[i * 4 + 2] / 255.0f;
-        shade[i] *= 1.0f - float(bake.ao) * (1.0f - r);
-        lift[i] = float(bake.spec) * b * (1.0f - g) * (1.0f - g);
-      }
-    }
-    if (bake.normal) {
-      const Image t = load(*bake.normal, MapKind::Normal);
-      for (size_t i = 0; i < count; ++i) {
-        const float nx = t.rgba[i * 4] / 255.0f * 2.0f - 1.0f, ny = t.rgba[i * 4 + 1] / 255.0f * 2.0f - 1.0f;
-        const float nz = std::sqrt(std::clamp(1.0f - nx * nx - ny * ny, 0.0f, 1.0f));
-        shade[i] *= 1.0f - float(bake.cavity) * (1.0f - nz);
-      }
-    }
-    Image out = base;
-    for (size_t i = 0; i < count; ++i) {
-      for (int c = 0; c < 3; ++c) {
-        float v = base.rgba[i * 4 + c] / 255.0f;
-        v *= shade[i];
-        v += (1.0f - v) * lift[i] * shade[i];  // screen-style, stays under white
-        out.rgba[i * 4 + c] = uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
-      }
-    }
-    return out;
-  }
-
   // The texture id for a role of a Remastered material, converting and writing
   // the texture the first time its tag is seen. `role` is "pbr:<map>" or a TEV
   // slot role; `alpha` is RetailAlpha() of the texture a TEV slot replaces.
@@ -361,7 +316,6 @@ struct Converter::State {
     // the GPU decodes it; a UNORM one is data, filtered and sampled raw. MR and normal
     // maps are never decoded.
     bool colourTex = false, srgbTex = false;
-    Bake bake;
     if (role.rfind("pbr:", 0) == 0) {
       for (int i = 0; i < kMaps; ++i) {
         if (role.compare(4, std::string::npos, kMapName[i]) == 0) {
@@ -390,22 +344,6 @@ struct Converter::State {
     } else if (role == "diffuse" && rt[kBase].has) {
       src = &rt[kBase];
       tag = "base:" + src->src;
-      // Only maps sharing the base's texcoord can be baked texel for texel.
-      const uint32_t uv = rt[kBase].coord;
-      bake.mr = rt[kMr].has && rt[kMr].coord == uv ? &rt[kMr] : nullptr;
-      bake.normal = rt[kNormal].has && rt[kNormal].coord == uv ? &rt[kNormal] : nullptr;
-      if (!bake.mr) {
-        bake.ao = bake.spec = 0.0;
-      }
-      if (!bake.normal) {
-        bake.cavity = 0.0;
-      }
-      bake.on = bake.ao != 0.0 || bake.cavity != 0.0 || bake.spec != 0.0;
-      if (bake.on) {
-        tag += ":bake:" + (bake.mr ? bake.mr->src : std::string("-")) + ":" +
-               (bake.normal ? bake.normal->src : std::string("-")) + ":" + FormatG(bake.ao) + ":" +
-               FormatG(bake.cavity) + ":" + FormatG(bake.spec) + ":0:0";
-      }
     } else if (role == "emissive" && rt[kEmissive].has) {
       src = &rt[kEmissive];
       tag = "emis:" + src->src + ":1";
@@ -554,9 +492,6 @@ struct Converter::State {
     // that gets this far would write one, and the costly part below runs once.
     if (k >= 0 && !claimed && io.claim && !io.claim(tid)) {
       return tid;
-    }
-    if (bake.on) {
-      img = Baked(img, bake);
     }
     if (k == kMr && !raw) {
       const uint8_t ceiling = uint8_t(std::nearbyint(float(src->metalMax * 255.0)));
