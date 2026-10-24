@@ -1407,6 +1407,14 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include
         LIBRARIES ZLIB::ZLIB)
     # --- end Dread readers B ---
+    # --- Dread re-skin (step 4: Dread Samus onto Prime's skeletons) ---
+    # CINF parse, frame/scale fit, repose and weight mapping over synthetic stick figures;
+    # the real-data run is opt-in (PORT_DREAD_SAMUS_PKG_DIR + PORT_PRIME_SAMUS_DIR).
+    mp_port_test(port_dread_reskin_tests
+        SOURCES tests/port_dread_reskin.cpp platform/port_dread_reskin.cpp platform/port_dread_bcmdl.cpp
+        INCLUDES platform/include
+        LIBRARIES ZLIB::ZLIB)
+    # --- end Dread re-skin ---
     # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
