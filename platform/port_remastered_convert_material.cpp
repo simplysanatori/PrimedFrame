@@ -239,8 +239,12 @@ constexpr bool IsXraySkinned(uint32_t shader) { return shader == kShaderXraySkin
 constexpr uint32_t kShaderXrayMap = 0x65E90E82;
 // e84190e0 (kb material/e84190e0.md) is the same X-ray fresnel/depth-fade material as fb2bc671.
 constexpr uint32_t kShaderXrayStatic2 = 0xE84190E0;
+// 0c0b6119 (xray_ice / XRAYLava, kb material/0c0b6119.md) folds to fb2bc671's maths (rim, depth fade, (rim + ICMC) x
+// c6[0], clustered GGX lights); its c6[0] is DIFC (inferred from the bind names) where fb2bc671's is ICNC.
+constexpr uint32_t kShaderXrayRim = 0x0C0B6119;
 constexpr bool IsXrayGhost(uint32_t shader) {
-  return shader == kShaderXrayStatic || shader == kShaderXrayStatic2 || IsXraySkinned(shader);
+  return shader == kShaderXrayStatic || shader == kShaderXrayStatic2 || shader == kShaderXrayRim ||
+         IsXraySkinned(shader);
 }
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
@@ -1075,7 +1079,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       if (d.kind != ModelMaterialData::Kind::Color) {
         continue;
       }
-      if (d.usage == FourCC('I', 'C', 'N', 'C')) {
+      if (d.usage == (shader == kShaderXrayRim ? FourCC('D', 'I', 'F', 'C') : FourCC('I', 'C', 'N', 'C'))) {
         for (int i = 0; i < 4; ++i) {
           out.shieldRows[8 + i] = ShortestDouble(d.color[i]);
         }
@@ -1085,7 +1089,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         }
       }
     }
-    // The skinned shader and e84190e0 (ICAN x ICOF x fresnel when MUXI = CCH1.w) read ICAN; fb2bc671 does not.
+    // The skinned shader and e84190e0 (ICAN x ICOF x fresnel when MUXI = CCH1.w) read ICAN; fb2bc671 and 0c0b6119 do not.
     out.shieldRows[15] = (IsXraySkinned(shader) || shader == kShaderXrayStatic2) && out.maps[kEmissive].has ? 1.0 : 0.0;
   } else if ((shader == kShaderRefractGlass || shader == kShaderRefractGlassB) && out.maps[kBase].has &&
              out.maps[kNormal].has && cch[0]) {
