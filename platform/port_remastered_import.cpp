@@ -1,5 +1,6 @@
 #include "port_remastered_import_internal.h"
 #include "port_remastered_effect_convert.h"
+#include "port_queen_barrier_validate.h"
 #include "port_envfx_file.h"
 #include "port_retail_placement.h"
 
@@ -2641,6 +2642,25 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       // The retail PARTs the effects step wrote this GENP under by its own table (one GENP can
       // stand for two, the lava spit's): only those the mod has a PART for, or the retail object
       // would be pointed at nothing.
+      io.barrierEffect = [&](uint32_t part, uint32_t feature,
+                             const std::vector<std::array<uint8_t, 16>>& vars) {
+        const fs::path path = staging / PathFromString(Hex8(part) + ".PART");
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        if (!in) return false;
+        const auto length = in.tellg();
+        if (length <= 0 || length > 64 * 1024 * 1024) return false;
+        std::vector<uint8_t> bytes(static_cast<size_t>(length));
+        in.seekg(0);
+        if (!in.read(reinterpret_cast<char*>(bytes.data()), std::streamsize(bytes.size()))) return false;
+        std::string reason;
+        const auto dependency = [&](uint32_t type, uint32_t id) {
+          if (type != 0x54585452) return false;
+          std::error_code ec;
+          const fs::path texture = staging / PathFromString(Hex8(id) + ".TXTR");
+          return fs::is_regular_file(texture, ec) && !ec && fs::file_size(texture, ec) > 0 && !ec;
+        };
+        return PortQueenBarrier::ValidatePart(bytes, feature, vars, dependency, reason);
+      };
       io.matched = [&](const std::array<uint8_t, 16>& genp) {
         std::vector<uint32_t> out;
         for (uint32_t id : MatchedRetailEffects(genp)) {

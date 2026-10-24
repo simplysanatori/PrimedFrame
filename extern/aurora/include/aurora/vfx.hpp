@@ -90,6 +90,28 @@ enum Feature : uint32_t {
   // rgb = f x scene x vc.rgb x PCMD, alpha vc.a. params = CCH0 (SMTR-animated), extra 0..2 = PMTR
   // rows 0..2. Unfogged: the visor composite pass has no fog.
   VisorRain = 1u << 28,
+  // VFX_BarrierShield (f197ec38, the Parasite Queen barrier's MATI 6429c234: FS perm 002, the refraction
+  // of the material flag MFC0 USE_FRAME_BUFFER_DISTORTION, "No displacement" perm; build/
+  // s-queenbarrier-20261024/SHADER-IMPLEMENTATION.md): a model particle whose CPU feed (AddBarrierShield)
+  // fills the mesh's own vertex colour (VMSH v2, flags bit 1) into Vertex::mesh, separate from the
+  // instance colour. colorSlot = TCH0 (read at (-2u, 2v): the pattern's scroll .b and its .rg, .a),
+  // indirectSlot = TCH1 (the two noise reads that make the mask), params = CCH0 (.x breakup, .y alpha
+  // gain), time = the modular simulation time. The scene copy at the fragment, offset by the .45-period
+  // sawtooth of 2 x (.rg - .5) + time x .008 (three samples: +0, -.002 and +.002, the first's .rg, the
+  // second's .rb, the third's .r), is the base colour; the rim/fresnel/mesh-colour glow is added over it,
+  // all x vc.rgb x PCMD. Unfogged: perm 002 carries DFOG 1 and the matted sibling perm 003 is not ported.
+  BarrierShield = 1u << 29,
+  // VFX_BarrierGlow (b1eb2b67, the same barrier's one-variable MATI ba0acbd6: FS perm 000, the
+  // non-refraction perm, whose MATI carries neither MFC0 nor MFC1; build/
+  // s-queenbarrier-20261024/GLOW-IMPLEMENTATION.md): a model particle with no scene copy. Its CPU feed
+  // (AddBarrierGlow) is BarrierShield's (the mesh's own colour in Vertex::mesh, the inverse-transpose view
+  // normal) plus the VS's displacement in the model coordinates: along the normal by
+  // .065 (1 + 3 mc.r) max(sin(20 phase), -.33) with phase = time - 10 mc.b, and on Remastered +Y (the
+  // port's model +Z, the mesh data is R2G) by .035 max(sin(20 (phase + 114)), -.33), the normal itself
+  // undisplaced. colorSlot = TCH0 (three reads at (-u, v)), params = CCH0 (.x breakup), time = the
+  // modular simulation time. rgb = rim x gain x vec3(k 1.125, k 7.5 - .5 mc.r + 1.4 p + .5,
+  // k 30 - .9 mc.r + 3 p + .9) x vc.rgb x PCMD, alpha vc.a. Unfogged: perm 000 has DFOG 1 and no fog code.
+  BarrierGlow = 1u << 30,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
@@ -140,8 +162,13 @@ struct Vertex {
   // IceCharge*: the camera-local tangent in vec's (x, z, y) order (the GX view tangent is (x, y, -z)), w the
   // handedness with the model matrix's mirror folded in. Unused (zero) elsewhere.
   float tan[4];
+  // BarrierShield: the mesh's own vertex colour (VMSH v2, flags bit 1), kept apart from `color` (the
+  // instance's): the fragment's alpha gain and its glow read this one, and only the instance colour
+  // scales the result. A full vec4 row so the two never alias, as Remastered passes them as v4 and v3.
+  // Unused (zero) elsewhere.
+  float mesh[4];
 };
-static_assert(sizeof(Vertex) == 156);
+static_assert(sizeof(Vertex) == 172);
 
 struct Texture {
   const GXTexObj* obj = nullptr;

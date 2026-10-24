@@ -4811,6 +4811,238 @@ void TestVmatVisorRainRecipe() {
             "VPRM carries the effect's CCH0 (1, .12, .2, 4)");
 }
 
+// A MATI with the header's material-flag list appended after its parameters: a LE u32 count then that
+// many four-byte tags (the tags the material enables), as every shipped MATI header carries.
+std::vector<uint8_t> MatiFlags(std::vector<uint8_t> mati, const std::vector<const char*>& flags) {
+  const uint32_t count = uint32_t(flags.size());
+  for (int i = 0; i < 4; ++i) {
+    mati.push_back(uint8_t(count >> (8 * i)));
+  }
+  for (const char* flag : flags) {
+    mati.insert(mati.end(), flag, flag + 4);
+  }
+  return mati;
+}
+
+// VFX_BarrierShield (f197ec38, the Parasite Queen ring barrier's MATI 6429c234): its refraction perm
+// 002, the one the material flag MFC0 (USE_FRAME_BUFFER_DISTORTION) selects. TCH0 is the colour slot,
+// TCH1 the second raw sample slot (the Indirect role, unwarped: this recipe does its own reads), CCH0
+// whole in VPRM v1, the generator's blend kept. Perm 002 carries DFOG 1; without it the material draws
+// the fogged sibling 003, and without MFC0 the perm-000 variant with its own vector displacement. Both
+// are refused (no VMAT) rather than drawn with this perm's maths.
+void TestVmatBarrierShieldRecipe() {
+  constexpr uint32_t kBarrierShield = 1u << 29;
+  // The MATI's own CCH0: (.1, 1, 0, 0).
+  const std::vector<std::array<float, 4>> cch = {{0.1f, 1.f, 0.f, 0.f}};
+  const std::vector<uint8_t> mati =
+      MatiFlags(MatiCchN(0xf197ec38, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}}, cch), {"MFC0"});
+  const std::vector<uint8_t> matiNoFlag = MatiCchN(0xf197ec38, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}}, cch);
+  const std::vector<uint8_t> matiExterior =
+      MatiFlags(MatiCchN(0xf197ec38, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}}, cch), {"MFC1"});
+  const std::vector<uint8_t> matiNoNoise = MatiFlags(MatiCchN(0xf197ec38, {{"TCH0", Fresh(8)}}, cch), {"MFC0"});
+  const auto effect = [](bool dfog) {
+    std::vector<uint8_t> out = VmatEffect(true);
+    if (dfog) {
+      std::vector<uint8_t> extra;
+      PutProperty(extra, "DFOG", 1);
+      PutConstant(extra, 1);
+      out.insert(out.end() - 13, extra.begin(), extra.end());
+    }
+    return out;
+  };
+  const auto convert = [](const std::vector<uint8_t>& data, const std::vector<uint8_t>& material,
+                          std::vector<RetailPartProperty>& properties) {
+    EffectNode node;
+    std::string error;
+    CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the barrier effect parses");
+    EffectConvertIO io;
+    io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+    io.materialData = [&material](const EffectGuid&) { return material; };
+    io.vfxTexture = [](const EffectGuid& texture) {
+      FlipbookAtlas atlas;
+      if (texture == Fresh(8)) {
+        atlas.id = 0x5EED0008;
+      }
+      return atlas;
+    };
+    io.modelMesh = [](uint32_t) { return std::vector<uint8_t>{0, 0, 0, 2}; };
+    std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+    if (parts.size() == 1) {
+      SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+    }
+    return parts;
+  };
+  const auto value = [](const std::vector<RetailPartProperty>& properties, uint32_t fourcc) {
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == fourcc) {
+        return property.value;
+      }
+    }
+    return std::vector<uint8_t>();
+  };
+  const auto mentions = [](const std::vector<ConvertedPart>& parts, const char* what) {
+    const std::vector<std::string> notes = parts.size() == 1 ? parts[0].approximated : std::vector<std::string>{};
+    for (const std::string& line : notes) {
+      if (line.find(what) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  std::vector<RetailPartProperty> properties;
+  std::vector<ConvertedPart> parts = convert(effect(true), mati, properties);
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(), "f197ec38 under MFC0 + DFOG 1 writes an exact VMAT");
+  const std::vector<uint8_t> vmat = value(properties, EffectFourCC("VMAT"));
+  CHECK_MSG(VmatWord(vmat, 12) == kBarrierShield && VmatWord(vmat, 16) == 2 && VmatWord(vmat, 20) == 2,
+            "f197ec38 VMAT: BarrierShield, the generator's blend 2 (PBDM), two textures");
+  // The role words follow the two 11-word texture records: TCH0 the colour slot, TCH1 the second raw
+  // sample slot (the Indirect role), the rest absent.
+  CHECK_MSG(VmatWord(vmat, 112) == 0 && VmatWord(vmat, 116) == ~0u && VmatWord(vmat, 132) == 1 &&
+                VmatWord(vmat, 136) == ~0u,
+            "f197ec38: TCH0 is the colour slot and TCH1 the indirect sample slot");
+  const std::vector<uint8_t> vprm = value(properties, EffectFourCC("VPRM"));
+  CHECK_MSG(vprm.size() == 8 + 12 + 16 && VmatWord(vprm, 8) == 1 && VmatWord(vprm, 12) == ~0u &&
+                VmatWord(vprm, 16) == 1,
+            "VPRM v1: no NMAP slot and one CCH row");
+  CHECK_MSG(VmatWord(vprm, 20) == Bits(0.1f) && VmatWord(vprm, 24) == Bits(1.f) && VmatWord(vprm, 28) == Bits(0.f) &&
+                VmatWord(vprm, 32) == Bits(0.f),
+            "VPRM carries the MATI's CCH0 (.1, 1, 0, 0)");
+  CHECK_MSG(!value(properties, EffectFourCC("VMSH")).empty(), "the barrier model keeps its VMSH");
+
+  // Without the material flag the material is perm 000 (its own displacement, no refraction).
+  properties.clear();
+  parts = convert(effect(true), matiNoFlag, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "MFC0"),
+            "f197ec38 without MFC0 writes no VMAT and says why");
+  // The exterior flag is another perm (and its own shader).
+  properties.clear();
+  parts = convert(effect(true), matiExterior, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty(), "f197ec38 with MFC1 is refused");
+  // The second pattern map is required.
+  properties.clear();
+  parts = convert(effect(true), matiNoNoise, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "TCH1"),
+            "f197ec38 without TCH1 writes no VMAT");
+  // Perm 002's sibling 003 is fogged, and is not ported.
+  properties.clear();
+  parts = convert(effect(false), mati, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "drawn fogged"),
+            "f197ec38 without DFOG 1 writes no VMAT");
+}
+
+// VFX_BarrierGlow (b1eb2b67, the barrier's one-variable MATI ba0acbd6-d2d9-4a58-8e2d-f4802bcba587; FS
+// perm 000, build/s-queenbarrier-20261024/GLOW-IMPLEMENTATION.md): the same barrier's non-refraction
+// perm, whose MATI carries neither MFC0 (USE_FRAME_BUFFER_DISTORTION) nor MFC1 (IS_SHIELD_EXTERIOR).
+// TCH0 is the only map this perm reads (three times, at its own uv) and TCH1 sits in the MATI unused;
+// CCH0 whole in VPRM v1; the generator's PBDM 2 blend kept; the perm carries DFOG 1 and has no fog
+// code, so a material without it is refused rather than drawn with this perm's maths. Only one slot:
+// no scene copy is read, so no indirect (TCH1) slot either.
+void TestVmatBarrierGlowRecipe() {
+  constexpr uint32_t kBarrierGlow = 1u << 30;
+  // The MATI's own CCH0: (.1, 1, 0, 0).
+  const std::vector<std::array<float, 4>> cch = {{0.1f, 1.f, 0.f, 0.f}};
+  const std::vector<uint8_t> mati = MatiCchN(0xb1eb2b67, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}}, cch);
+  const std::vector<uint8_t> matiRefraction = MatiFlags(mati, {"MFC0"});
+  const std::vector<uint8_t> matiExterior = MatiFlags(mati, {"MFC1"});
+  const std::vector<uint8_t> matiNoPattern = MatiCchN(0xb1eb2b67, {}, cch);
+  const std::vector<uint8_t> matiNoCch = Mati(0xb1eb2b67, {{"TCH0", Fresh(8)}});
+  const auto effect = [](bool dfog) {
+    std::vector<uint8_t> out = VmatEffect(true);
+    if (dfog) {
+      std::vector<uint8_t> extra;
+      PutProperty(extra, "DFOG", 1);
+      PutConstant(extra, 1);
+      out.insert(out.end() - 13, extra.begin(), extra.end());
+    }
+    return out;
+  };
+  const auto convert = [](const std::vector<uint8_t>& data, const std::vector<uint8_t>& material,
+                          std::vector<RetailPartProperty>& properties) {
+    EffectNode node;
+    std::string error;
+    CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the glow effect parses");
+    EffectConvertIO io;
+    io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+    io.materialData = [&material](const EffectGuid&) { return material; };
+    io.vfxTexture = [](const EffectGuid& texture) {
+      FlipbookAtlas atlas;
+      if (texture == Fresh(8)) {
+        atlas.id = 0x5EED0008;
+      }
+      return atlas;
+    };
+    io.modelMesh = [](uint32_t) { return std::vector<uint8_t>{0, 0, 0, 2}; };
+    std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+    if (parts.size() == 1) {
+      SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+    }
+    return parts;
+  };
+  const auto value = [](const std::vector<RetailPartProperty>& properties, uint32_t fourcc) {
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == fourcc) {
+        return property.value;
+      }
+    }
+    return std::vector<uint8_t>();
+  };
+  const auto mentions = [](const std::vector<ConvertedPart>& parts, const char* what) {
+    const std::vector<std::string> notes = parts.size() == 1 ? parts[0].approximated : std::vector<std::string>{};
+    for (const std::string& line : notes) {
+      if (line.find(what) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  std::vector<RetailPartProperty> properties;
+  std::vector<ConvertedPart> parts = convert(effect(true), mati, properties);
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(),
+            "b1eb2b67 with neither shield flag writes an exact VMAT");
+  const std::vector<uint8_t> vmat = value(properties, EffectFourCC("VMAT"));
+  // The features carry the bit alone: perm 000 needs no unfogged pin (the shader has no fog code).
+  CHECK_MSG(VmatWord(vmat, 12) == kBarrierGlow && VmatWord(vmat, 16) == 2 && VmatWord(vmat, 20) == 1,
+            "b1eb2b67 VMAT: BarrierGlow, the generator's blend 2 (PBDM), one texture");
+  // The role words: TCH0 is the colour slot, and no other slot is bound (TCH1 is in the MATI, unused).
+  CHECK_MSG(VmatWord(vmat, 68) == 0 && VmatWord(vmat, 72) == ~0u && VmatWord(vmat, 88) == ~0u &&
+                VmatWord(vmat, 92) == ~0u,
+            "b1eb2b67: TCH0 is the colour slot, and the indirect slot is not bound");
+  const std::vector<uint8_t> vprm = value(properties, EffectFourCC("VPRM"));
+  CHECK_MSG(vprm.size() == 8 + 12 + 16 && VmatWord(vprm, 8) == 1 && VmatWord(vprm, 12) == ~0u &&
+                VmatWord(vprm, 16) == 1,
+            "VPRM v1: no NMAP slot and one CCH row");
+  CHECK_MSG(VmatWord(vprm, 20) == Bits(0.1f) && VmatWord(vprm, 24) == Bits(1.f) && VmatWord(vprm, 28) == Bits(0.f) &&
+                VmatWord(vprm, 32) == Bits(0.f),
+            "VPRM carries the MATI's CCH0 (.1, 1, 0, 0)");
+  CHECK_MSG(!value(properties, EffectFourCC("VMSH")).empty(), "the glow model keeps its VMSH");
+
+  // Either shield flag is another perm: the refraction 002 with MFC0, the exterior's own shader with MFC1.
+  properties.clear();
+  parts = convert(effect(true), matiRefraction, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "non-refraction perm"),
+            "b1eb2b67 with MFC0 writes no VMAT and says why");
+  properties.clear();
+  parts = convert(effect(true), matiExterior, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "non-refraction perm"),
+            "b1eb2b67 with MFC1 is refused");
+  // Its perm reads TCH0 and CCH0; without them there is nothing to draw.
+  properties.clear();
+  parts = convert(effect(true), matiNoPattern, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "TCH0"),
+            "b1eb2b67 without TCH0 writes no VMAT");
+  properties.clear();
+  parts = convert(effect(true), matiNoCch, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "CCH0"),
+            "b1eb2b67 without CCH0 writes no VMAT");
+  // The perm carries DFOG 1 and has no fog code.
+  properties.clear();
+  parts = convert(effect(false), mati, properties);
+  CHECK_MSG(value(properties, EffectFourCC("VMAT")).empty() && mentions(parts, "drawn fogged"),
+            "b1eb2b67 without DFOG 1 writes no VMAT");
+}
+
 bool Contains(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& what) {
   return std::search(bytes.begin(), bytes.end(), what.begin(), what.end()) != bytes.end();
 }
@@ -5246,6 +5478,8 @@ int main() {
   TestVmatDisintegrationRecipe();
   TestVmatVisorRunOffRecipes();
   TestVmatVisorRainRecipe();
+  TestVmatBarrierShieldRecipe();
+  TestVmatBarrierGlowRecipe();
   TestVmatVisorSplatRecipe();
   TestVmatSceneWarpRecipes();
   TestVmatIceChargeBeamRecipe();

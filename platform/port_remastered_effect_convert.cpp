@@ -515,7 +515,7 @@ constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kInd
                    kSceneWarp = 32768, kVisorSplat = 65536, kIceChargeBeam = 1u << 20,
                    kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22, kVisorRunOff = 1u << 23,
                    kVisorRunOffLit = 1u << 24, kIceChargeCollisionLit = 1u << 25, kParticleLit = 1u << 26,
-                   kVisorRain = 1u << 28;
+                   kVisorRain = 1u << 28, kBarrierShield = 1u << 29, kBarrierGlow = 1u << 30;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -627,6 +627,14 @@ struct Recipe {
   // Always drawn unfogged, and no DFOG 1 needed: the visor composite shaders never see the room's fog,
   // and their effect data carries no DFOG to read.
   bool alwaysUnfogged = false;
+  // Only the MATI whose header flag list carries MFC0 (USE_FRAME_BUFFER_DISTORTION) and not MFC1
+  // (IS_SHIELD_EXTERIOR) is this shader's refraction perm (the f197ec38 row); every other material of
+  // the shader is a different perm's maths and is refused rather than drawn with this one's.
+  bool mfc0Refraction = false;
+  // Neither MFC0 (USE_FRAME_BUFFER_DISTORTION) nor MFC1 (IS_SHIELD_EXTERIOR) may be set: the b1eb2b67
+  // row is a shader's non-refraction perm (000). A material carrying either flag is a different perm's
+  // maths (and, for MFC1, another shader), so it is refused rather than drawn with perm 000's.
+  bool noRefractionFlags = false;
 };
 
 // RECIPES.md "(b) Per shader" and RECIPES-all.md. Derived from each shader's
@@ -686,6 +694,27 @@ const Recipe* RecipeOf(uint32_t shader) {
       // (0.75 .. 1) x vc.rgb, alpha vc.a; elsewhere discarded. The visor composite pass has no fog, so Unfogged
       // whatever the DFOG.
       {0x0ec41df0, kVisorRain, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 1, false, true},
+      // VFX_BarrierShield (f197ec38, the Parasite Queen barrier's MATI 6429c234; its refraction perm 002,
+      // the material flag MFC0 USE_FRAME_BUFFER_DISTORTION with shield-exterior MFC1 off; build/
+      // s-queenbarrier-20261024/SHADER-IMPLEMENTATION.md): TCH0 read at (-2u, 2v) is the pattern (its .b
+      // scrolls four fract() noise reads of TCH1, .a widens the breakup mask, .rg drive the sawtooth motion),
+      // the scene copy at the fragment is the base colour, and the rim/fresnel/mesh-colour glow adds over it.
+      // TCH1 is the second raw sample slot (the Indirect role: this recipe's own reads, no CCH warp); the
+      // mesh's vertex colour needs VMSH v2 (PortVfxBarrierReady). CCH0 whole in VPRM v1, animated by SMTR.
+      // The 003 fog sibling and the perm-000 displacement variant are not ported: without DFOG 1 or without
+      // MFC0 the material is refused (no VMAT), never drawn with another perm's maths.
+      {0xf197ec38, kBarrierShield,
+       {{"TCH0", Role::Color, -1, -1}, {"TCH1", Role::Indirect, -1, -1}},
+       {}, -1, false, false, 1, false, false, true},
+      // VFX_BarrierGlow (b1eb2b67, the same Parasite Queen barrier's one-variable MATI ba0acbd6; FS perm
+      // 000, the non-refraction perm: the material carries neither MFC0 nor MFC1; build/
+      // s-queenbarrier-20261024/GLOW-IMPLEMENTATION.md): TCH0 read three times at (-u, v): its .r scrolls
+      // the second read's v, its .b the breakup of the third read's .a, which also drives k and the fade.
+      // No scene copy (the glow adds over the frame, so no scene gate). The VS's displacement is in the
+      // CPU feed (AddBarrierGlow); the mesh's vertex colour needs VMSH v2 (PortVfxBarrierGlowReady).
+      // CCH0 whole in VPRM v1, animated by SMTR. TCH1 is in the MATI but this perm never reads it.
+      {0xb1eb2b67, kBarrierGlow, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 1, false, false,
+       false, true},
       {0x84e0fe6c, kOpacityTex,
        {{"TCH0", Role::Opacity, -1, -1}},
        {}},
@@ -1018,7 +1047,16 @@ struct Mati {
   uint32_t headerBlend = kNoHeaderBlend;  // the header's EBlendMode, the LE u32 at 0x61
   std::map<std::string, MatiTexture> textures;
   std::map<std::string, std::array<float, 4>> vectors;
+  // The header's material-flag list, after the parameters: a u32 count then that many four-byte tags
+  // (the tags the material enables, e.g. MFC0), then the next chunk (RFRM). Every shipped barrier MATI
+  // carries 0 or 1 (6429c234 has MFC0, the exterior b46bb66d MFC1). Empty when absent or unparsed.
+  std::vector<std::string> flags;
 };
+
+// Whether the MATI's header flag list carries `tag` (a material flag such as MFC0).
+bool HasMatiFlag(const Mati& mati, const char* tag) {
+  return std::find(mati.flags.begin(), mati.flags.end(), tag) != mati.flags.end();
+}
 
 using port::ReadLEFloat;
 
@@ -1035,7 +1073,12 @@ bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
   out.headerBlend = ReadLE32(d.data() + 0x61);
   const uint32_t count = ReadLE32(d.data() + 0x69);
   size_t at = 0x6d;
-  for (uint32_t i = 0; i < count && at + 5 <= d.size(); ++i) {
+  uint32_t parsed = 0;
+  bool parametersDone = false;
+  for (; parsed < count; ++parsed) {
+    if (at + 5 > d.size()) {
+      break;
+    }
     const uint8_t type = d[at];
     const std::string tag(reinterpret_cast<const char*>(d.data() + at + 1), 4);
     at += 5;
@@ -1059,6 +1102,19 @@ bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
       out.vectors[tag] = value;
     }
     at += size;
+    parametersDone = parsed + 1 == count;
+  }
+  // The material-flag list: a LE u32 count then that many four-byte tags. Data with no room for it (a
+  // synthetic MATI) or a parameter list that did not parse to its end carries no flags, which fails a
+  // recipe that requires one. A count past the blob's end is not a flag list: stop, leaving them empty.
+  if (parametersDone && at + 4 <= d.size()) {
+    const uint32_t flagCount = ReadLE32(d.data() + at);
+    at += 4;
+    if (flagCount <= (d.size() - at) / 4) {
+      for (uint32_t i = 0; i < flagCount; ++i, at += 4) {
+        out.flags.emplace_back(reinterpret_cast<const char*>(d.data() + at), 4);
+      }
+    }
   }
   return true;
 }
@@ -3488,6 +3544,21 @@ public:
     const auto cch0 = mati.vectors.count("CCH0") ? mati.vectors.at("CCH0") : std::array<float, 4>{};
     if (recipe->unitCch0 && (cch0[2] != 1.0f || cch0[3] != 0.0f)) {
       m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has a fade gain/bias the renderer lacks");
+      return false;
+    }
+    // A recipe read against one material permutation: only the MATI whose header flags select it is
+    // converted. f197ec38's refraction is the MFC0 (USE_FRAME_BUFFER_DISTORTION) perm 002; a material
+    // without MFC0 draws perm 000's displacement and one with MFC1 (IS_SHIELD_EXTERIOR, its own shader
+    // b46bb66d) another perm still, so both are refused rather than drawn with perm 002's maths.
+    if (recipe->mfc0Refraction && (!HasMatiFlag(mati, "MFC0") || HasMatiFlag(mati, "MFC1"))) {
+      m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " is not its MFC0 refraction perm");
+      return false;
+    }
+    // And the other way round: b1eb2b67's row is the non-refraction perm 000, which a material carrying
+    // either shield flag leaves for the refraction (MFC0) or the exterior (MFC1) variant.
+    if (recipe->noRefractionFlags && (HasMatiFlag(mati, "MFC0") || HasMatiFlag(mati, "MFC1"))) {
+      m_approximated.push_back(std::string("VMAT: shader ") + shaderText +
+                               " carries a shield flag, so it is not its non-refraction perm");
       return false;
     }
 

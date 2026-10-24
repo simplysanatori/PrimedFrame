@@ -8,6 +8,7 @@
 #include "Kyoto/Streams/CMemoryInStream.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptEffect.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptSpecialFunction.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 
 #include <algorithm>
@@ -129,6 +130,20 @@ void LoadLayer(CStateManager& mgr, int area, uint32_t layer, std::vector<uint32_
       }
       sSpawned[sMrea].push_back({sMrea, made.first.value, made.second.value, info.part, info.name,
                                  i < l.vars.size() ? l.vars[i].size() : 0});
+    }
+  }
+  for (const BarrierGroup& group : sFile.barriers) {
+    if ((group.controller >> 26) != layer) continue;
+    const TUniqueId uid = mgr.GetIdForScript(TEditorId(group.controller));
+    if (CScriptSpecialFunction* controller = TCastToPtr< CScriptSpecialFunction >(mgr.ObjectById(uid))) {
+      controller->PortConfigureBarrier(group, sMrea);
+    }
+    for (const BarrierRing& ring : group.rings) {
+      for (uint32_t eid : {ring.refraction, ring.glow}) {
+        if (CScriptEffect* e = TCastToPtr< CScriptEffect >(mgr.ObjectById(mgr.GetIdForScript(TEditorId(eid))))) {
+          e->PortAttachBarrier(uid, mgr.GetIdForScript(TEditorId(ring.platform)));
+        }
+      }
     }
   }
 }

@@ -67,6 +67,9 @@ std::string sFont;
 std::unordered_map<uint32_t, std::string> sRoomGeos;
 std::unordered_map<uint32_t, std::string> sRoomLiquids;
 std::unordered_map<uint32_t, std::string> sRoomEffects;
+std::map<std::pair<uint32_t, uint32_t>, std::string> sResourceProviders;
+std::unordered_map<uint32_t, std::string> sRoomEffectsProviders;
+uint64_t sResourceGeneration = 0;
 // <FRME id>.hudbars files, by frame.
 std::unordered_map<uint32_t, std::string> sHudBars;
 // The CMDLs the dread-samus mod serves (PortDreadSamus::Replaces).
@@ -465,6 +468,18 @@ std::string RoomEffectsPath(uint32_t mrea) {
   return found != sRoomEffects.end() ? found->second : std::string();
 }
 
+std::string ResourceProvider(uint32_t type, uint32_t id) {
+  const auto found = sResourceProviders.find({type, id});
+  return found != sResourceProviders.end() ? found->second : std::string();
+}
+
+std::string RoomEffectsProvider(uint32_t mrea) {
+  const auto found = sRoomEffectsProviders.find(mrea);
+  return found != sRoomEffectsProviders.end() ? found->second : std::string();
+}
+
+uint64_t ResourceGeneration() { return sResourceGeneration; }
+
 std::string RoomLiquidPath(uint32_t mrea) {
   const auto found = sRoomLiquids.find(mrea);
   return found != sRoomLiquids.end() ? found->second : std::string();
@@ -498,6 +513,9 @@ void FinishReload() {
 }
 
 void Initialize() {
+  ++sResourceGeneration;
+  sResourceProviders.clear();
+  sRoomEffectsProviders.clear();
   sStatus = {};
   sNativeTextures.clear();
   sRoomEnvs.clear();
@@ -667,9 +685,14 @@ void Initialize() {
       }
       if (PortRoomEffects::ParseFileName(name, id)) {
         sRoomEffects[id] = PathString(file);
+        sRoomEffectsProviders[id] = PathString(modDir);
         continue;
       }
       if (ParseLooseName(name, type, id)) {
+        if (PortRemasteredStorage::RejectObsoleteBarrierModel(scan[modIndex].builtin, type, id)) {
+          Message(info.name + ": " + relative + " is an obsolete barrier model; using the disc fallback");
+          continue;
+        }
         if (size == 0) {
           Message(info.name + ": " + relative + " is empty; ignored");
           continue;
@@ -679,6 +702,7 @@ void Initialize() {
           continue;
         }
         loose[{type, id}] = {type, id, PathString(file), size, info.name};
+        sResourceProviders[{type, id}] = PathString(modDir);
         looseMod[{type, id}] = modIndex;
         if (type == 0x54585452) { // 'TXTR': an earlier mod's image was made for another texture
           sNativeTextures.erase(id);
@@ -702,6 +726,7 @@ void Initialize() {
     info.textures = int(native.size());
     for (auto& [id, path] : native) {
       sNativeTextures[id] = std::move(path);
+      sResourceProviders[{0x54585452, id}] = PathString(modDir);
     }
   }
 

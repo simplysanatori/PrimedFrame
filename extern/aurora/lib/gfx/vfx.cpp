@@ -77,7 +77,7 @@ struct Uniform {
   float soft[4];    // DepthSoften: the viewport's depth range (min, max) and whether the scene depth is bound
   float scene[4];   // SceneWarp: 1 / the copied target's size (x, y), the camera's near plane, whether the colour is bound
   // IceCharge*: CCH0..6 (IceChargeBeam: 0..2) and, at [7], the modular simulation time; VisorRunOff:
-  // CCH0..4. Rows past the recipe's stay zero.
+  // CCH0..4; BarrierShield and BarrierGlow: CCH0. Rows past the recipe's stay zero.
   float ice[8][4];
   // IceChargeCollisionLit: AMBS (ambient), the probe's mean, its lobe, then (view-space direction,
   // 1 + 2 * sharpness) per colour channel, and BLCM. These are the 7 vec4f of padding the uniform
@@ -251,6 +251,8 @@ struct VIn {
   @location(8) nrm: vec3f,
   @location(9) uv2: vec3f,
   @location(10) tan: vec4f,
+  // BarrierShield: the mesh's own vertex colour (Vertex::mesh), next to the instance colour at 3.
+  @location(11) mesh: vec4f,
 }
 struct VOut {
   @builtin(position) pos: vec4f,
@@ -267,6 +269,7 @@ struct VOut {
   @location(10) sw: f32,
   @location(11) tan: vec4f,
   @location(12) vp: vec3f,
+  @location(13) mesh: vec4f,
 }
 
 @vertex
@@ -285,6 +288,7 @@ fn vs_main(in: VIn) -> VOut {
   out.nrm = in.nrm;
   out.vz = mv.z;
   out.tan = in.tan;
+  out.mesh = in.mesh;
   out.vp = mv;
   if ((FEAT & 32768u) != 0u) {
     // SceneWarp: the warp's perspective scale, near / view distance (the VS's o3.x =
@@ -672,6 +676,101 @@ R"(    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
     let f = sat(Z * Z * Z * Z * 10.0 + (0.75 + 0.25 * g) * select(0.0, 1.0, Z > 0.0));
     rgb = f * fb * vc.rgb * M;
     x = select(0.0, 1.0, Z > 0.0);
+)"
+R"(  } else if ((FEAT & 536870912u) != 0u) {
+    // VFX_BarrierShield (f197ec38, FS perm 002; SHADER-IMPLEMENTATION.md). TCH0 at (-2u, 2v) is the
+    // pattern a: its .b scrolls the four fract() noise reads of TCH1 (s, r, q, p) that make the breakup
+    // mask from their .g, and its .a widens it. The fragment breaks up where fade < .33 (CCH0.x); the
+    // alpha keeps the mesh colour's green (CCH0.y) on top of the instance alpha. The scene copy at the
+    // fragment, offset by the .45-period sawtooth of 2 x (a.rg - .5) + time, x .008 and with no
+    // near/depth scale, is the base colour, read at three offsets (+0, -.002, +.002: the first's .rg,
+    // the second's .rb, the third's .r); the rim, fresnel and mesh-colour glow add over it, then x
+    // vc.rgb x PCMD. The copy already holds exposed light, so scene_light (the identity) need not be
+    // applied; the tail re-exposes. No copy bound leaves the scene term 0 (the glow alone), as the other
+    // scene-reading features do. x carries the fade and the mesh gain, the tail x vc.w.
+    let c = u.ice0;
+    let tm = u.ice7.x;
+    let uvs = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let lay = layer(uvs.z, u.layers[max(S_COLOR, 0)]);
+    let a = sample_raw(S_COLOR, vec2f(-2.0 * uvs.x, 2.0 * uvs.y), lay);
+    let p = fract(tm * 0.375 - a.z);
+    let q = fract(tm * -0.0225 - a.z);
+    let r = fract(tm * 0.3 - a.z);
+    let s = fract(tm * 0.03 - a.z);
+    let n0 = sample_raw(S_INDIRECT, vec2f(a.y - uvs.x + s, a.y + uvs.y + r), 0).y;
+    let n1 = sample_raw(S_INDIRECT, vec2f(a.y + uvs.x + q, a.y - uvs.y + p), 0).y;
+    let mask = a.w * sat(n1 - 0.1) * sat(n0 - 0.1);
+    let edge = sat(mask * 10.0);
+    let fade = sat(edge + 1.0 - 2.0 * c.x);
+    if (fade < 0.33) { discard; }
+    let mx = 2.0 * (a.x - 0.5) + tm;
+    let my = 2.0 * (a.y - 0.5) + tm;
+    let wx = (mx - floor(mx * 2.22222233) * 0.45) * 0.008;
+    let wy = (my - floor(my * 2.22222233) * 0.45) * 0.008;
+    var sc = vec3f(0.0);
+    if (u.scene.w > 0.5) {
+      let suv = vec2f(in.pos.x * u.scene.x, in.pos.y * u.scene.y);
+      // v down: the y offsets negate.
+      let first = textureSampleLevel(sceneColor, sceneSampler, vec2f(suv.x + wx, suv.y - wy), 0.0);
+      let second =
+          textureSampleLevel(sceneColor, sceneSampler, vec2f(suv.x + wx - 0.002, suv.y - (wy - 0.002)), 0.0);
+      let third = textureSampleLevel(sceneColor, sceneSampler, vec2f(suv.x + wx + 0.002, suv.y - (wy + 0.002)), 0.0);
+      var ie = 1.0;
+      if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
+      sc = vec3f(third.x * 1.165, first.x + 0.33 * (1.5 * first.y - first.x),
+                 second.x + 0.33 * (1.5 * second.z - second.x)) *
+           ie;
+    }
+    // Remastered's view space is (x, y, -z) of the port's camera-local vectors (as the other mesh
+    // recipes take them); the epsilons only keep normalize() defined for a degenerate feed.
+    let N = normalize(vec3f(in.nrm.x, in.nrm.y, -in.nrm.z) + vec3f(0.0, 0.0, 1e-6));
+    let V = normalize(in.vp + vec3f(0.0, 0.0, 1e-6));
+    let fr = 1.0 - dot(V, -N);
+    let rim = edge * clamp(fr * fr, 0.05, 0.66);
+    let high = pow(abs(fr), 8.0);
+    let rg = in.mesh.x + in.mesh.y;
+    let gain = 10.0 - 9.0 * fade;
+    rgb = vec3f(
+              gain * sc.r,
+              gain * (sc.g + 40.0 * rim * (edge * (2.0 * mask - 0.1) + 0.1) + 10.5 * rg + 2.8 * in.mesh.z + 3.0 * high) +
+                  0.5,
+              gain * (sc.b + 40.0 * rim * (edge * (10.0 * mask - 0.5) + 0.5) + 28.0 * rg + 5.95000029 * in.mesh.z +
+                      12.0 * high) +
+                  0.9) *
+          vc.rgb * M;
+    x = fade * (1.0 + in.mesh.y * (c.y - 1.0)) * 0.75;
+  } else if ((FEAT & 1073741824u) != 0u) {
+    // VFX_BarrierGlow (b1eb2b67, FS perm 000: MATI ba0acbd6 carries neither MFC0 nor MFC1;
+    // GLOW-IMPLEMENTATION.md). No scene copy: the glow is additive over the frame. The pattern is read
+    // three times at (-u, v): its .r is the alpha a that scrolls the second read's v, its .b the breakup
+    // of the third read's .a (which drives k and the fade). phase is the modular time's sawtooth; the
+    // mesh colour's r lifts k (through ceil) and pulls G and B down at their own weights. The VS's
+    // displacement already ran on the CPU, in the model coordinates: only the instance colour scales
+    // the result, the mesh colour feeds the maths.
+    let c = u.ice0;
+    let tm = u.ice7.x;
+    let uvs = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let lay = layer(uvs.z, u.layers[max(S_COLOR, 0)]);
+    let a = sample_raw(S_COLOR, vec2f(-uvs.x, uvs.y), lay).r;
+    let phase = tm - floor(tm * 0.555555582) * 1.79999995;
+    let b = sample_raw(S_COLOR, vec2f(-uvs.x - 0.200000003, uvs.y - phase + 0.550000012), lay).b;
+    let d = sample_raw(S_COLOR, vec2f(-uvs.x, uvs.y + a + 0.5 * tm + a), lay).a;
+    let k = d * (ceil(in.mesh.x) * 0.200000018 + 0.100000001);
+    // vec is camera-local (x, z, y); Remastered's view space is (x, y, -z) of it. The epsilons only keep
+    // normalize() defined for a degenerate feed.
+    let N = normalize(vec3f(in.nrm.x, in.nrm.y, -in.nrm.z) + vec3f(0.0, 0.0, 1e-6));
+    let V = normalize(in.vp + vec3f(0.0, 0.0, 1e-6));
+    let f = 1.0 - dot(V, -N);
+    let p = sat(b * (1.0 - 0.5 * phase));
+    let fade = sat(d + 1.0 - 2.0 * c.x);
+    let rim = sat(f * f) * fade;
+    let gain = 10.0 - 9.0 * fade;
+    rgb = rim * gain *
+              vec3f(k * 1.125, k * 7.5 - 0.5 * in.mesh.x + 1.4 * p + 0.5,
+                    k * 30.0 - 0.899999976 * in.mesh.x + 3.0 * p + 0.9) *
+          vc.rgb * M;
+    // The alpha is the instance alpha alone: the tail multiplies vc.w in and discards it at 0.
+    x = 1.0;
   } else if ((FEAT & 16384u) != 0u) {
     // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
     // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
@@ -814,7 +913,11 @@ R"(  // The tone map runs before this blend, so an alpha blend brighter than 1 t
   // (SetupFogFromBlendMode), so additive and premultiplied draws are not fogged at all.
   // Fogged (1 << 27) keeps the fog of an alpha/opaque row whose MATI EBlendMode draws with other factors.
   // IceChargeBeam: DFOG 1 (perm 000), so unfogged in either blend; IceChargeCollision too where Unfogged.
-  if ((BLEND == 0u || BLEND == 3u || (FEAT & 134217728u) != 0u) && (FEAT & 1048576u) == 0u && (FEAT & 4194304u) == 0u) {
+  // BarrierShield: DFOG 1 on its refraction perm (002), which has no fog code, and its fogged sibling
+  // (003) is not ported (the recipe rejects a draw without DFOG 1). BarrierGlow: likewise DFOG 1 on its
+  // non-refraction perm (000), whose VS/FS carry no fog.
+  if ((BLEND == 0u || BLEND == 3u || (FEAT & 134217728u) != 0u) && (FEAT & 1048576u) == 0u &&
+      (FEAT & 4194304u) == 0u && (FEAT & 536870912u) == 0u && (FEAT & 1073741824u) == 0u) {
     col = mix(col, u.fogColor.rgb, fog_factor(in.pos.z));
   }
   return vec4f(col, alpha);
@@ -1025,7 +1128,7 @@ wgpu::RenderPipeline make_pipeline(const PipelineConfig& p) {
   const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &wgsl, .label = "VFX Module"};
   const wgpu::ShaderModule module = device.CreateShaderModule(&moduleDescriptor);
 
-  static constexpr std::array<wgpu::VertexAttribute, 11> attributes{{
+  static constexpr std::array<wgpu::VertexAttribute, 12> attributes{{
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, pos), .shaderLocation = 0},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[0]), .shaderLocation = 1},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[1]), .shaderLocation = 2},
@@ -1037,6 +1140,8 @@ wgpu::RenderPipeline make_pipeline(const PipelineConfig& p) {
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, vec), .shaderLocation = 8},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[2]), .shaderLocation = 9},
       {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, tan), .shaderLocation = 10},
+      // BarrierShield's mesh colour: a full row of its own, so the instance colour at 3 stays separate.
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, mesh), .shaderLocation = 11},
   }};
   const wgpu::VertexBufferLayout vertexLayout{
       .stepMode = wgpu::VertexStepMode::Vertex,
@@ -1563,7 +1668,8 @@ std::string pipeline_source(const PipelineConfig& p) {
   static constexpr std::string_view HdrTail = R"(  if (HDR) {
     var lin = max(rgb, vec3f(0.0));
     if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { lin = lin * u.tone0.w; }
-    if ((BLEND == 0u || BLEND == 3u || (FEAT & 134217728u) != 0u) && (FEAT & 1048576u) == 0u && (FEAT & 4194304u) == 0u) {
+    if ((BLEND == 0u || BLEND == 3u || (FEAT & 134217728u) != 0u) && (FEAT & 1048576u) == 0u &&
+        (FEAT & 4194304u) == 0u && (FEAT & 536870912u) == 0u && (FEAT & 1073741824u) == 0u) {
       lin = mix(lin, hdr_exposed(u.fogColor.rgb, u.tone0, u.tone1, u.tone2), fog_factor(in.pos.z));
     }
     return vec4f(lin, alpha);
@@ -1590,13 +1696,13 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
       {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam | IceChargeCollision |
-           IceChargeCollisionLit | VisorRunOff | VisorRunOffLit | VisorRain,
+           IceChargeCollisionLit | VisorRunOff | VisorRunOffLit | VisorRain | BarrierShield | BarrierGlow,
        desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},
       {Thresholding, desc.thresholdSlot},
-      {Indirect | SceneWarp | VisorSplat, desc.indirectSlot},
+      {Indirect | SceneWarp | VisorSplat | BarrierShield, desc.indirectSlot},
       {ColorIndexing, desc.paletteSlot},
       {IceChargeBeam | IceChargeCollision | IceChargeCollisionLit, desc.normalSlot},
       {IceChargeCollision | IceChargeCollisionLit, desc.envSlot},
@@ -1645,8 +1751,8 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   // Per draw: the GX state keeps the room's exposure for every later draw.
   const bool hdr = scene_hdr_pass_active();
   if (!hdr &&
-      (features & (SceneWarp | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit | VisorRain)) !=
-          0) {
+      (features & (SceneWarp | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit | VisorRain |
+                   BarrierShield)) != 0) {
     // The scene-reading effects read the HDR scene's light; outside it there is none to read.
     return;
   }
@@ -1685,14 +1791,15 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     u.scene[3] = 1.f;
   }
   if ((features & (IceChargeBeam | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit |
-                   VisorRain)) != 0) {
-    // The recipe's CCH rows: IceChargeCollision 0..6, VisorRunOff 0..4, IceChargeBeam 0..2, VisorRain 0 only.
+                   VisorRain | BarrierShield | BarrierGlow)) != 0) {
+    // The recipe's CCH rows: IceChargeCollision 0..6, VisorRunOff 0..4, IceChargeBeam 0..2, VisorRain,
+    // BarrierShield and BarrierGlow 0 only.
     uint32_t rows = 3;
     if ((features & (IceChargeCollision | IceChargeCollisionLit)) != 0) {
       rows = 7;
     } else if ((features & (VisorRunOff | VisorRunOffLit)) != 0) {
       rows = 5;
-    } else if ((features & VisorRain) != 0) {
+    } else if ((features & (VisorRain | BarrierShield | BarrierGlow)) != 0) {
       rows = 1;
     }
     for (uint32_t i = 0; i < rows; ++i) {

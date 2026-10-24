@@ -540,11 +540,19 @@ bool PropList(const uint8_t* b, size_t len, std::vector<Prop>* out);
 
 // A retail script object (SCLY), as far as matching Remastered's entities to it needs.
 struct ScriptObject {
+  // One connection: the state it is sent in and the message, as the enums in
+  // MetroidPrime/CEntityInfo.hpp number them, and the editor id it reaches.
+  struct Link {
+    uint32_t state = 0;
+    uint32_t message = 0;
+    uint32_t target = 0;
+  };
   uint32_t id = 0;  // editor id, layer bits included
   uint8_t type = 0;
   int layer = 0;    // the SCLY layer it is in
   uint32_t propCount = 0;
   std::vector<uint32_t> targets;  // of its connections
+  std::vector<Link> links;        // the same connections, with their state and message
   bool hasPos = false;            // the three floats after its name, for any type
   Vec3 pos{};
   // The six floats after those: an editor transform's rotation (degrees) and scale for the
@@ -745,8 +753,35 @@ constexpr uint32_t kEffectMP1 = 0xb421cdcb;
 // (port_room_effects.h); a line for the log, empty when there is nothing to say.
 std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t mrea, const Area& area,
                              const SceneryScripts& scripts, const RoomIO& io);
+// The GENPs (in a pak's byte order) those actors are for: the room's unconnected ones, and the
+// barrier's ten when its graph validates.
+std::vector<std::array<uint8_t, 16>> RoomEffectGenpsOf(const Room& room);
 // The entities (their Entity components) that some connection in the room reaches.
 std::set<int> ConnectedEntities(const Room& room);
+
+// The Parasite Queen barrier's Remastered graph, which the import validates as a whole before
+// it treats the ten effects as anything but connected actors (port_queen_barrier_assets.h has
+// the ids). By ring, in the table's order: the PlatformMP1 whose component guid the table names,
+// the two EffectMP1s it has Active links to (the two-variable refraction family and the
+// one-variable glow one), and the WaypointMP1 its Play link names.
+struct BarrierRingRefs {
+  size_t platform = 0;
+  size_t refraction = 0;
+  size_t glow = 0;
+  size_t waypoint = 0;
+};
+struct BarrierGraph {
+  size_t controller = 0;  // the SpecialFunctionMP1 whose function is the ring controller
+  float duration = 0;     // seconds, its fourth float
+  std::array<BarrierRingRefs, 5> rings{};
+};
+// Whether the room ships that graph whole and unambiguous: one main controller, exactly its
+// fifteen links (five platforms, ten effects), each platform's two effects and one waypoint,
+// and one type 19 follower per platform-effect pair (unlinked ones are allowed). False for a
+// partial, mutated or ambiguous graph, and then nothing is admitted.
+bool BarrierGraphOf(const Room& room, BarrierGraph& out, std::string* why = nullptr);
+// The GENP (in a pak's byte order) of an EffectMP1 component, or an all-zero id when it has none.
+Id16 EffectGenpOf(const Room& room, size_t component);
 
 bool SingleDriverStart(const std::vector<PortRoomGeo::Link>& starts, PortRoomGeo::Link& first);
 int DriverSlot(const std::vector<PortRemastered::ModelMaterial>& materials, const SceneryScripts::Driver& d);

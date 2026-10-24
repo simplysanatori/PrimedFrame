@@ -113,7 +113,7 @@ inline constexpr int kTextures = 5;
 // 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 18;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 19;     // remove the obsolete model-driven Queen barrier
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
@@ -157,7 +157,7 @@ inline constexpr int kModels = 18;     // the table's models, their looks and th
 // 102: visor rain splash (VFX_VisorRain 0ec41df0, BC978532 paired).
 // 103: the FlickerBat's 0B9E48EB paired with 3b29b0b3 (#visual-inferred: inferred from the
 // look, not proven by any CHPR or other serialized reference).
-inline constexpr int kEffects = 103;   // port_remastered_effect_import and the particle converters
+inline constexpr int kEffects = 104;   // both Queen barrier shaders and ten room-only effects
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
@@ -169,7 +169,7 @@ inline constexpr int kEffects = 103;   // port_remastered_effect_import and the 
 // 29: a retail model's objects pair with its entities by order (RetailPlacement orient, entity).
 // 30: roomenv version 26, the EnvironmentFX colour intensity (a RelayAutoFire-fired density controller).
 // 34: a retail Effect object drawing a PART its GENP is shared with takes the actor's variables (the lava spit).
-inline constexpr int kRooms = 34;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+inline constexpr int kRooms = 35;      // atomic Queen barrier controller group in roomfx v4
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 // 9: envfx.bin, the EnvironmentFX flake textures (port_envfx_file.h).
