@@ -864,10 +864,11 @@
   and Italian, and the Remastered import adds its languages (its text wins).
   Text missing in a language stays English (`MODS.md`).
 - Settings other pages keep, described with them: F1 > Mods' "Load mods"
-  (`mods`, on by default) and per-mod boxes (`mods_disabled`, the names left
-  out, `/`-separated), read at startup (`MODS.md`); the Remastered import's "What
-  to import" (`remastered_skip`: the parts left out, comma-separated from
-  `geometry`, `effects`, `hud`, `text`, `movies` and `gallery`; `MODS.md`); the
+  (`mods`, on by default) and every mod's box, the built-in ones included
+  (`mods_disabled`, the names left out, `/`-separated), read at startup
+  (`MODS.md`); the Remastered import's "What to import" (`remastered_skip`: the
+  parts left out, comma-separated from `geometry`, `effects`, `hud`, `text`,
+  `movies` and `gallery`; `MODS.md`); the
   Randomizer page's options (`rando_settings`, one line of JSON;
   `RANDOMIZER.md`); and Archipelago's "Staggered suit damage" (`ap_suit_damage`:
   0 Default, 1 Progressive, the default, 2 Additive), set by hand to match the

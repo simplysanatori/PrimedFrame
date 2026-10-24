@@ -1,5 +1,5 @@
-// F1 overlay: The Remastered tab, PAL languages and Remastered debugging. State and helpers shared
-// with the other parts are in debug_ui_internal.h.
+// F1 overlay: The Mods page's built-in sections, PAL languages and Remastered debugging. State and
+// helpers shared with the other parts are in debug_ui_internal.h.
 
 #include "debug_ui_internal.h"
 
@@ -11,6 +11,7 @@
 #include "port_room_geo.h"
 #include "port_paths.h"
 #include "port_mods.h"
+#include "port_dread_samus_mod.h"
 #include "port_remastered_import.h"
 #include "port_remastered_text.h"
 #include "port_savestate.h"
@@ -204,20 +205,41 @@ void DrawRemasteredRoomModels(bool geoReady) {
   ImGui::Separator();
 }
 
-// Switches the imported mod on and off, as the Mods page does for the others.
-void DrawRemasteredModToggle() {
+namespace {
+// Whether a built-in mod's import is older than this build. port_mods marks an import made by the
+// Remastered importer on its ModInfo; the Dread import keeps its own stamp instead (port_dread_samus_mod.h),
+// which the loader reports among the status messages.
+bool DreadImportStale(const PortMods::Status& status) {
+  return std::any_of(status.messages.begin(), status.messages.end(), [](const std::string& message) {
+    return message.find(PortDreadSamus::kModName) != std::string::npos &&
+           message.find("imported by an older version") != std::string::npos;
+  });
+}
+
+// A built-in mod's switch, shared by the Remastered and Dread sections: the mods_disabled entry the
+// Mods page writes for every mod. Nothing to switch while the mod is not installed. Below it: the
+// switch's value (what the next reload loads) and, apart from it, whether this launch loaded it.
+void DrawBuiltinModToggle(const char* modName, const char* label, bool stale) {
   const PortMods::Status& status = PortMods::CurrentStatus();
-  const auto mod = std::find_if(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& m) {
-    return m.name == PortRemastered::kImportModName;
+  const auto mod = std::find_if(status.mods.begin(), status.mods.end(), [modName](const PortMods::ModInfo& m) {
+    return m.name == modName;
   });
   if (mod == status.mods.end()) {
     ImGui::TextDisabled("Not imported yet.");
     return;
   }
+  if (stale) {
+    ImGui::TextColored(ThemeWarnColor(), "Imported by an older version: re-import.");
+  } else {
+    ImGui::TextDisabled("Imported.");
+  }
   std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
   bool on = std::find(disabled.begin(), disabled.end(), mod->name) == disabled.end();
-  ImGui::BeginDisabled(!sModsEnabled);
-  if (ImGui::Checkbox("Use the Remastered models", &on)) {
+  // ModsEnabled, not the Load mods setting: Original experience turns every mod off whatever
+  // mods_disabled says, and the switch would be a lie. The setting itself is kept as it is.
+  const bool modsOn = ModsEnabled();
+  ImGui::BeginDisabled(!modsOn);
+  if (ImGui::Checkbox(label, &on)) {
     if (on) {
       disabled.erase(std::remove(disabled.begin(), disabled.end(), mod->name), disabled.end());
     } else {
@@ -226,34 +248,40 @@ void DrawRemasteredModToggle() {
     SetModsDisabled(PortMods::JoinDisabled(disabled));
   }
   ImGui::EndDisabled();
-  ItemHelp("Off plays the retail game. Takes effect when the mods are reloaded.");
-  if (!sModsEnabled) {
+  ItemHelp("Off unloads this mod alone; the other mods still load. Takes effect when the mods are reloaded.");
+  if (!modsOn) {
     SameLineAfterHelp();
-    ImGui::TextDisabled("(mods are off: Mods page)");
+    ImGui::TextDisabled(sModsEnabled ? "(Original experience is on: no mods load)" : "(mods are off)");
   }
-  if (PortMods::Suspended()) {
-    return;
-  }
-  if ((ModsEnabled() && on) != mod->enabled) {
-    ImGui::TextColored(ThemeWarnColor(), "Reload the mods to apply.");
-    ImGui::SameLine();
-    if (ImGui::Button("Reload mods##remastered")) {
-      PortSaveState::RequestModReload();
-    }
+  // What this launch loaded, which the switch above only changes at the next reload.
+  if (mod->enabled) {
+    ImGui::TextDisabled(on ? "Loaded." : "Loaded until the mods are reloaded.");
+  } else if (!on) {
+    ImGui::TextDisabled("Off, not loaded.");
+  } else if (PortMods::Suspended()) {
+    ImGui::TextDisabled("Not loaded while an import runs.");
+  } else if (modsOn) {
+    ImGui::TextColored(ThemeWarnColor(), "Not loaded: reload the mods to apply.");
   }
 }
+} // namespace
 
-void DrawRemasteredTab() {
-  DrawRemasteredWarning();
-  ImGui::SeparatorText("Remastered models");
-  DrawRemasteredModToggle();
-  ImGui::SeparatorText("Import");
-  DrawImportKeys();
-  DrawRemasteredImport();
-  DrawDreadSamusImport();
-
-  ImGui::SeparatorText("Gallery");
-  {
+// The port's own mods, each with its import: Prime Remastered's models and Dread's Samus.
+void DrawBuiltinMods() {
+  ImGui::SeparatorText("Built-in mods");
+  const PortMods::Status& status = PortMods::CurrentStatus();
+  // MP_DEBUG_TAB=Mods/<section>, and the old Remastered and Dread page names, open one of these.
+  if (StartSection("Mods", "Prime Remastered")) {
+    ImGui::SetNextItemOpen(true);
+  }
+  if (ImGui::CollapsingHeader("Prime Remastered")) {
+    DrawBuiltinModToggle(PortRemastered::kImportModName, "Use the Remastered models",
+                         PortMods::StaleRemasteredImport() != nullptr);
+    DrawRemasteredWarning();
+    ImGui::SeparatorText("Import");
+    DrawImportKeys(0);
+    DrawRemasteredImport();
+    ImGui::SeparatorText("Gallery");
     const std::vector<std::string> pictures = PortMods::GalleryPaths();
     if (pictures.empty()) {
       ImGui::TextDisabled("Remastered's concept art. It comes with the Remastered import.");
@@ -263,6 +291,15 @@ void DrawRemasteredTab() {
       ReleaseGalleryTexture();
       sGalleryOpen = true;
     }
+  }
+  if (StartSection("Mods", "Metroid Dread")) {
+    ImGui::SetNextItemOpen(true);
+  }
+  if (ImGui::CollapsingHeader("Metroid Dread")) {
+    DrawBuiltinModToggle(PortDreadSamus::kModName, "Use the Dread Suit models", DreadImportStale(status));
+    ImGui::SeparatorText("Import");
+    DrawImportKeys(1);
+    DrawDreadSamusImport();
   }
 }
 

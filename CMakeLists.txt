@@ -1536,6 +1536,12 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_map_extra_ui_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_map_extra_ui_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # F1's Mods page holds the Remastered and Dread sections: one page, the old
+        # MP_DEBUG_TAB names opening their section, and the search rows reaching it.
+        add_test(NAME port_mods_page_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_mods_page_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_mods_page_wiring PROPERTIES TIMEOUT 15 LABELS port)
         # The model-opacity key must be carried by exactly one row of the converter's
         # recipe table (port_vfx_opacity.h): the C++ tests pin that one recipe's word
         # and the selection, not the count.

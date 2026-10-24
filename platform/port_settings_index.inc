@@ -188,28 +188,34 @@
 {"Video", "Compatibility", "Compatibility > Driver workarounds", "Alternative GPU sync (Direct3D 11)", "driver workaround intel flicker fence sync d3d11"},
 {"Video", "Compatibility", "Compatibility > Driver workarounds", "Driver error checks (next start only, slower)", "driver workaround validation errors debug dawn"},
 {"Video", "Compatibility", "Compatibility", "GPU self-test", "gpu test check diagnose"},
-{"Remastered", "", "Remastered models", "Use the Remastered models", "remastered mod enable disable toggle on off retail"},
-#if defined(__ANDROID__)
-{"Remastered", "", "Metroid Prime Remastered models", "Pick the .nsp/.xci...", "remastered file pick nsp xci game image"},
-{"Remastered", "", "Metroid Prime Remastered models", "Pick the keys...", "remastered keys prod.keys pick"},
-#else
-{"Remastered", "", "Metroid Prime Remastered models", "Browse...", "remastered browse image file path nsp xci game"},
-{"Remastered", "", "Metroid Prime Remastered models", "Browse...", "remastered browse keys prod.keys path decryption"},
-#endif
-{"Remastered", "", "Metroid Prime Remastered models", "Import", "remastered start import run room geometry particles effects movies"},
-{"Remastered", "", "Metroid Prime Remastered models", "Full import (no reuse)", "remastered full import again remake reuse convert everything"},
-{"Remastered", "", "Metroid Prime Remastered models", "Load it again", "remastered reload again import"},
-{"Remastered", "", "Metroid Prime Remastered models > What to import", "Room geometry", "remastered import parts room geometry models skip size"},
-{"Remastered", "", "Metroid Prime Remastered models > What to import", "Particle effects", "remastered import parts particle effects skip"},
-{"Remastered", "", "Metroid Prime Remastered models > What to import", "HUD", "remastered import parts hud skip"},
-{"Remastered", "", "Metroid Prime Remastered models > What to import", "Text", "remastered import parts text strings skip"},
-{"Remastered", "", "Metroid Prime Remastered models > What to import", "Movies", "remastered import parts movies fmv skip ffmpeg"},
-{"Remastered", "", "Metroid Prime Remastered models > What to import", "Gallery", "remastered import parts gallery extras skip"},
 {"Mods", "", "Mods", "Load mods", "mods enable disable mod loader"},
 {"Mods", "", "Mods", "Reload mods", "mods reload refresh"},
 #if !defined(__ANDROID__)
 {"Mods", "", "Mods", "Open mods folder", "mods folder open directory"},
 #endif
+{"Mods", "", "Built-in mods > Prime Remastered", "Use the Remastered models", "remastered mod enable disable toggle on off retail models"},
+#if defined(__ANDROID__)
+{"Mods", "", "Built-in mods > Prime Remastered > Import", "Pick the keys...", "remastered keys prod.keys pick decryption"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models", "Pick the .nsp/.xci...", "remastered file pick nsp xci game image"},
+{"Mods", "", "Built-in mods > Metroid Dread > Import", "Pick the Dread keys...", "dread keys prod.keys pick decryption"},
+{"Mods", "", "Built-in mods > Metroid Dread > Import > Metroid Dread Samus models", "Pick the Dread image...", "dread file pick nsp xci game image"},
+#else
+{"Mods", "", "Built-in mods > Prime Remastered > Import", "Browse...", "remastered browse keys prod.keys path decryption"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models", "Browse...", "remastered browse image file path nsp xci game"},
+{"Mods", "", "Built-in mods > Metroid Dread > Import", "Browse the Dread keys...", "dread browse keys prod.keys path decryption"},
+{"Mods", "", "Built-in mods > Metroid Dread > Import > Metroid Dread Samus models", "Browse the Dread image...", "dread browse image file path nsp xci game"},
+#endif
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models", "Import", "remastered start import run room geometry particles effects movies"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models", "Full import (no reuse)", "remastered full import again remake reuse convert everything"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models", "Load it again", "remastered reload again import"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models > What to import", "Room geometry", "remastered import parts room geometry models skip size"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models > What to import", "Particle effects", "remastered import parts particle effects skip"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models > What to import", "HUD", "remastered import parts hud skip"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models > What to import", "Text", "remastered import parts text strings skip"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models > What to import", "Movies", "remastered import parts movies fmv skip ffmpeg"},
+{"Mods", "", "Built-in mods > Prime Remastered > Import > Metroid Prime Remastered models > What to import", "Gallery", "remastered import parts gallery extras skip"},
+{"Mods", "", "Built-in mods > Metroid Dread", "Use the Dread Suit models", "dread samus metroid suit models mod enable disable toggle on off"},
+{"Mods", "", "Built-in mods > Metroid Dread > Import > Metroid Dread Samus models", "Import the Dread Samus models", "dread start import run samus suit models nsp xci"},
 #if !defined(__ANDROID__)
 {"Mods", "", "Importers", "Argument", "importer argument parameter file"},
 #endif

@@ -322,6 +322,8 @@ extern char sSearch[128];
 int TakeJumpPage();
 void DrawPageBody(const DebugPage& page);
 bool SubTab(const char* page, const char* name);
+// A page's section, opened when MP_DEBUG_TAB names it.
+bool StartSection(const char* page, const char* name);
 void BeginSearchJump();
 void EndSearchJump();
 void DrawSearchField();
@@ -415,10 +417,12 @@ void DrawMenuHintToast();
 void DrawDiscReadFailedAlert();
 
 // mods.cpp
-void DrawImportKeys();
+void DrawImportKeys(int which);
 void DrawRemasteredImport();
 void DrawDreadSamusImport();
 void DrawMods();
+// remastered.cpp: the Mods page's built-in mods (Remastered's models, Dread's Samus).
+void DrawBuiltinMods();
 
 // game_sections.cpp
 void DrawCutscenesSection();
@@ -457,7 +461,6 @@ void DrawDiscCheckSection();
 void DrawDebugTab();
 void DrawPerformanceTab();
 void DrawLanguageSection();
-void DrawRemasteredTab();
 void DrawRemasteredDebug();
 void DrawSaveStatesTab();
 void DrawTrackerTab();
