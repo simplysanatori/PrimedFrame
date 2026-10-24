@@ -2251,6 +2251,24 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                           base);
   }
+  // Kind 39, Remastered's af330de4 (the zoomer's blinn1/blinn90, permutation 003, assumed the vertex-colour one;
+  // kb material/af330de4.md): kind 16 with the vertex colour, no light and no exposure,
+  //   rgb = DIFT x DIFC x vcol + ICNC + ICMC   alpha = DIFT.a^2 x vcol.a x DIFC.a
+  // Row 6 = ICNC + ICMC, row 7 = DIFC. The kb does not say how the vertex colour is decoded: this takes pbr_vraw, the
+  // port's usual MFVC decode (2 |c|^2.2, alpha raw) - inferred, not read from the shader.
+  if (config.pbrKind == 39) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 38.5 && pbr_kind < 39.5) {{
+        let pbr_yi = ubuf.pbr_shield[6];
+        let pbr_yd = ubuf.pbr_shield[7];
+        let pbr_yv = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a);
+        pbr_alpha = clamp({0}.a * {0}.a * pbr_yv.a * pbr_yd.w, 0.0, 1.0);
+        pbr_lo = vec3f(0.0);
+        pbr_glow = max({0}.rgb, vec3f(0.0)) * pbr_yd.rgb * pbr_yv.rgb + pbr_yi.rgb;
+        pbr_pass = vec3f(0.0);
+    }})""",
+                          base);
+  }
   // Kind 28, Remastered's 088e025e (Model_IceSpreader, permutation 002_0). Shield rows: 0 = CCH0 (z normal strength,
   // w frost parallax), 1 = CCH1 (x frost gain, y rim gain, z rim power), 2 = CCH2 rgb (cube tint) and CCH5.x in w
   // (cube gain), 3 = CCH3 rgb (rim colour). Map 3 is the frost TCH0. L is the baked probe's mean (BLPD) times BLCM:

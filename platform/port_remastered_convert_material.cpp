@@ -135,6 +135,9 @@ constexpr bool IsEyeGloss(uint32_t shader) {
 // (kb material/5854e91b.md, bda080c0.md).
 constexpr uint32_t kShaderUnlitCube = 0x5854E91B;
 constexpr uint32_t kShaderUnlitCubeNormal = 0xBDA080C0;
+// af330de4 (the zoomer's blinn1/blinn90; kb material/af330de4.md): kind 16's unlit DIFT x DIFC + ICNC + ICMC with
+// the vertex colour on the colour and the alpha (kind 39).
+constexpr uint32_t kShaderUnlitVertex = 0xAF330DE4;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -331,6 +334,7 @@ const char* KindName(int kind) {
   case 36: return "inventory-glass";
   case 37: return "inventory-add";
   case 38: return "unlit-cube";
+  case 39: return "unlit-vertex";
   default: return "kind?";
   }
 }
@@ -1284,6 +1288,20 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.shieldRows[28 + i] = c.difc[i];
     }
   }
+  if (shader == kShaderUnlitVertex && out.maps[kBase].has) {
+    // Unlit (perm 003): DIFT x DIFC x vertex colour + ICNC + ICMC, alpha DIFT.a^2 x vertex alpha x DIFC.a, no
+    // exposure (kind 39). Row 6 = ICNC + ICMC, row 7 = DIFC, as kind 16. DIFT is the base map, on its one uv set.
+    out.kind = 39;
+    out.vcolor = true;
+    out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
+    const ShaderColors c = ReadShaderColors(mat);
+    for (int i = 0; i < 3; ++i) {
+      out.shieldRows[24 + i] = c.icnc[i] + c.icmc[i];
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = c.difc[i];
+    }
+  }
   if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has && cch[0] && cch[1] && cch[2] && cch[3]) {
     // Ice (088e025e, kind 28): TCH0 is the frost, shifted by a parallax along the view and drawn
     // over the lit surface with a rim. Rows: CCH0 (normal strength z, parallax scale w), CCH1
@@ -1494,7 +1512,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
                                              "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha", "phazon-pool", "phazon-veins",
-                                             "inventory-glass", "inventory-add", "unlit-cube"};
+                                             "inventory-glass", "inventory-add", "unlit-cube", "unlit-vertex"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -1503,8 +1521,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   } else {
     out.reason += std::string("kind ") + KindName(out.kind) + " from the shader (" + out.role + "); ";
   }
-  // All but lava, premultiplied glass, the holograms (kinds 16-18, one map), the decal cutouts and the unlit cube
-  // surface (38) draw with the second layer's maps.
+  // All but lava, premultiplied glass, the holograms (kinds 16-18, one map), the decal cutouts, the unlit cube
+  // surface (38) and the unlit vertex-coloured fx (39) draw with the second layer's maps.
   // Ice's fragment shader (088e025e) uses the standard single-layer PBR slots 0-2
   // plus its frost map in slot 3. Keep its kind only when those source maps exist;
   // otherwise the shader would bind neutral placeholders. Its CCH0-CCH3 row guard
@@ -1512,7 +1530,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   const bool iceSingleLayerMapsBound = out.kind == 28 && !out.layered && out.maps[kBase].has && out.maps[kMr].has &&
                                        out.maps[kNormal].has && out.maps[kEmissive].has;
   if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 &&
-      out.kind != 34 && out.kind != 36 && out.kind != 37 && out.kind != 38 && !out.layered && !iceSingleLayerMapsBound) {
+      out.kind != 34 && out.kind != 36 && out.kind != 37 && out.kind != 38 && out.kind != 39 && !out.layered && !iceSingleLayerMapsBound) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
