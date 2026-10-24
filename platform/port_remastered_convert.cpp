@@ -1035,6 +1035,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
 
   // Retail material per primitive: forced, or by a vote of the nearest retail
   // vertices among materials of the same kind (blended effect or opaque surface).
+  // A retail model's blend and pass come from the Remastered mesh class; what the
+  // vote still gives a PBR material is retail's vertex descriptor (a lower bound),
+  // lighting flags, channels, texgens with their UV animations, a gun particle's
+  // konst alpha, and the TEV fallback's slots. The fx pass picks those from an
+  // effect for an effect: without it 53 of 1843 report rows took another material.
   std::vector<double> up;
   std::vector<int> upm;
   for (size_t v = 0; v < retail.Count(); ++v) {
