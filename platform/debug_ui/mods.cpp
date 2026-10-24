@@ -27,35 +27,89 @@
 namespace PortDebug {
 
 namespace {
-// The console's key file, shared by the Remastered and Dread imports and kept as the Remastered
-// import's setting (sRemasteredKeysPath), so one pick serves both. A typed path on desktop; on
-// Android the descriptor of the picked file ("fd:<n>", OpenRemasteredPick slot 1).
+// The console's key file. One file serves both imports, so it has one buffer, one row and one
+// pick; the value is kept as the Remastered import's setting (sRemasteredKeysPath). A typed path
+// on desktop; on Android the descriptor of the picked file ("fd:<n>", OpenRemasteredPick slot 1).
 char sKeys[1024] = "";
 #if defined(__ANDROID__)
 std::string sKeysName;
 #endif
 } // namespace
 
-// The key file row: both imports use the same prod.keys, and each built-in section draws its own
-// row over the one buffer. `which` keeps their ids, and their visible labels, apart: the settings
-// search counts rows by label on the page, and the other section may be closed.
-void DrawImportKeys(int which) {
-  const bool dread = which != 0;
+// The key file row: both imports use the same prod.keys, so the page draws it once, above both
+// sections and inside neither, and it stays visible whichever of them is open. Its buffer is
+// filled and its pick taken here too, so the row is right while both sections are closed.
+void DrawImportKeys() {
+  static bool sFilled = false;
+  if (!sFilled) {
+    sFilled = true;
 #if defined(__ANDROID__)
-  if (ImGui::Button(dread ? "Pick the Dread keys...##import-keys-dread" : "Pick the keys...##import-keys")) {
+    // The file picked last time, or one picked just before the process was killed, opens again.
+    std::lock_guard lock(sRemasteredPickMutex);
+    std::ifstream in(RemasteredPickFile(1));
+    std::string uri;
+    if (std::getline(in, uri) && !uri.empty() && sRemasteredKeysPath != uri) {
+      sRemasteredKeysPath = uri;
+      MarkDirty();
+    }
+    std::remove(RemasteredPickFile(1).c_str());
+    if (!sRemasteredKeysPath.empty()) {
+      const std::string opened = OpenRemasteredPick(1, sRemasteredKeysPath);
+      std::snprintf(sKeys, sizeof(sKeys), "%s", opened.c_str());
+      sKeysName = opened.empty() ? "could not be opened" : RemasteredPickName(sRemasteredKeysPath);
+    }
+#else
+    // The default key file when the player never picked one.
+    std::snprintf(sKeys, sizeof(sKeys), "%s", PortRemastered::DefaultKeysPath().c_str());
+    if (!sRemasteredKeysPath.empty()) {
+      std::snprintf(sKeys, sizeof(sKeys), "%s", sRemasteredKeysPath.c_str());
+    }
+#endif
+  }
+  {
+    // Only the key picks: the image picks stay for the section that shows them.
+    std::lock_guard lock(sRemasteredPickMutex);
+    for (auto pick = sRemasteredPicks.begin(); pick != sRemasteredPicks.end();) {
+      if (pick->first != 1) {
+        ++pick;
+        continue;
+      }
+      const std::string path = pick->second;
+      pick = sRemasteredPicks.erase(pick);
+#if defined(__ANDROID__)
+      const std::string opened = OpenRemasteredPick(1, path);
+      std::snprintf(sKeys, sizeof(sKeys), "%s", opened.c_str());
+      sKeysName = opened.empty() ? "could not be opened" : RemasteredPickName(path);
+      if (!opened.empty() && sRemasteredKeysPath != path) {
+        sRemasteredKeysPath = path;
+        MarkDirty();
+      }
+      std::remove(RemasteredPickFile(1).c_str());
+#else
+      std::snprintf(sKeys, sizeof(sKeys), "%s", path.c_str());
+      if (sRemasteredKeysPath != path) {
+        sRemasteredKeysPath = path;
+        MarkDirty();
+      }
+#endif
+    }
+  }
+  ImGui::TextUnformatted("Your Nintendo Switch's prod.keys");
+#if defined(__ANDROID__)
+  if (ImGui::Button("Pick the keys...##import-keys")) {
     OpenRemasteredDialog(1);
   }
   ImGui::SameLine();
   ImGui::TextUnformatted(sKeysName.empty() ? "prod.keys" : sKeysName.c_str());
 #else
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-  ImGui::InputTextWithHint(dread ? "##import-keys-dread" : "##import-keys", "prod.keys", sKeys, sizeof(sKeys));
+  ImGui::InputTextWithHint("##import-keys", "prod.keys", sKeys, sizeof(sKeys));
   ImGui::SameLine();
-  if (ImGui::Button(dread ? "Browse the Dread keys...##import-keys-dread" : "Browse...##import-keys")) {
+  if (ImGui::Button("Browse...##import-keys")) {
     OpenRemasteredDialog(1);
   }
 #endif
-  ItemHelp("Your console's prod.keys, used by both imports.");
+  ItemHelp("One file: both the Remastered import and the Dread import read it.");
 }
 
 void DrawRemasteredImport() {
@@ -73,24 +127,17 @@ void DrawRemasteredImport() {
   };
   if (!sFilled) {
     sFilled = true;
-    std::snprintf(sKeys, sizeof(sKeys), "%s", PortRemastered::DefaultKeysPath().c_str());
 #if defined(__ANDROID__)
-    // The files picked last time open again as if picked now.
+    // The files picked last time open again as if picked now. The key file is the shared row's
+    // (DrawImportKeys), which owns its own pick.
     std::lock_guard lock(sRemasteredPickMutex);
     if (!sRemasteredImagePath.empty()) {
       sRemasteredPicks.emplace_back(0, sRemasteredImagePath);
     }
-    if (!sRemasteredKeysPath.empty()) {
-      sRemasteredPicks.emplace_back(1, sRemasteredKeysPath);
-    }
-    // A pick the previous process never saw: after the remembered ones, so it wins.
     TakeRemasteredPickFiles();
 #else
     if (!sRemasteredImagePath.empty()) {
       std::snprintf(sImage, sizeof(sImage), "%s", sRemasteredImagePath.c_str());
-    }
-    if (!sRemasteredKeysPath.empty()) {
-      std::snprintf(sKeys, sizeof(sKeys), "%s", sRemasteredKeysPath.c_str());
     }
 #endif
   }
@@ -114,9 +161,7 @@ void DrawRemasteredImport() {
 #endif
     sRemasteredPicks.clear();
   }
-  if (!ImGui::CollapsingHeader("Metroid Prime Remastered models")) {
-    return;
-  }
+  // Drawn straight into the Prime Remastered section body: no header of its own in between.
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   ImGui::TextWrapped(
       "Converts the models of your own Metroid Prime Remastered copy into a mod. Needs the game's "
@@ -310,9 +355,7 @@ void DrawDreadSamusImport() {
     }
   }
 #endif
-  if (!ImGui::CollapsingHeader("Metroid Dread Samus models")) {
-    return;
-  }
+  // Drawn straight into the Metroid Dread section body, like the Remastered import in its own.
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   ImGui::TextWrapped(
       "Puts Samus's Power, Varia, Gravity and Phazon Suit bodies and Morph Balls from your own Metroid Dread in place "
@@ -320,7 +363,7 @@ void DrawDreadSamusImport() {
       "Phazon takes Dread's Metroid Suit. It is the dread-samus mod: switch it off above.");
   ImGui::BeginDisabled(state.running);
 #if defined(__ANDROID__)
-  if (ImGui::Button("Pick the Dread image...##dread-image")) {
+  if (ImGui::Button("Load Metroid Dread image##dread-image")) {
     OpenRemasteredDialog(kDreadPick);
   }
   ImGui::SameLine();
@@ -329,15 +372,20 @@ void DrawDreadSamusImport() {
   ImGui::TextWrapped("Android may close the game while you pick a file. The pick is kept: open this page again.");
   ImGui::PopStyleColor();
 #else
-  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+  // The button's label is long, so the path field gives up the width it needs: a narrow window
+  // would clip the label otherwise.
+  const ImGuiStyle& style = ImGui::GetStyle();
+  const float avail = ImGui::GetContentRegionAvail().x;
+  const float buttonWidth = ImGui::CalcTextSize("Load Metroid Dread image").x + style.FramePadding.x * 2.f;
+  ImGui::SetNextItemWidth(std::max(120.f, std::min(avail * 0.6f, avail - buttonWidth - style.ItemSpacing.x)));
   ImGui::InputTextWithHint("##dread-image", "Metroid Dread .nsp or .xci", sImage, sizeof(sImage));
   ImGui::SameLine();
-  if (ImGui::Button("Browse the Dread image...##dread-image")) {
+  if (ImGui::Button("Load Metroid Dread image##dread-image")) {
     OpenRemasteredDialog(kDreadPick);
   }
 #endif
   ImGui::BeginDisabled(sImage[0] == '\0' || sDreadKeys[0] == '\0');
-  if (ImGui::Button("Import the Dread Samus models##dread")) {
+  if (ImGui::Button("Import##dread")) {
     // A start refused for a missing mods folder or file says why in the shared state; one refused
     // because the Remastered import runs leaves that import's state, which is not this one's.
 #if !defined(__ANDROID__)

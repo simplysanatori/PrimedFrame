@@ -270,16 +270,21 @@ void DrawBuiltinModToggle(const char* modName, const char* label, bool stale) {
 void DrawBuiltinMods() {
   ImGui::SeparatorText("Built-in mods");
   const PortMods::Status& status = PortMods::CurrentStatus();
+  // One prod.keys serves both imports, so the page has one row for it, above both sections and
+  // inside neither: it stays visible whichever of them is open, and neither section owns it.
+  DrawImportKeys();
   // MP_DEBUG_TAB=Mods/<section>, and the old Remastered and Dread page names, open one of these.
   if (StartSection("Mods", "Prime Remastered")) {
     ImGui::SetNextItemOpen(true);
   }
+  // Its header is the only wrapper Prime's content has: the import and the gallery are drawn
+  // straight into this indented body, which ends before the next header.
   if (ImGui::CollapsingHeader("Prime Remastered")) {
+    ImGui::Indent();
     DrawBuiltinModToggle(PortRemastered::kImportModName, "Use the Remastered models",
                          PortMods::StaleRemasteredImport() != nullptr);
     DrawRemasteredWarning();
     ImGui::SeparatorText("Import");
-    DrawImportKeys(0);
     DrawRemasteredImport();
     ImGui::SeparatorText("Gallery");
     const std::vector<std::string> pictures = PortMods::GalleryPaths();
@@ -291,15 +296,18 @@ void DrawBuiltinMods() {
       ReleaseGalleryTexture();
       sGalleryOpen = true;
     }
+    ImGui::Unindent();
   }
   if (StartSection("Mods", "Metroid Dread")) {
     ImGui::SetNextItemOpen(true);
   }
+  // A sibling of the Prime section, at the same level: neither import sits under the other.
   if (ImGui::CollapsingHeader("Metroid Dread")) {
+    ImGui::Indent();
     DrawBuiltinModToggle(PortDreadSamus::kModName, "Use the Dread Suit models", DreadImportStale(status));
     ImGui::SeparatorText("Import");
-    DrawImportKeys(1);
     DrawDreadSamusImport();
+    ImGui::Unindent();
   }
 }
 

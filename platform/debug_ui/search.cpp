@@ -167,6 +167,11 @@ char sSearch[128] = "";
 // The label without its "##id" part is the text, which may go on with a key
 // hint ("Screenshot (F12)").
 bool LabelIs(const char* label, const char* text) {
+  // A row that names a widget's hidden id ("Import##dread") matches that widget alone: both
+  // built-in sections show an "Import" button, so the text on its own cannot say which one.
+  if (std::strstr(text, "##") != nullptr) {
+    return std::strcmp(label, text) == 0;
+  }
   const char* end = ImGui::FindRenderedTextEnd(label);
   const size_t length = std::strlen(text);
   const size_t shown = static_cast< size_t >(end - label);
@@ -422,7 +427,8 @@ void DrawSearchResults() {
     const ImVec2 min = ImGui::GetItemRectMin();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     draw->PushClipRect(min, ImGui::GetItemRectMax(), true); // long labels stop at the row
-    draw->AddText(min, ImGui::GetColorU32(ImGuiCol_Text), row.label);
+    // A row's hidden id stays hidden, as it is on its widget.
+    draw->AddText(min, ImGui::GetColorU32(ImGuiCol_Text), row.label, ImGui::FindRenderedTextEnd(row.label));
     draw->AddText(ImVec2(min.x, min.y + ImGui::GetTextLineHeight()),
                   ImGui::GetColorU32(ImGuiCol_TextDisabled), place.c_str());
     draw->PopClipRect();

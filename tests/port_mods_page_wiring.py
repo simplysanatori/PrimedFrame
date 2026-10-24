@@ -1,10 +1,11 @@
 """Source checks for the merged F1 Mods page (the Remastered and Dread sections on it).
 
 F1 used to hold a Remastered page beside Mods. The port's own two mods now live
-in one page: the global controls, then "Built-in mods" with a Prime Remastered
-and a Metroid Dread section (each its own switch, imported state and import),
-then "Other mods" for the folder's other mods, then texture packs. What the
-checks here pin down is what a compiler cannot see:
+in one page: the global controls, then "Built-in mods" with one key file row
+above two sibling sections, Prime Remastered and Metroid Dread (each its own
+switch, imported state and import), then "Other mods" for the folder's other
+mods, then texture packs. What the checks here pin down is what a compiler
+cannot see:
 
   * the page list holds one Mods page and no Remastered page, and MP_DEBUG_TAB
     still reaches it by the old names, opening the section each one named;
@@ -12,10 +13,17 @@ checks here pin down is what a compiler cannot see:
     mods_disabled as the other mods are, says whether this launch loaded them
     apart from what the switch selects, and gives way to Original experience;
     neither is listed again under Other mods;
-  * every Dread control has a visible label of its own: the settings search
-    counts rows by label on the page and opens only the section a row names, so
-    a label shared with a closed Prime section would land on a hidden widget;
-  * each built-in section keeps its import, its progress and Remastered's
+  * the key file is one row for both imports, drawn once above both sections and
+    inside neither, with one buffer and one pick (the settings search counts rows
+    by label, so a per-import copy would be a second row for one file);
+  * each section's own header is the only wrapper of its content: the import and
+    gallery are drawn straight into the indented body, so nothing nests under a
+    section and the Dread one is a sibling of Prime Remastered, not a child;
+  * the Dread image picker says "Load Metroid Dread image" and both imports say
+    "Import": the settings index tells the two apart by hidden id, which the
+    search matches exactly, so a jump lands on the right one with either section
+    open or closed;
+  * each built-in section keeps its import and its progress, and Remastered's
     warning, and the search rows reach all of it on the Mods page.
 
 It is a source check: no engine code runs and no game is started, so it cannot
@@ -48,6 +56,18 @@ def index_rows(text):
         page, _sub, section, label, keywords = re.findall(r'"([^"]*)"', line)[:5]
         rows.append(dict(page=page, section=section, label=label, keywords=keywords))
     return rows
+
+
+def builtin_bodies():
+    """The DrawBuiltinMods body, and the Prime Remastered and Metroid Dread bodies in it."""
+    text = REMASTERED.read_text()
+    body = text[text.index("void DrawBuiltinMods() {"):]
+    body = body[:body.index("\n}\n") + 3]
+    prime = body[body.index('if (ImGui::CollapsingHeader("Prime Remastered"))'):]
+    prime = prime[prime.index("\n") + 1:prime.index('if (StartSection("Mods", "Metroid Dread"))')]
+    dread = body[body.index('if (ImGui::CollapsingHeader("Metroid Dread"))'):]
+    dread = dread[dread.index("\n") + 1:]
+    return text, body, prime, dread
 
 
 class Wiring(WiringCase):
@@ -85,19 +105,14 @@ class Wiring(WiringCase):
         self.assertIn('ImGui::TextDisabled("No other mods.");', other)
 
     def test_each_built_in_mod_has_a_section_with_its_switch_and_import(self):
-        text = REMASTERED.read_text()
-        sections = text[text.index("void DrawBuiltinMods() {"):]
-        remastered = sections[sections.index('CollapsingHeader("Prime Remastered")'):]
-        dread = remastered[remastered.index('CollapsingHeader("Metroid Dread")'):]
-        # Prime Remastered: switch, the warning, the shared key row, the import and the gallery.
-        self.assertIn('DrawBuiltinModToggle(PortRemastered::kImportModName, "Use the Remastered models"', remastered)
-        self.assertIn("DrawRemasteredWarning();", remastered)
-        self.assertIn("DrawImportKeys(0);", remastered)
-        self.assertIn("DrawRemasteredImport();", remastered)
-        self.assertIn('ImGui::SeparatorText("Gallery");', remastered)
-        # Metroid Dread: its own switch and import, over the same prod.keys value.
+        text, _body, prime, dread = builtin_bodies()
+        # Prime Remastered: switch, the warning, the import and the gallery, all in its body.
+        self.assertIn(
+            'DrawBuiltinModToggle(PortRemastered::kImportModName, "Use the Remastered models"', prime)
+        self.assertIn("DrawRemasteredWarning();", prime)
+        self.assertIn("DrawRemasteredImport();", prime)
+        # Metroid Dread: its own switch and import, a sibling of the Prime section.
         self.assertIn('DrawBuiltinModToggle(PortDreadSamus::kModName, "Use the Dread Suit models"', dread)
-        self.assertIn("DrawImportKeys(1);", dread)
         self.assertIn("DrawDreadSamusImport();", dread)
         # Nothing to switch while the mod is not installed.
         self.assertIn('ImGui::TextDisabled("Not imported yet.");', text)
@@ -108,54 +123,92 @@ class Wiring(WiringCase):
         # The page's body is still the Mods function and the textures under it.
         self.assertIn("void DrawModsTab() {\n  DrawMods();\n  DrawTexturesSection();\n}", TABS.read_text())
 
-    def test_the_switch_says_loaded_apart_from_selected(self):
-        text = REMASTERED.read_text()
-        # What this launch loaded, beside the switch's value (what the next reload loads).
-        self.assertIn('ImGui::TextDisabled(on ? "Loaded." : "Loaded until the mods are reloaded.");', text)
-        self.assertIn('ImGui::TextDisabled("Off, not loaded.");', text)
-        self.assertIn('ImGui::TextDisabled("Not loaded while an import runs.");', text)
-        self.assertIn('ImGui::TextColored(ThemeWarnColor(), "Not loaded: reload the mods to apply.");', text)
-        # Original experience turns every mod off whatever the switch says: it is disabled, with
-        # the reason, and the saved value is kept.
-        self.assertIn("const bool modsOn = ModsEnabled();", text)
-        self.assertIn("ImGui::BeginDisabled(!modsOn);", text)
-        self.assertNotIn("ImGui::BeginDisabled(!sModsEnabled);", text)
-        self.assertIn('sModsEnabled ? "(Original experience is on: no mods load)" : "(mods are off)"', text)
-        # The tooltip may not claim the retail game: the other built-in mod may stay on.
-        self.assertNotIn("Off plays the retail game", text)
-        self.assertIn("Off unloads this mod alone", text)
-
-    def test_the_dread_controls_have_labels_of_their_own(self):
-        # A jump opens only the section its row names, and counts rows by label on the page: a
-        # Dread control labelled as Prime's would be looked for in the closed Prime section.
+    def test_one_keys_row_above_both_imports(self):
+        text, body, prime, dread = builtin_bodies()
         mods = MODS.read_text()
-        dread_labels = ("Pick the Dread keys...", "Pick the Dread image...", "Browse the Dread keys...",
-                        "Browse the Dread image...", "Import the Dread Samus models")
-        for label in dread_labels:
-            self.assertIn(f'"{label}', mods)
+        # One picker for both imports, drawn once: above either section, and inside neither.
+        self.assertEqual(text.count("DrawImportKeys("), 1)
+        self.assertEqual(body.count("DrawImportKeys();"), 1)
+        self.assertLess(body.index("DrawImportKeys();"), body.index('if (StartSection("Mods", "Prime Remastered"))'))
+        self.assertNotIn("DrawImportKeys", prime + dread)
+        # One function with no argument, and no second buffer or label to keep apart.
+        self.assertIn("void DrawImportKeys()", mods)
+        self.assertNotIn("DrawImportKeys(int", mods + INTERNAL.read_text())
+        self.assertIn('ImGui::TextUnformatted("Your Nintendo Switch\'s prod.keys")', mods)
+        for gone in ("Dread keys", "import-keys-dread", "Keys (used by both imports)"):
+            self.assertNotIn(gone, mods)
+
+    def test_each_section_header_is_the_only_wrapper_of_its_content(self):
+        text, _body, prime, dread = builtin_bodies()
+        mods = MODS.read_text()
+        # No header inside either section: the import controls and the gallery are drawn straight
+        # into the indented body, which ends before the next top-level header.
+        for body_text in (prime, dread):
+            self.assertNotIn("CollapsingHeader", body_text)
+            self.assertIn("ImGui::Indent();", body_text)
+            self.assertIn("ImGui::Unindent();", body_text)
+            self.assertLess(body_text.index("ImGui::Indent();"), body_text.index("ImGui::Unindent();"))
+        self.assertNotIn('CollapsingHeader("Metroid Prime Remastered models")', mods + text)
+        self.assertNotIn('CollapsingHeader("Metroid Dread Samus models")', mods + text)
+        self.assertNotIn('CollapsingHeader("Prime Gallery")', text)
+        # The gallery is Prime's own subsection, after its import, and still opens the viewer.
+        self.assertIn('ImGui::SeparatorText("Gallery");', prime)
+        self.assertLess(prime.index("DrawRemasteredImport();"), prime.index('ImGui::SeparatorText("Gallery");'))
+        self.assertIn("PortMods::GalleryPaths()", prime)
+        self.assertIn("sGalleryOpen = true;", prime)
+        self.assertNotIn("Gallery", dread)
+        # The two section bodies end (Unindent) before the section's own header closes.
+        self.assertLess(prime.index("ImGui::Unindent();"), prime.index("\n  }"))
+
+    def test_both_imports_are_labelled_import(self):
+        mods = MODS.read_text()
+        # Same visible text, one hidden id each: the search tells them apart without the user.
+        self.assertIn('ImGui::Button("Import##remastered")', mods)
+        self.assertIn('ImGui::Button("Import##dread")', mods)
+        self.assertNotIn("Import the Dread Samus models", mods)
+        # The image picker keeps the text the user asked for, on both platforms.
+        self.assertEqual(mods.count('"Load Metroid Dread image##dread-image"'), 2)
+        for gone in ("Pick the Dread image...", "Browse the Dread image..."):
+            self.assertNotIn(gone, mods)
+        # A typed Dread path still reaches the shared key file.
+        self.assertIn("char* const sDreadKeys = sKeys;", mods)
+
+    def test_the_search_matches_a_rows_hidden_id(self):
+        # An index row may carry a widget's hidden id; the jump then matches that widget exactly,
+        # whatever else on the page shows the same text, and the results list hides the id.
+        search = SEARCH.read_text()
+        self.assertIn('if (std::strstr(text, "##") != nullptr) {\n    return std::strcmp(label, text) == 0;\n  }', search)
+        self.assertIn("ImGui::FindRenderedTextEnd(row.label)", search)
         rows = index_rows(INDEX.read_text())
-        dread_rows = [row for row in rows if row["section"].startswith("Built-in mods > Metroid Dread")]
-        prime_rows = [row for row in rows if row["section"].startswith("Built-in mods > Prime Remastered")]
-        self.assertTrue(dread_rows)
-        shared = {row["label"] for row in dread_rows} & {row["label"] for row in prime_rows}
-        self.assertFalse(shared, f"labels the two sections share: {shared}")
-        for label in dread_labels:
-            self.assertEqual(len([row for row in dread_rows if row["label"] == label]), 1, label)
-        # No row of either section is left counting on a widget of the other.
-        self.assertTrue(all(row["page"] == "Mods" for row in dread_rows + prime_rows))
-        # An image picker sits inside its section's own import header, which a jump must open;
-        # the keys row is outside it, so it names the section only.
-        pickers = ("Pick the .nsp/.xci...", "Browse...", "Pick the Dread image...",
-                   "Browse the Dread image...")
-        keys = ("Pick the keys...", "Pick the Dread keys...", "Browse the Dread keys...")
-        for row in prime_rows + dread_rows:
-            if row["label"] not in pickers and row["label"] not in keys:
-                continue
-            # Prime's desktop rows share the label Browse...: the keywords say which is which.
-            if "keys" in row["keywords"]:
-                self.assertNotIn(" models", row["section"], row)
-            else:
-                self.assertIn(" models", row["section"], row)
+        for label in ("Import##remastered", "Import##dread"):
+            found = [row for row in rows if row["label"] == label]
+            self.assertEqual(len(found), 1, label)
+            self.assertEqual(found[0]["page"], "Mods")
+            self.assertTrue(found[0]["section"].startswith("Built-in mods"), found[0])
+
+    def test_the_index_has_one_shared_keys_row(self):
+        rows = index_rows(INDEX.read_text())
+        keys = [row for row in rows if "prod.keys" in row["keywords"]]
+        # One row per platform, both above the sections: no section owns the key file any more.
+        self.assertEqual(sorted(row["label"] for row in keys), ["Browse...", "Pick the keys..."])
+        for row in keys:
+            self.assertEqual(row["page"], "Mods")
+            self.assertEqual(row["section"], "Built-in mods")
+            for word in ("keys", "prod.keys", "remastered", "dread"):
+                self.assertIn(word, row["keywords"])
+        self.assertFalse([row for row in rows if "Dread keys" in row["label"] or "Dread keys" in row["section"]])
+        # The Dread import's controls have rows of their own, on the same page.
+        dread = [row for row in rows if row["section"].startswith("Built-in mods > Metroid Dread")]
+        self.assertTrue(dread)
+        images = [row for row in dread if row["label"] == "Load Metroid Dread image"]
+        self.assertEqual(len(images), 2, images)  # one row per platform
+        for row in images:
+            self.assertEqual(row["section"], "Built-in mods > Metroid Dread > Import")
+        # No row names a header the page no longer has.
+        for row in rows:
+            self.assertNotIn("Metroid Prime Remastered models", row["section"])
+            self.assertNotIn("Metroid Dread Samus models", row["section"])
+            self.assertNotIn("Prime Gallery", row["section"])
 
     def test_the_search_reaches_both_built_in_mods_on_the_mods_page(self):
         rows = index_rows(INDEX.read_text())
@@ -166,8 +219,6 @@ class Wiring(WiringCase):
             self.assertEqual(found[0]["page"], "Mods")
             self.assertTrue(found[0]["section"].startswith("Built-in mods"), found[0])
             self.assertIn(keywords, found[0]["keywords"])
-        # The Dread import's controls, on the same page.
-        self.assertTrue([row for row in rows if row["section"].startswith("Built-in mods > Metroid Dread > Import")])
         # The index names no page that the overlay no longer has, and no empty conditional.
         self.assertFalse([row for row in rows if row["page"] == "Remastered"])
         self.assertNotIn("#if defined(__ANDROID__)\n#else\n#endif", INDEX.read_text())

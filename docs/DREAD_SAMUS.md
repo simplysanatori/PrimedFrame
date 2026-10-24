@@ -16,24 +16,27 @@ used.
 
 ## Importing it
 
-F1 > Mods > Built-in mods > Metroid Dread > Import holds a `prod.keys` row, shared with the Remastered
-import, and then a collapsible **Metroid Dread Samus models** section. Type the
-image's path or press Browse and pick it, then Import. The section says
-"Imported." once the mod is in the mods folder; "Not imported yet." until then.
+The key file is not this import's own: F1 > Mods > Built-in mods draws one
+"Your Nintendo Switch's prod.keys" row above both sections, and it serves this
+import and the Remastered one alike. The Dread section, a sibling of Prime
+Remastered rather than a part of it, holds the import directly: type the
+image's path, or press **Load Metroid Dread image** and pick it, then **Import**.
+The section says "Imported." once the mod is in the mods folder; "Not imported
+yet." until then.
 
-The key file is the same shared `prod.keys` row, and a typed path is kept the
-way the Remastered import keeps it (`remastered_keys` in the settings file). The
-image's path is not saved on desktop, so pick or type it again after a restart;
-on Android the pick is kept. The import runs in the background while the game
+A typed key path is kept once it is used, the way the Remastered import keeps it
+(`remastered_keys` in the settings file). The image's path is not saved on
+desktop, so pick or type it again after a restart; on Android the pick is
+kept. The import runs in the background while the game
 runs, with a progress bar, Cancel and a "notes" tree of what it decided. It
 shares that panel and its worker with the Remastered import, so only one of the
 two runs at a time; a mod reload loads the new mod when it ends.
 
-On Android the section has a "Pick the .nsp/.xci..." button instead, which
+On Android the section has the same "Load Metroid Dread image" button, which
 opens the system's file picker. Android may close the game while you pick a
 file; the pick is kept, so open the page again. The image is not copied: the
 import reads it through the picked file's descriptor. The key file comes from
-the same shared "Pick the keys..." row.
+the "Pick the keys..." button in the shared row above both sections.
 
 ## From a terminal
 

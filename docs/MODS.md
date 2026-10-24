@@ -326,12 +326,13 @@ are not handled for now; switch it off in F1 > Mods > Built-in mods (or remove
 storage on Android) to get the retail game back.
 
 The port can build a model mod from your own copy of Metroid Prime Remastered;
-nothing of it ships. F1 > Mods > Built-in mods > Prime Remastered > Import >
-"Metroid Prime Remastered models" takes the game's `.nsp` or gamecard dump
-(`.xci`) and your console's key file (`prod.keys`, not `title.keys`;
-`~/.switch/prod.keys` is filled in when it
-exists). An `.xci`, or an `.nsp` converted from one, needs the key file's
-`key_area_key_application_XX` keys; compressed `.nsz`/`.xcz` must be
+nothing of it ships. Both built-in imports read one key file, so F1 > Mods >
+Built-in mods has a single "Your Nintendo Switch's prod.keys" row above the
+sections, and each section then asks only for its own image: Prime Remastered >
+Import takes the game's `.nsp` or gamecard dump (`.xci`), with the key file
+(`prod.keys`, not `title.keys`; `~/.switch/prod.keys` is filled in when it
+exists) from that one row. An `.xci`, or an `.nsp` converted from one, needs the
+key file's `key_area_key_application_XX` keys; compressed `.nsz`/`.xcz` must be
 decompressed first. The panel remembers both files once they are picked
 or used, as `remastered_nsp` and `remastered_keys` in the settings file (on
 Android, the picked documents). Import converts in the background while the game
@@ -505,8 +506,8 @@ below.
 The concept art of the image galleries comes too: the 120 full-size pictures in
 `UI_FrontEnd` (taller than 1000 pixels) are written as JPEGs into the mod's
 `gallery` folder (`gallery/NNN.jpg`, fitted within 1920x1080, quality 90; about
-0.3 MB each, 36 MB in all), and F1 > Mods > Built-in mods > Prime Remastered > Gallery
-opens them in a viewer window. The decoder
+0.3 MB each, 36 MB in all), and F1 > Mods > Built-in mods > Prime Remastered >
+Gallery opens them in a viewer window. The decoder
 is the one the game uses for THP movies, so no extra library is needed.
 `MP_REMASTERED_GALLERY=0` leaves them out.
 
@@ -526,8 +527,9 @@ Measured on the development machine: 342 models and 275 room environments, 44
 seconds on 16 threads, 2.3 GB of memory at the peak, 1.1 GB on disk (half of it
 the room environments).
 
-On Android the panel has two buttons that open the system's file picker, one
-for the `.nsp`/`.xci` and one for the key file. Neither file is copied: the import
+On Android the panel's buttons open the system's file picker: "Pick the keys..."
+in the shared keys row above the sections, and one for the `.nsp`/`.xci` in the
+section's import. Neither file is copied: the import
 reads them where they are. It runs on two threads there to keep its memory
 down. Not yet run on a device.
 
@@ -546,8 +548,9 @@ Power, Varia, Gravity and Phazon Suit bodies and Morph Balls from your own Metro
 `.nsp`/`.xci` and `prod.keys`, in place of Prime's, in cutscenes, the Morph Ball
 transitions and the third-person camera. It is a mod of its own, `dread-samus`,
 so it has a switch of its own there and turns off without touching the
-Remastered models; it shares the `prod.keys` value and the import worker with
-the Remastered import (only one of the two runs at a time). Phazon takes
+Remastered models; its section sits beside Prime Remastered, not under it, and it
+shares the `prod.keys` row above both sections and the import worker with the
+Remastered import (only one of the two runs at a time). Phazon takes
 Dread's Metroid Suit; Fusion keeps its models. It needs the base Dread release only. See
 [`docs/DREAD_SAMUS.md`](DREAD_SAMUS.md) for the import and its limits.
 
