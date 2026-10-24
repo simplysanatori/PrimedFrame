@@ -4757,6 +4757,60 @@ void TestVmatVisorRunOffRecipes() {
             "d85d4169 is VisorRunOffLit, Unfogged");
 }
 
+// VFX_VisorRain (0ec41df0, the visor rain splash GENP 45ba782d; vfx/0ec41df0.md): TCH0, a 2-channel
+// noise map, as the colour slot, CCH0 whole in VPRM v1 (the drop mask's scale and gain, which the
+// effect's SMTR animates), Unfogged without a DFOG 1 (the visor composite pass has no fog), and no
+// other slot: the fragment maths needs one noise map and the PMTR rows 0..2.
+void TestVmatVisorRainRecipe() {
+  constexpr uint32_t kVisorRain = 1u << 28, kUnfogged = 1u << 22;
+  // The effect's effective CCH0: the MATI's own (1, .01, .1, .1) with the GENP's SMTR over it.
+  const std::vector<std::array<float, 4>> cch = {{1.f, 0.12f, 0.2f, 4.f}};
+  const std::vector<uint8_t> data = VmatEffect();
+  const std::vector<uint8_t> mati = MatiCchN(0x0ec41df0, {{"TCH0", Fresh(8)}}, cch);
+  EffectNode node;
+  std::string error;
+  CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the visor rain effect parses");
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+  io.materialData = [&mati](const EffectGuid&) { return mati; };
+  io.vfxTexture = [](const EffectGuid& texture) {
+    FlipbookAtlas atlas;
+    if (texture == Fresh(8)) {
+      atlas.id = 0x5EED0008;
+    }
+    return atlas;
+  };
+  std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+  std::vector<RetailPartProperty> properties;
+  if (parts.size() == 1) {
+    SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+  }
+  const auto value = [](const std::vector<RetailPartProperty>& properties, uint32_t fourcc) {
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == fourcc) {
+        return property.value;
+      }
+    }
+    return std::vector<uint8_t>();
+  };
+  const std::vector<uint8_t> vmat = value(properties, EffectFourCC("VMAT"));
+  CHECK_MSG(parts.size() == 1 && !vmat.empty() && parts[0].approximated.empty(),
+            "0ec41df0 writes an exact VMAT");
+  CHECK_MSG(VmatWord(vmat, 12) == (kVisorRain | kUnfogged),
+            "0ec41df0 is VisorRain, Unfogged (the visor composite pass has no fog)");
+  CHECK_MSG(VmatWord(vmat, 20) == 1, "0ec41df0's TCH0 is its only texture");
+  // The role words follow the one texture entry (11 words at 24): colour first, then the absent slots.
+  CHECK_MSG(VmatWord(vmat, 24 + 44) == 0 && VmatWord(vmat, 24 + 44 + 4) == ~0u,
+            "0ec41df0's TCH0 is the colour slot, with no opacity map");
+  // VPRM v1: version, the NMAP slot (-1), one row, then CCH0 whole.
+  const std::vector<uint8_t> vprm = value(properties, EffectFourCC("VPRM"));
+  CHECK_MSG(vprm.size() == 8 + 12 + 16 && VmatWord(vprm, 8) == 1 && VmatWord(vprm, 16) == 1,
+            "VPRM v1: no NMAP slot and one CCH row");
+  CHECK_MSG(VmatWord(vprm, 20) == Bits(1.f) && VmatWord(vprm, 24) == Bits(0.12f) &&
+                VmatWord(vprm, 28) == Bits(0.2f) && VmatWord(vprm, 32) == Bits(4.f),
+            "VPRM carries the effect's CCH0 (1, .12, .2, 4)");
+}
+
 bool Contains(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& what) {
   return std::search(bytes.begin(), bytes.end(), what.begin(), what.end()) != bytes.end();
 }
@@ -5191,6 +5245,7 @@ int main() {
   TestVmatPyroRecipes();
   TestVmatDisintegrationRecipe();
   TestVmatVisorRunOffRecipes();
+  TestVmatVisorRainRecipe();
   TestVmatVisorSplatRecipe();
   TestVmatSceneWarpRecipes();
   TestVmatIceChargeBeamRecipe();

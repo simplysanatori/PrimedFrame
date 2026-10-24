@@ -287,8 +287,16 @@ fn vs_main(in: VIn) -> VOut {
   out.tan = in.tan;
   out.vp = mv;
   if ((FEAT & 32768u) != 0u) {
-    // SceneWarp: the warp's perspective scale, near / view distance (the VS's o3.x = vp_c4[0].w / -viewZ).
+    // SceneWarp: the warp's perspective scale, near / view distance (the VS's o3.x =
+    // vp_c4[0].w / -viewZ).
     out.sw = u.scene.z / -mv.z;
+  }
+  if ((FEAT & 268435456u) != 0u) {
+    // VisorRain: o6.x = game near / HUD view depth. Remastered draws HUD billboards in the HUD
+    // camera at basewidget_visorFX (FRME_BaseHud z -2.2311, eye at the origin: the scale
+    // 0xcb0ef8 fills the frustum there); the port's sits at near + 0.01 (GetNearClipDistance),
+    // so map its depth onto that plane (kb topic/hud-billboard-visor-draw).
+    out.sw = u.scene.z * (u.scene.z + 0.01) / (2.2311 * -mv.z);
   }
   if ((FEAT & 2097152u) != 0u || (FEAT & 33554432u) != 0u) {
     // IceChargeCollision: the refraction's perspective scale, min(|INDP.w / -viewZ|, 0.2) (VS o5.x / o6.x).
@@ -606,6 +614,64 @@ R"(    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
     } else {
       rgb = ((tint + c1.x * (vec3f(1.0) - tint)) * fb + glow) * fade * vc.rgb * M;
     }
+  } else if ((FEAT & 268435456u) != 0u) {
+    // VFX_VisorRain (0ec41df0, FS perm 000; vfx/0ec41df0.md section 3): the visor's rain splash.
+    // TCH0 is a two-channel noise map, read twice: at a per-particle patch (PMTR row 0's xy offset,
+    // scaled by CCH0.y) and at the texel the roundEven sample lands on over the whole quad (p and q
+    // are in [-0.125, 0.625], so round(p - 0.25) is always 0). The patch's channels warp a sum of two
+    // sines, and the constant sample shrinks it as PMTR row 0's z (the lifetime fade, times
+    // 0.355/0.365) grows into H. 0.5 < H < 1 is inside the drop: its height Z gives the normal n
+    // (each axis' cosine, Z kept as the unnormalised height) that offsets the scene copy at the
+    // fragment by (1 - fade) x CCH0.w x near / view depth (v down: the y offset negates), and f =
+    // Z^4 x 10 + 0.75 + 0.25 x fade is the edge darkening. Elsewhere alpha is 0 and the fragment is
+    // discarded. The bigger drops ("runners": row 1's y < CCH0.z, size row 1's w > row 2's y) slide
+    // the pattern down by min(2 x row 1's x, 0.5) x 0.33, narrow the mask and take their own fade
+    // (row 1's z; row 0's z otherwise). M is PCMD.x. x stays the instance alpha.
+    let c = u.ice0;
+    let R0 = in.e0;
+    let R1 = in.e1;
+    let uvs = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let qu = sat(uvs.x);
+    var qv = sat(uvs.y);
+    let runner = R1.y < c.z && R1.w > in.e2.y;
+    if (runner) { qv = qv + min(2.0 * R1.x, 0.5) * 0.33; }
+    let p = qu * 0.75 - 0.125;
+    let q = qv * 0.75 - 0.125;
+    let lay = layer(uvs.z, u.layers[max(S_COLOR, 0)]);
+    let n1 = sample_raw(S_COLOR, vec2f(p * c.y + R0.x, q * c.y + R0.y), lay).xy;
+    let n2 = sample_raw(S_COLOR, vec2f(round(p - 0.25), round(q - 0.25)), lay).xy;
+    let sa = p * 6.28318530718 + (n1.x - 0.5) * 2.0 * c.x * R0.w;
+    let sb = q * 6.28318530718 + (n1.y - 0.5) * 2.0 * c.x * R0.w;
+    let ca = cos(sa);
+    let cb = cos(sb);
+    var sn = sin(sa) + sin(sb);
+    if (runner) {
+      // The runner's closing window: the sides and the top and bottom come in with row 1's x.
+      sn = sn * select(0.0, 1.0, qu > 0.25 * R1.x && qu < 1.0 - 0.25 * R1.x) *
+          select(0.0, 1.0, abs(qv) > 0.1 * R1.x && abs(qv) < 1.0 - 0.1 * R1.x);
+    }
+    let k = select(0.365, 0.355, runner);
+    let H = sat(max(0.0, 1.0 - sat(max(n2.x, 0.02) * (R0.z * k) + n2.y - 0.175)) * sn);
+    var Z = 0.0;
+    var nn = vec2f(0.0);
+    if (H > 0.5 && H < 1.0) {
+      Z = (H - 0.5) * 1.8 + 0.1;
+      let e = vec3f(-sign(ca) * ca * ca, -sign(cb) * cb * cb, Z);
+      nn = -(normalize(e).xy);
+    }
+    let g = select(R0.z, R1.z, runner);
+    let T = (1.0 - g) * c.w * in.sw;
+    var fb = vec3f(0.0);
+    if (u.scene.w > 0.5) {
+      // v down: the copy's y offset negates. The copy is exposed, so x the inverse exposure.
+      let fbuv = vec2f(in.pos.x * u.scene.x + T * nn.x, in.pos.y * u.scene.y - T * nn.y);
+      var ie = 1.0;
+      if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
+      fb = scene_light(textureSampleLevel(sceneColor, sceneSampler, fbuv, 0.0).rgb) * ie;
+    }
+    let f = sat(Z * Z * Z * Z * 10.0 + (0.75 + 0.25 * g) * select(0.0, 1.0, Z > 0.0));
+    rgb = f * fb * vc.rgb * M;
+    x = select(0.0, 1.0, Z > 0.0);
   } else if ((FEAT & 16384u) != 0u) {
     // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
     // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
@@ -1524,7 +1590,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
       {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam | IceChargeCollision |
-           IceChargeCollisionLit | VisorRunOff | VisorRunOffLit,
+           IceChargeCollisionLit | VisorRunOff | VisorRunOffLit | VisorRain,
        desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
@@ -1578,7 +1644,9 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   std::memcpy(u.tone, &gx.pbrTone, sizeof(u.tone));
   // Per draw: the GX state keeps the room's exposure for every later draw.
   const bool hdr = scene_hdr_pass_active();
-  if (!hdr && (features & (SceneWarp | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit)) != 0) {
+  if (!hdr &&
+      (features & (SceneWarp | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit | VisorRain)) !=
+          0) {
     // The scene-reading effects read the HDR scene's light; outside it there is none to read.
     return;
   }
@@ -1616,10 +1684,17 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     u.scene[2] = gx.proj.m2[3] / (gx.proj.m2[2] - 1.f);
     u.scene[3] = 1.f;
   }
-  if ((features & (IceChargeBeam | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit)) != 0) {
-    const uint32_t rows = (features & (IceChargeCollision | IceChargeCollisionLit)) != 0 ? 7
-                          : (features & (VisorRunOff | VisorRunOffLit)) != 0 ? 5
-                                                                             : 3;
+  if ((features & (IceChargeBeam | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit |
+                   VisorRain)) != 0) {
+    // The recipe's CCH rows: IceChargeCollision 0..6, VisorRunOff 0..4, IceChargeBeam 0..2, VisorRain 0 only.
+    uint32_t rows = 3;
+    if ((features & (IceChargeCollision | IceChargeCollisionLit)) != 0) {
+      rows = 7;
+    } else if ((features & (VisorRunOff | VisorRunOffLit)) != 0) {
+      rows = 5;
+    } else if ((features & VisorRain) != 0) {
+      rows = 1;
+    }
     for (uint32_t i = 0; i < rows; ++i) {
       std::memcpy(u.ice[i], desc.params[i], sizeof(u.ice[i]));
     }

@@ -514,7 +514,8 @@ constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kInd
                    kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384,
                    kSceneWarp = 32768, kVisorSplat = 65536, kIceChargeBeam = 1u << 20,
                    kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22, kVisorRunOff = 1u << 23,
-                   kVisorRunOffLit = 1u << 24, kIceChargeCollisionLit = 1u << 25, kParticleLit = 1u << 26;
+                   kVisorRunOffLit = 1u << 24, kIceChargeCollisionLit = 1u << 25, kParticleLit = 1u << 26,
+                   kVisorRain = 1u << 28;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -677,6 +678,14 @@ const Recipe* RecipeOf(uint32_t shader) {
       // fog, so both are Unfogged whatever the effect's DFOG says.
       {0xb5e12668, kVisorRunOff, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 5, false, true},
       {0xd85d4169, kVisorRunOffLit, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 5, false, true},
+      // VFX_VisorRain (0ec41df0, the visor rain splash GENP 45ba782d; FS perm 000, perms 001/002 identical,
+      // 003..005 the particle-debug overlay; vfx/0ec41df0.md): TCH0 a 2-channel noise map (BC5, repeat); PMTR
+      // rows 0..2 (R0 = noise offset xy, PAP9 fade, PAP8 gain; R1 = PAP3, PAP5 (runner pick), PAP7, size; R2 =
+      // 16, 0.15) and CCH0 (1, .12, .2, 4 by the GENP's SMTR) drive a sin-sum drop mask H; where 0.5 < H < 1
+      // the scene copy at the fragment, offset along the mask's normal by (1 - fade) x CCH0.w x near / depth, x
+      // (0.75 .. 1) x vc.rgb, alpha vc.a; elsewhere discarded. The visor composite pass has no fog, so Unfogged
+      // whatever the DFOG.
+      {0x0ec41df0, kVisorRain, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 1, false, true},
       {0x84e0fe6c, kOpacityTex,
        {{"TCH0", Role::Opacity, -1, -1}},
        {}},
