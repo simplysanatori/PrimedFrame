@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -250,6 +251,38 @@ void DrawDreadSamusImport() {
   static char sKeys[1024] = "";
   static bool sFilled = false;
   static bool sStarted = false;  // the shared state is this import's
+#if defined(__ANDROID__)
+  // Picked content URIs, opened as "fd:<n>" (OpenRemasteredPick). The keys are the Remastered
+  // panel's pick (sRemasteredKeysPath), opened again here into a descriptor of their own.
+  static std::string sImageName;
+  static std::string sKeysName;
+  static std::string sKeysOpened;  // the URI sKeys holds a descriptor of
+  if (!sFilled) {
+    sFilled = true;
+    // The pick file is kept, so the image picked last time (or behind a killed process) opens again.
+    std::lock_guard lock(sRemasteredPickMutex);
+    std::ifstream in(RemasteredPickFile(kDreadPick));
+    std::string uri;
+    if (sDreadPick.empty() && std::getline(in, uri) && !uri.empty()) {
+      sDreadPick = uri;
+    }
+  }
+  {
+    std::lock_guard lock(sRemasteredPickMutex);
+    if (!sDreadPick.empty()) {
+      const std::string opened = OpenRemasteredPick(kDreadPick, sDreadPick);
+      std::snprintf(sImage, sizeof(sImage), "%s", opened.c_str());
+      sImageName = opened.empty() ? "could not be opened" : RemasteredPickName(sDreadPick);
+      sDreadPick.clear();
+    }
+  }
+  if (sKeysOpened != sRemasteredKeysPath) {
+    sKeysOpened = sRemasteredKeysPath;
+    const std::string opened = OpenRemasteredPick(kDreadKeysSlot, sKeysOpened);
+    std::snprintf(sKeys, sizeof(sKeys), "%s", opened.c_str());
+    sKeysName = opened.empty() ? "could not be opened" : RemasteredPickName(sKeysOpened);
+  }
+#else
   if (!sFilled) {
     sFilled = true;
     std::snprintf(sKeys, sizeof(sKeys), "%s",
@@ -262,6 +295,7 @@ void DrawDreadSamusImport() {
       sDreadPick.clear();
     }
   }
+#endif
   if (!ImGui::CollapsingHeader("Metroid Dread Samus models")) {
     return;
   }
@@ -275,11 +309,22 @@ void DrawDreadSamusImport() {
     return m.name == PortDreadSamus::kModName;
   });
   ImGui::TextDisabled(installed ? "Imported." : "Not imported yet.");
-#if defined(__ANDROID__)
-  ImGui::TextDisabled("Not on Android yet: import it on a computer and copy the dread-samus folder into the "
-                      "mods folder.");
-#else
   ImGui::BeginDisabled(state.running);
+#if defined(__ANDROID__)
+  if (ImGui::Button("Pick the .nsp/.xci...##dread-image")) {
+    OpenRemasteredDialog(kDreadPick);
+  }
+  ImGui::SameLine();
+  ImGui::TextUnformatted(sImageName.empty() ? "Metroid Dread .nsp or .xci" : sImageName.c_str());
+  if (ImGui::Button("Pick the keys...##dread-keys")) {
+    OpenRemasteredDialog(1);
+  }
+  ImGui::SameLine();
+  ImGui::TextUnformatted(sKeysName.empty() ? "prod.keys" : sKeysName.c_str());
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextWrapped("Android may close the game while you pick a file. The pick is kept: open this page again.");
+  ImGui::PopStyleColor();
+#else
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
   ImGui::InputTextWithHint("##dread-image", "Metroid Dread .nsp or .xci", sImage, sizeof(sImage));
   ImGui::SameLine();
@@ -292,13 +337,15 @@ void DrawDreadSamusImport() {
   if (ImGui::Button("Browse...##dread-keys")) {
     OpenRemasteredDialog(1);
   }
+#endif
   ImGui::BeginDisabled(sImage[0] == '\0' || sKeys[0] == '\0');
   if (ImGui::Button("Import##dread")) {
-    sStarted = StartDreadSamusImport(sImage, sKeys);
+    // A start refused for a missing mods folder or file says why in the shared state; one refused
+    // because the Remastered import runs leaves that import's state, which is not this one's.
+    sStarted = StartDreadSamusImport(sImage, sKeys) || !state.running;
   }
   ImGui::EndDisabled();
   ImGui::EndDisabled();
-#endif
   if (!sStarted) {
     return;
   }

@@ -787,7 +787,10 @@ void OpenRemasteredDialog(int which) {
 // opened here and the import reads it through the descriptor ("fd:<n>", see
 // SourceFile). One descriptor per field, closed when another file is picked.
 std::string OpenRemasteredPick(int which, const std::string& uri) {
-  static int sHeld[2] = {-1, -1};
+  static int sHeld[kDreadKeysSlot + 1] = {-1, -1, -1, -1, -1, -1};
+  if (which < 0 || which > kDreadKeysSlot) {
+    return {};
+  }
   if (sHeld[which] >= 0) {
     close(sHeld[which]);
     sHeld[which] = -1;

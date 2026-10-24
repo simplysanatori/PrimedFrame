@@ -379,6 +379,9 @@ inline constexpr int kFlaahgraPick = 3;
 extern std::string sFlaahgraPick;
 // Which 4 of the same picker: the Metroid Dread image for the Dread Samus import (desktop).
 inline constexpr int kDreadPick = 4;
+// Not a picker: OpenRemasteredPick's descriptor slot for the Remastered key file the Dread import
+// opens again, so the Remastered panel's own descriptor stays open (Android).
+inline constexpr int kDreadKeysSlot = 5;
 extern std::string sDreadPick;
 std::string RemasteredPickFile(int which);
 void TakeRemasteredPickFiles();
