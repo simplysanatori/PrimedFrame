@@ -588,6 +588,21 @@ static float OrbitZoneIdealNdcY(CPlayer::EPlayerZoneInfo zone) {
          1.f;
 }
 
+#ifdef TARGET_PC
+// Port: pointer aim in the Scan Visor picks scan points through the pointer, as Trilogy does: the
+// scan window follows the pointer (CPlayerVisor::DrawScanEffect), the scan zone moves with it and
+// candidates rank by their distance from it. The pointer
+// is in [-1, 1] of the half view, +y down; returns it in [-1, 1] screen space, +y up. A lock
+// re-centres the pointer, so a held scan lock is unaffected.
+static bool PortScanPointerNdc(CPlayer::EPlayerZoneInfo zone, float& x, float& y) {
+  if (zone != CPlayer::kZI_Scan || !PortDebug::PointerAimPosition(x, y)) {
+    return false;
+  }
+  y = -y;
+  return true;
+}
+#endif
+
 bool CPlayer::WithinOrbitScreenEllipse(const CVector3f& screenCoords, EPlayerZoneInfo zone) const {
   if (screenCoords.GetZ() >= 1.f) {
     return false;
@@ -614,8 +629,26 @@ bool CPlayer::WithinOrbitScreenBox(const CVector3f& screenCoords, EPlayerZoneInf
   case kZT_Box: {
     const float sx = OrbitZoneScaleX();
     const float sy = OrbitZoneScaleY();
+#ifdef TARGET_PC
+    float cx = CCast::LtoF(gpTweakPlayer->GetOrbitZoneCentreX(zone)) * sx;
+    float cy = CCast::LtoF(gpTweakPlayer->GetOrbitZoneCentreY(zone)) * sy;
+    float pointerX = 0.f;
+    float pointerY = 0.f;
+    if (PortScanPointerNdc(zone, pointerX, pointerY)) {
+      // The zone moves with the pointer, but only what is on screen can be picked.
+      const float width = CCast::LtoF(CGraphics::GetViewportWidth());
+      const float height = CCast::LtoF(CGraphics::GetViewportHeight());
+      if (screenCoords.GetX() < 0.f || screenCoords.GetX() > width || screenCoords.GetY() < 0.f ||
+          screenCoords.GetY() > height) {
+        return false;
+      }
+      cx += pointerX * width / 2.f;
+      cy += pointerY * height / 2.f;
+    }
+#else
     const float cx = CCast::LtoF(gpTweakPlayer->GetOrbitZoneCentreX(zone)) * sx;
     const float cy = CCast::LtoF(gpTweakPlayer->GetOrbitZoneCentreY(zone)) * sy;
+#endif
     if (CMath::AbsF(screenCoords.GetX() - cx) <=
             CCast::LtoF(gpTweakPlayer->GetOrbitZoneWidth(zone)) * sx &&
         CMath::AbsF(screenCoords.GetY() - cy) <=
@@ -684,8 +717,19 @@ TUniqueId CPlayer::FindBestOrbitableObject(const rstl::vector< TUniqueId >& ids,
   float minDistance = 10000.f;
   float minScreenDistanceSq = 10000.f;
   TUniqueId bestId = kInvalidUniqueId;
+#ifdef TARGET_PC
+  float boxLeft = OrbitZoneIdealNdcX(zone);
+  float boxTop = OrbitZoneIdealNdcY(zone);
+  float pointerX = 0.f;
+  float pointerY = 0.f;
+  if (PortScanPointerNdc(zone, pointerX, pointerY)) {
+    boxLeft += pointerX;
+    boxTop += pointerY;
+  }
+#else
   const float boxLeft = OrbitZoneIdealNdcX(zone);
   const float boxTop = OrbitZoneIdealNdcY(zone);
+#endif
   const CFirstPersonCamera* const fpCamera = mgr.GetCameraManager()->GetFirstPersonCamera();
   for (AUTO(it, ids.begin()); it != ids.end(); ++it) {
     const CActor* const act = TCastToConstPtr< CActor >(mgr.GetObjectById(*it));

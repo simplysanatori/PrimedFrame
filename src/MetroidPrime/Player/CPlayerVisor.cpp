@@ -393,6 +393,14 @@ float CPlayerVisor::ScanWindowCopySize(const CStateManager& mgr, int vpWidth, in
 }
 
 #ifdef TARGET_PC
+// Port: with pointer aim, the scan window is the pointer's cursor. It follows the presented
+// pointer (half-view units, +y down) and magnifies the screen around it; the scan zone moves
+// with it (CPlayerOrbit.cpp). Locked, the pointer is held at the centre and so is the window.
+static bool PortScanWindowPointer(float& x, float& y) {
+  return PortDebug::PresentedPointerAimPosition(CCameraManager::GetPresentationInterpolation(), x,
+                                                y);
+}
+
 // The zoomed copy (sharp scan window), keyed apart from the spare buffer; valid for the frame
 // that made it, until DrawScanEffect takes it.
 static u8 sPortScanZoomCopy[32];
@@ -403,7 +411,10 @@ static int sPortScanZoomHeight = 0;
 bool CPlayerVisor::PortScanZoom(const CStateManager& mgr, float& zoom, int& width,
                                 int& height) const {
   sPortScanZoomCopied = false;
-  if (!PortDebug::SharpScanWindow() ||
+  float pointerX, pointerY;
+  // The zoomed pass zooms about the view's centre, so a window following the pointer takes
+  // the screen copy instead.
+  if (!PortDebug::SharpScanWindow() || PortScanWindowPointer(pointerX, pointerY) ||
       mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Scan ||
       mgr.GetPlayerState()->GetVisorTransitionFactor() <= 0.f ||
       x108_newScanPane.GetObject() == nullptr) {
@@ -471,11 +482,29 @@ void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
   const float fit = ScanWindowFit(vpWidth, vpHeight);
   void* buffer = CGraphics::GetDolphinSpareBuffer();
 #ifdef TARGET_PC
+  float pointerX = 0.f;
+  float pointerY = 0.f;
+  const bool portPointer = PortScanWindowPointer(pointerX, pointerY);
+  // The window's centre in pixels from the view's centre (+y down).
+  const float portShiftX = pointerX * 0.5f * static_cast< float >(vpWidth);
+  const float portShiftY = pointerY * 0.5f * static_cast< float >(vpHeight);
   if (sPortScanZoomCopied) {
     sPortScanZoomCopied = false;
     buffer = sPortScanZoomCopy;
     width = sPortScanZoomWidth;
     height = sPortScanZoomHeight;
+  } else if (portPointer) {
+    // The copy is centred on the window, kept inside the view.
+    const int srcLeft = CMath::Clamp(
+        vpLeft, (vpLeft + (vpWidth - width) / 2 + static_cast< int >(portShiftX)) & ~1,
+        vpLeft + vpWidth - width);
+    const int srcTop = CMath::Clamp(
+        vpTop, (vpTop + (vpHeight - height) / 2 + static_cast< int >(portShiftY)) & ~1,
+        vpTop + vpHeight - height);
+    GXSetTexCopySrc(srcLeft, srcTop, width, height);
+    GXSetTexCopyDst(width, height, GX_TF_RGB565, GX_FALSE);
+    GXCopyTex(buffer, GX_FALSE);
+    GXPixModeSync();
   } else
 #endif
   {
@@ -487,6 +516,11 @@ void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
   }
   x64_scanDim.Draw();
   gpRender->SetViewportOrtho(true, -1.f, 1.f);
+#ifdef TARGET_PC
+  // Moving the view the other way draws the window and its frame around the pointer.
+  if (portPointer)
+    CGraphics::SetViewPointMatrix(CTransform4f::Translate(-portShiftX, 0.f, portShiftY));
+#endif
   const CTransform4f windowScale =
       CTransform4f::Scale(x48_interpWindowDims.GetX(), 1.f, x48_interpWindowDims.GetY());
   const CTransform4f seventeenScale = CTransform4f::Scale(17.f * fit, 1.f, 17.f * fit);
@@ -572,6 +606,10 @@ void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
     gpRender->SetModelMatrix(verticalFlip * horizontalFlip * modelXf);
     model->Draw(flags);
   }
+#ifdef TARGET_PC
+  if (portPointer)
+    CGraphics::SetViewPointMatrix(CTransform4f::Identity());
+#endif
   CGraphics::SetCullMode(kCM_Front);
 }
 
