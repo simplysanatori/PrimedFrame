@@ -1,6 +1,9 @@
 // The third-person camera's animated body; see port_third_person_body.h.
 #include "port_third_person_body.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "port_dread_samus_mod.h"
 #include "port_third_person.h"
 
@@ -51,6 +54,7 @@ struct State {
   std::unique_ptr<CModelData> body;
   int idx[6] = {-1, -1, -1, -1, -1, -1}; // by Clip
   Clip current = Clip::Hold;
+  float phase = 0.f; // Backward: where the walk clip is, 0..1, run in reverse by hand
   bool animating = false;
   // The cannon.
   int beam = -1;
@@ -206,7 +210,17 @@ void Update(CStateManager& mgr, float dt) {
     data->SetAnimation(CAnimPlaybackParms(s.idx[int(c.clip)], -1, 1.f, true), false);
     s.current = c.clip;
   }
-  data->SetPlaybackRate(c.rate);
+  if (c.clip == Clip::Backward) {
+    // The animation tree only advances (a negative rate would stall it), so step the clip's phase
+    // backward and let a zero-length advance rebuild the pose.
+    const float duration = std::max(data->GetAnimationDuration(s.idx[int(c.clip)]), 0.1f);
+    s.phase -= dt * c.rate / duration;
+    s.phase -= std::floor(s.phase);
+    data->SetPhase(s.phase);
+    data->SetPlaybackRate(0.f);
+  } else {
+    data->SetPlaybackRate(c.rate);
+  }
   s.body->AdvanceAnimation(dt, mgr, player.GetCurrentAreaId(), true);
 }
 

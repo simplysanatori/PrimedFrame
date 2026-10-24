@@ -28,7 +28,7 @@ inline constexpr float kRunSpeed = 7.f;
 
 // Which clip fits the movement. An airborne body, or one moving more sideways than along its
 // facing (strafing: there is no strafe clip), holds the ready pose. Walking backward plays the
-// walk clip (a negative rate is not supported by the animation tree, see Backward in the .cpp).
+// walk clip run in reverse (the animation tree only advances, so the .cpp steps its phase backward).
 inline Choice ChooseClip(float fwd, float side, bool grounded) {
   Choice c;
   const float speed = std::sqrt(fwd * fwd + side * side);

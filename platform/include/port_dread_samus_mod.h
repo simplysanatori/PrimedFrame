@@ -50,4 +50,20 @@ inline uint32_t CutsceneBody(int charIdx) {
 // serves that id (PortMods). Its skinned cannon replaces Prime's separate one, which is then not drawn.
 bool Replaces(uint32_t bodyCmdl);
 
+// The skin the mod ships for a cutscene body CMDL it serves (CINF 19C53902), 0 for any other. A
+// Remastered install replaces the Samus ANCS and with it the skin ids, so a character's own skin id
+// may be Remastered's, whose weights belong to Remastered's mesh, not the Dread one.
+inline uint32_t CutsceneSkin(uint32_t bodyCmdl) {
+  switch (bodyCmdl) {
+  case 0xF39476F2:
+    return 0x98BBD924;
+  case 0x776C1A96:
+    return 0x1C43B540;
+  case 0x57F5C930:
+    return 0x3CDA66E6;
+  default:
+    return 0;
+  }
+}
+
 }  // namespace PortDreadSamus
