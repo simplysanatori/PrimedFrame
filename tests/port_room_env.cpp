@@ -1143,6 +1143,19 @@ void TestWorldVolumes() {
   CHECK_MSG(PortRoomEnv::Parse(std::vector<uint8_t>(v23), file, error) && file.worldShift[0] == 1.5f &&
                 file.worldShift[1] == -2.f && file.worldShift[2] == 30.f && file.worldVolumes.size() == 2,
             "shift: version 23 read back");
+  // Version 26 adds the EnvironmentFX colour intensity after the shift; before it, 1.
+  CHECK_MSG(file.envFxIntensity == 1.f, "envfx: version 23 has the default intensity");
+  std::vector<uint8_t> v26 = v23;
+  v26[4] = 26;
+  CHECK_MSG(!PortRoomEnv::Parse(std::vector<uint8_t>(v26), file, error), "envfx: cut short");
+  PutFloat(v26, 5.f);
+  CHECK_MSG(PortRoomEnv::Parse(std::vector<uint8_t>(v26), file, error) && file.envFxIntensity == 5.f &&
+                file.worldShift[2] == 30.f,
+            "envfx: version 26 read back");
+  v26.resize(v26.size() - 4);
+  PutFloat(v26, std::numeric_limits<float>::infinity());
+  CHECK_MSG(PortRoomEnv::Parse(std::vector<uint8_t>(v26), file, error) && file.envFxIntensity == 1.f,
+            "envfx: a bad intensity is the default");
   const float inB[3] = {10.f, 1.5f, 0.f}, outB[3] = {11.5f, 0.f, 0.f};
   CHECK_MSG(PortRoomEnv::InsideWorldVolume(b, inB) && !PortRoomEnv::InsideWorldVolume(b, outB), "volumes: turned box");
 

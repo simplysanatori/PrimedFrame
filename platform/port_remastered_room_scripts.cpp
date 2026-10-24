@@ -350,6 +350,130 @@ std::vector<int> ReadEntityLinks(const Room& room, size_t i) {
   return out;
 }
 
+float EnvFxIntensity(const Room& room, std::vector<std::string>& notes) {
+  const std::vector<Component>& comps = room.Components();
+  const std::vector<Connection> conns = ReadConnections(room);
+  const auto entityOf = [&](const Id16& guid) {
+    const int t = room.ByGuid(guid);
+    return t < 0 ? -1 : comps[size_t(t)].type == kEntity ? t : comps[size_t(t)].entity;
+  };
+  const auto typeOn = [&](int entity, uint32_t type) {
+    std::vector<size_t> out;
+    for (size_t i = 0; i < comps.size(); ++i) {
+      if (comps[i].type == type && entity >= 0 && comps[i].entity == entity) {
+        out.push_back(i);
+      }
+    }
+    return out;
+  };
+  const auto intensityOf = [&](size_t goc, float& value) {
+    const auto f = room.Flat(comps[goc]);
+    const auto it = f.find(kPropEnvFxIntensity);
+    value = it != f.end() && it->second.size >= 4 ? ReadLEFloat(room.Bytes(it->second)) : 1.f;
+    return std::isfinite(value);
+  };
+  constexpr int kMaxDepth = 6;
+  // Forward from every RelayAutoFire: a Relay fire passes through a Relay; the apply action
+  // lands on the density controllers of the target's entity.
+  std::set<size_t> fired;
+  std::function<void(size_t, int, std::vector<size_t>&)> forward = [&](size_t from, int depth,
+                                                                         std::vector<size_t>& path) {
+    for (const Connection& c : conns) {
+      if (c.sender != from) {
+        continue;
+      }
+      const int target = entityOf(c.target);
+      if (c.action == kActionEnvFxApply) {
+        for (const size_t g : typeOn(target, kEnvFxDensityController)) {
+          fired.insert(g);
+        }
+      } else if (c.action == kActionRelayFire && depth < kMaxDepth) {
+        for (const size_t relay : typeOn(target, kRelay)) {
+          if (std::find(path.begin(), path.end(), relay) == path.end()) {
+            path.push_back(relay);
+            forward(relay, depth + 1, path);
+            path.pop_back();
+          }
+        }
+      }
+    }
+  };
+  for (size_t i = 0; i < comps.size(); ++i) {
+    if (comps[i].type == kRelayAutoFire) {
+      std::vector<size_t> path{i};
+      forward(i, 0, path);
+    }
+  }
+  // What else feeds a controller nothing fires at load: the types that send the apply action,
+  // through Relays.
+  std::function<void(size_t, int, std::set<size_t>&, std::set<uint32_t>&)> backward =
+      [&](size_t to, int depth, std::set<size_t>& seen, std::set<uint32_t>& senders) {
+        const int entity = comps[to].type == kEntity ? int(to) : comps[to].entity;
+        for (const Connection& c : conns) {
+          if (entityOf(c.target) != entity || entity < 0 || (depth == 0 ? c.action != kActionEnvFxApply : c.action != kActionRelayFire)) {
+            continue;
+          }
+          if (comps[c.sender].type == kRelay && depth < kMaxDepth) {
+            if (seen.insert(c.sender).second) {
+              backward(c.sender, depth + 1, seen, senders);
+            }
+          } else if (comps[c.sender].type != kRelay) {
+            senders.insert(comps[c.sender].type);
+          }
+        }
+      };
+  float result = 1.f;
+  bool have = false;
+  for (const Component& goc : comps) {
+    if (goc.type != kEnvFxDensityController) {
+      continue;
+    }
+    const size_t g = size_t(&goc - comps.data());
+    float value = 1.f;
+    if (!intensityOf(g, value)) {
+      notes.push_back("density controller #" + std::to_string(g) + " has a bad intensity, skipped");
+      continue;
+    }
+    char text[160];
+    if (fired.count(g) != 0) {
+      if (have && value != result) {
+        std::snprintf(text, sizeof text, "density controller #%zu (intensity %g) fires at load after another (%g); it wins", g,
+                      value, result);
+        notes.push_back(text);
+      }
+      result = value;  // the last in component order wins
+      have = true;
+      continue;
+    }
+    if (!room.Flat(goc).count(kPropEnvFxIntensity)) {
+      continue;  // the other density controllers carry no intensity (the default, 1)
+    }
+    std::set<size_t> seen;
+    std::set<uint32_t> senders;
+    backward(g, 0, seen, senders);
+    std::string by;
+    for (const uint32_t t : senders) {
+      std::snprintf(text, sizeof text, "%s%08X", by.empty() ? "" : ", ", t);
+      by += text;
+    }
+    // Other actions sent straight to it (the shipped triggers' toggles are not the apply action).
+    std::set<std::string> others;
+    for (const Connection& c : conns) {
+      if (entityOf(c.target) == goc.entity && goc.entity >= 0 && c.action != kActionEnvFxApply) {
+        std::snprintf(text, sizeof text, "%08X sends %08X", comps[c.sender].type, c.action);
+        others.insert(text);
+      }
+    }
+    for (const std::string& o : others) {
+      by += (by.empty() ? "" : "; ") + o;
+    }
+    std::snprintf(text, sizeof text, "density controller #%zu (intensity %g) skipped: ", g, value);
+    notes.push_back(text + (by.empty() ? std::string("nothing fires it")
+                                       : "not fired at load by the apply action; reached by type " + by));
+  }
+  return result;
+}
+
 double MaxAbs(const Vec3& a, const Vec3& b) {
   return std::max({std::fabs(a[0] - b[0]), std::fabs(a[1] - b[1]), std::fabs(a[2] - b[2])});
 }

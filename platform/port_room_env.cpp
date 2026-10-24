@@ -890,6 +890,11 @@ bool Bloom(float& threshold, float tints[5][3]) {
   return true;
 }
 
+float EnvFxIntensity() {
+  const auto view = sAreas.find(sViewArea);
+  return view == sAreas.end() ? 1.f : view->second.file.envFxIntensity;
+}
+
 bool ColorGradeEnabled() {
   if (sGrade < 0) {
     sGrade = port::EnvFlag("MP_COLOR_GRADE", true) ? 1 : 0;

@@ -18,7 +18,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 22), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 26), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -149,6 +149,10 @@
 //         every room of a world has the same). The fog's noise is looked up in Remastered's world.
 // Version 24 adds to each sun: u8 casts, u8 pad[3] (after the group): LightFlags a103d675, the cast bit
 //   that makes Remastered build a shadow map for the light (none of the shipped lights has it set).
+// Version 26 adds, at the end, f32 envFxIntensity: the colour intensity the area gives its
+//   EnvironmentFX rain, snow and underwater flakes (CEnvFxManagerMP1::SetColorIntensity), from the
+//   CEnvFxDensityControllerMP1 a RelayAutoFire reaches when the area loads (1 when none does; a
+//   controller only a trigger fires is left out). Older files have 1.
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -486,6 +490,7 @@ struct File {
   std::vector<FluidHint> fluidHints; // version 20
   std::vector<WorldVolume> worldVolumes; // version 22
   float worldShift[3] = {};              // version 23
+  float envFxIntensity = 1.f;            // version 26: EnvironmentFX colour intensity
   float contrast = 0.f;
   float bloomThreshold = 0.9f;
   std::vector<float> bloomTints; // RGBA; empty: the room has no bloom
@@ -903,6 +908,9 @@ void SetColorGradeEnabled(bool on);
 bool ColorGradeEnabled();
 // The area the camera is in: its exposure and tone curve are the frame's.
 void SetViewArea(uint32_t mrea);
+// The EnvironmentFX colour intensity of the area the camera is in (File::envFxIntensity), 1 when
+// the area has no room environment.
+float EnvFxIntensity();
 // Once a frame, after SetViewArea: moves the frame's exposure and tone curve on
 // (CPostFXManager::UpdateTonemapping). The tonemap moves linearly to the camera room's
 // over a second; with an auto exposure hint the exposure is the tonemap's EV until the

@@ -454,6 +454,64 @@ void TestRoomEffects() {
   CHECK(WriteRoomEffects("room", p.room, area.mrea, area, scripts, io).empty() && written.empty());
 }
 
+Fixture::Comp Density(float intensity) {
+  Fixture::Comp c = Plain(kEnvFxDensityController);
+  Bytes v;
+  PutFloat(v, intensity);
+  c.props = Props().Add(kPropEnvFxIntensity, v).b;
+  return c;
+}
+
+// The density controller a RelayAutoFire reaches through Relays sets the intensity; one only a
+// trigger fires, or nothing, does not.
+void TestEnvFxIntensity() {
+  Fixture f;
+  // 0 controller 3.0 (a Relay's trigger fires it), 1 controller 5.0 (autofire 3 -> relay 2 -> 1),
+  // 2 Relay, 3 RelayAutoFire, 4 a TriggerMP1 -> relay 5 -> controller 0, 5 Relay, 6 inert
+  // controller 7.0.
+  f.comps = {Density(3.f),
+             Density(5.f),
+             Plain(kRelay, {{1, kEventRelayFired, kActionEnvFxApply}}),
+             Plain(kRelayAutoFire, {{2, 0x9a06ae6f, kActionRelayFire}}),
+             Plain(kTriggerMP1, {{5, kEventEntered, kActionRelayFire}}),
+             Plain(kRelay, {{0, kEventRelayFired, kActionEnvFxApply}}),
+             Density(7.f)};
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 5.f, "envfx: the autofire chain's controller");
+    REQUIRE(notes.size() == 2);
+    CHECK_MSG(notes[0].find("#0") != std::string::npos && notes[0].find("not fired at load") != std::string::npos &&
+                  notes[0].find("F526FC2A") != std::string::npos,
+              notes[0].c_str());
+    CHECK_MSG(notes[1].find("#6") != std::string::npos && notes[1].find("nothing fires it") != std::string::npos,
+              notes[1].c_str());
+  }
+  // A wrong action on the first hop breaks the chain: nothing fires at load.
+  f.comps[3].links[0].action = kActionCounterIncrement;
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 1.f && notes.size() == 3, "envfx: no chain, intensity 1");
+  }
+  // Two Relays deep.
+  f.comps[3].links[0].action = kActionRelayFire;
+  f.comps.push_back(Plain(kRelay, {{2, kEventRelayFired, kActionRelayFire}}));
+  f.comps[3].links[0].target = 7;
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 5.f, "envfx: two relays deep");
+  }
+  // A cycle of relays ends.
+  f.comps[2].links.push_back({7, kEventRelayFired, kActionRelayFire});
+  {
+    const Parsed p(f);
+    std::vector<std::string> notes;
+    CHECK_MSG(EnvFxIntensity(p.room, notes) == 5.f, "envfx: relay cycle");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -461,6 +519,7 @@ int main() {
   TestMasterTrigger();
   TestMasterCameraWater();
   TestRoomEffects();
+  TestEnvFxIntensity();
   if (port_test::Failures() == 0) {
     std::printf("port_remastered_room_scripts_tests: ok\n");
   }

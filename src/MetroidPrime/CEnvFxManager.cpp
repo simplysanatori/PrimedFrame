@@ -956,10 +956,13 @@ bool CEnvFxManager::PortRenderEnvFx(const CStateManager& mgr, EEnvFxType type, c
   edge1 = invXf.Rotate(edge1);
   edge2 = invXf.Rotate(edge2);
   desc.params[0][0] = CMath::Clamp(0.f, alpha, 1.f);
-  // The rgb gain: the effect's colour intensity (CEnvFxManagerMP1 +0x04, default 1; retail has
-  // none) x Remastered's inverse exposure, which cancels its tonemap's exposure. The port's HDR
-  // scene is already exposed, so the cancelled pair is written as 1 (aurora/envfx.cpp).
-  desc.params[0][1] = 1.f;
+  // The rgb gain: the effect's colour intensity (CEnvFxManagerMP1 +0x04: 1 until a room's
+  // CEnvFxDensityControllerMP1 applies its own, which the importer reads into the area's room
+  // environment; retail has none) x Remastered's inverse exposure, which cancels its tonemap's
+  // exposure. The port's HDR scene is already exposed, so the cancelled pair is the intensity alone
+  // (aurora/envfx.cpp). The area is the one the camera is in (as the room environment's other
+  // per-area values).
+  desc.params[0][1] = PortRoomEnv::EnvFxIntensity();
   desc.params[1][0] = edge1.GetX();
   desc.params[1][1] = edge1.GetY();
   desc.params[1][2] = edge1.GetZ();
