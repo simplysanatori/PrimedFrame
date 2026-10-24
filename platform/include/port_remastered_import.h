@@ -80,7 +80,13 @@ namespace ImportStage {
 // 58: the beam glow (kind 9) is drawn as kind 9 without vertex colours too (no ramp mean).
 // 59: a retail TEV material's diffuse slot takes the Remastered base map as authored (no AO,
 //     cavity or sheen baked into it).
-inline constexpr int kConverter = 59;
+// 60: the materials report has the mesh class, the blend written and the texcoord slots.
+// 61: a retail model's materials get a texcoord slot for every Remastered set (no fold onto 0).
+// 62: a retail model's PBR material blends as its mesh class does, not as its retail material.
+// 63: a retail model's materials read vertex colour as a room's do (tinted, or a vertex-colour kind).
+// 64: ... and its alpha, unlit, mask and height as a room's, sorted and depth-written by its class.
+// 65: ... and its kind, macro and second layer as a room's (no kind dropped).
+inline constexpr int kConverter = 65;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.

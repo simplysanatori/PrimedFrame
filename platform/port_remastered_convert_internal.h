@@ -294,6 +294,18 @@ inline bool GunFxParticle(const RetailMaterial& m) { return m.blendSrc == 4 && m
 
 inline bool IsFx(const RetailMaterial& m) { return !(m.blendSrc == 1 && m.blendDst == 0); }
 
+// The (source, destination) factors Remastered draws a mesh class with: opaque and cutout
+// GX_BL_ONE / GX_BL_ZERO, blended GX_BL_SRCALPHA / GX_BL_INVSRCALPHA, additive GX_BL_SRCALPHA
+// / GX_BL_ONE. False for a material no mesh uses.
+inline bool ClassBlend(int cls, uint32_t& src, uint32_t& dst) {
+  if (cls < 0 || cls > 3) {
+    return false;
+  }
+  src = cls == 1 || cls == 3 ? 4 : 1;
+  dst = cls == 1 ? 5 : cls == 3 ? 1 : 0;
+  return true;
+}
+
 enum class Role { EnvMap, Lightmap, Reflect, Emissive, Diffuse, Keep };
 
 const char* RoleName(Role r);
@@ -387,7 +399,8 @@ struct RemMaterial {
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
-  bool opaqueFx = false;   // a retail fx material Remastered draws opaque (mesh class 0)
+  int blendClass = -1;     // its meshes' class (ModelMesh::bits2): 0 opaque, 1 blended, 2 cutout, 3 additive; -1 none
+  bool classBlend = false; // a retail model's: it blends as its class does, not as the retail material it took
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
   bool wind = false;       // procedural wind sway (mode bit 32768): the model's SWindSet rides in shieldRows[0..8]
@@ -541,6 +554,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt);
 
 bool BackLightScale(const RemMaterial& m);
 int PbrMode(const RemMaterial& m);
+// The blend factors PbrMaterial writes for rem over pm.
+void PbrBlend(const RemMaterial& rem, const RetailMaterial& pm, uint32_t& src, uint32_t& dst);
 Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx, uint32_t group,
                  const uint32_t* coords, const RemMaterial& rem, uint32_t wrap, uint32_t cube,
                  const uint32_t* authored, const AnuvEntry* anim, AnuvCounts& counts);
