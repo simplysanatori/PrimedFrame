@@ -128,9 +128,15 @@ constexpr uint32_t kShaderEyeGloss = 0x974CA6DD;
 constexpr uint32_t kShaderEyeGloss2 = 0x7CF91C66;
 // f16bfffc (Thermal/X-ray VisorGlow) is the same matcap lighting plus an ICAN term (kb material/f16bfffc.md).
 constexpr uint32_t kShaderEyeGloss3 = 0xF16BFFFC;
+// 8c7a939f (the spider ball's glass without ICAN, kb material/8c7a939f.md) is dda64c97's maths exactly: ambient + lights,
+// REFV x REFS(N'.xy) x lum(L), the 1/pi diffuse of BCLR x DIFC weighted by METL, unmasked GGX, ICNC + ICMC, alpha
+// BCLR.a^2 x DIFC.a. Its light scale c4[5] is unverified and taken as 1, as dda64c97's.
+constexpr uint32_t kShaderEyeGloss4 = 0x8C7A939F;
 constexpr bool IsEyeGloss(uint32_t shader) {
-  return shader == kShaderEyeGloss || shader == kShaderEyeGloss2 || shader == kShaderEyeGloss3;
+  return shader == kShaderEyeGloss || shader == kShaderEyeGloss2 || shader == kShaderEyeGloss3 || shader == kShaderEyeGloss4;
 }
+// 1fbafbca (the Varia spider ball's glass, kb material/1fbafbca.md): 8c7a939f plus ICAN x ICNC. Kind 42.
+constexpr uint32_t kShaderBallGlass = 0x1FBAFBCA;
 // 5854e91b, the unlit Surface with a reflection cube, and bda080c0, the same with a normal map: kind 38
 // (kb material/5854e91b.md, bda080c0.md).
 constexpr uint32_t kShaderUnlitCube = 0x5854E91B;
@@ -283,6 +289,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderLambertFx, "lambert-fx");
   add(shader == kShaderGunFx, "gun-fx");
   add(IsEyeGloss(shader), "eye-gloss");
+  add(shader == kShaderBallGlass, "ball-glass");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
@@ -343,6 +350,7 @@ const char* KindName(int kind) {
   case 39: return "unlit-vertex";
   case 40: return "unlit-matcap";
   case 41: return "unlit-add";
+  case 42: return "ball-glass";
   default: return "kind?";
   }
 }
@@ -506,7 +514,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     case FourCC('R', 'E', 'F', 'V'):
       // 98F0556D's sphere map and reflectivity map: the second layer's base and MR (kind 19). 664ee5ca's (kind 40)
       // the same; which of its two textures is REFS is inferred from the matcap coordinate (kb), not verified.
-      if (texture && (shader == kShaderGunFx || IsEyeGloss(shader) || shader == kShaderUnlitMatcap)) {
+      if (texture && (shader == kShaderGunFx || IsEyeGloss(shader) || shader == kShaderBallGlass || shader == kShaderUnlitMatcap)) {
         const bool sphere = d.usage == FourCC('R', 'E', 'F', 'S');
         MapRef& m = sphere ? out.layer[kBase] : out.layer[kMr];
         set(sphere ? kBase : kMr, d.texture, &m);
@@ -1217,10 +1225,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     }
   }
   const bool eyeGloss = IsEyeGloss(shader);
-  if ((shader == kShaderGunFx || eyeGloss) && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
-    out.kind = eyeGloss ? 25 : 19;
+  const bool ballGlass = shader == kShaderBallGlass;
+  if ((shader == kShaderGunFx || eyeGloss || ballGlass) && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
+    out.kind = ballGlass ? 42 : eyeGloss ? 25 : 19;
     // Lit: REFV (map 5) x REFS (map 4, read at the view-space normal) x luminance(L) + DIFT x DIFC x L
     // + ICNC + ICMC. Row 6 = ICNC + ICMC, row 7 = DIFC; Remastered's mesh has no colour stream.
+    // Kind 42 adds ICAN (map 3) x ICNC: row 5 = ICNC, row 6 = ICMC alone.
     out.layer[kMr].coord = out.layer[kBase].coord = 0;
     out.tint[0] = out.tint[1] = out.tint[2] = 1.0;
     double difc[4] = {1.0, 1.0, 1.0, 1.0};
@@ -1232,6 +1242,10 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       if (d.usage == FourCC('D', 'I', 'F', 'C')) {
         for (int i = 0; i < 4; ++i) {
           difc[i] = ShortestDouble(d.color[i]);
+        }
+      } else if (d.usage == FourCC('I', 'C', 'N', 'C') && ballGlass) {
+        for (int i = 0; i < 3; ++i) {
+          out.shieldRows[20 + i] = ShortestDouble(d.color[i]);
         }
       } else if (d.usage == FourCC('I', 'C', 'M', 'C') || d.usage == FourCC('I', 'C', 'N', 'C')) {
         for (int i = 0; i < 3; ++i) {
@@ -1477,14 +1491,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.maps[kEmissive].has = false;
     }
   }
-  if (out.kind == 25) {
+  if (out.kind == 25 || out.kind == 42) {
     // As kind 19, but the normal map, MR and the light's spec stay: only the reflection is the matcap.
+    // Kind 42 keeps ICAN (map 3), which its shader scales by ICNC.
     out.layered = true;
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
     out.emissive = 0.0;
     out.backlight = out.backlightTop = 0.0;
-    out.maps[kEmissive].has = false;
+    out.maps[kEmissive].has = out.maps[kEmissive].has && out.kind == 42;
   }
   if (out.kind == 19) {
     // Lit and opaque (Remastered's mesh class 0; a fade is the model flags'). Maps 4 and 5 are

@@ -2269,6 +2269,24 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                           base);
   }
+  // Kind 42, Remastered's 1fbafbca (the Varia spider ball's glass, permutation 002 assumed; kb material/1fbafbca.md):
+  // kind 25's lighting and matcap plus ICAN (map 3) x ICNC (row 5); row 6 = ICMC (w the retail konst alpha), row 7 = DIFC.
+  // No exposure in the shader; c4[5]'s light scale (unverified) taken as 1, as kind 25's.
+  if (config.pbrKind == 42 && mapStage[4] != -1 && mapStage[5] != -1) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 41.5 && pbr_kind < 42.5) {{
+        let pbr_gl = pbr_ambd + pbr_lnl;
+        let pbr_gs = max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0));
+        let pbr_gv = max(sampled{1}.rgb, vec3f(0.0));
+        pbr_lo = pbr_gv * pbr_gs * dot(pbr_gl, vec3f(0.2126, 0.7152, 0.0722)) +
+                 pbr_base * (1.0 - pbr_metal) * pbr_ao * pbr_gl * ubuf.pbr_shield[7].rgb * 0.31830988 + pbr_lspec;
+        pbr_glow = max({3}.rgb, vec3f(0.0)) * ubuf.pbr_shield[5].rgb + ubuf.pbr_shield[6].rgb;
+        pbr_alpha = clamp({2}.a * {2}.a * ubuf.pbr_shield[7].w * ubuf.pbr_shield[6].w, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""",
+                          underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base,
+                          mapStage[3] == -1 ? "vec4f(0.0)"s : sampled(3, "vec4f(0.0)"));
+  }
   // Kind 40, Remastered's 664ee5ca (the zoomer's blinn2, permutation 002 assumed; kb material/664ee5ca.md): kind 19's
   // matcap with no light and no exposure,
   //   rgb = DIFT x DIFC + REFS(0.5 + 0.5 n.xy) x REFV + ICNC + ICMC   alpha = DIFT.a^2 x DIFC.a
