@@ -254,6 +254,7 @@ set(MP_PORT_SOURCES
     platform/port_actor_shadow.cpp
     platform/port_freecam.cpp
     platform/port_third_person.cpp
+    platform/port_third_person_body.cpp
     platform/port_photo.cpp
     platform/port_console.cpp
     platform/port_log_file.cpp
@@ -1438,6 +1439,9 @@ if(MP_BUILD_TESTS)
     # Third-person camera: eye placement and wall pull-in maths (header-only, no game state).
     mp_port_test(port_third_person_tests
         SOURCES tests/port_third_person.cpp
+        INCLUDES platform/include)
+    mp_port_test(port_third_person_body_tests
+        SOURCES tests/port_third_person_body.cpp
         INCLUDES platform/include)
     # --- Dread Samus import (step 6: the dread-samus mod) ---
     # The converter's explicit-weights path, the synthetic Model of a re-skinned body, the retail

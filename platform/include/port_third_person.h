@@ -15,7 +15,7 @@ namespace PortThirdPerson {
 struct Params {
   float distance = 3.0f; // metres behind the eye
   float shoulder = 0.6f; // metres to the right
-  float height = 0.25f;  // metres above the first-person eye
+  float height = -0.6f;  // metres above the first-person eye (negative: Samus fits the frame)
 };
 constexpr float kDistanceMin = 0.5f, kDistanceMax = 10.f;
 constexpr float kShoulderMin = -2.f, kShoulderMax = 2.f;

@@ -2,6 +2,7 @@
 #include "port_third_person.h"
 
 #include "port_freecam.h"
+#include "port_third_person_body.h"
 #include "Collision/CMaterialFilter.hpp"
 #include "Collision/CRayCastResult.hpp"
 #include "Kyoto/Math/CTransform4f.hpp"
@@ -103,8 +104,10 @@ void Update(CStateManager& mgr, float dt) {
   const bool allowed = StateAllows(mgr);
   if (!allowed) {
     sActive = false;
+    PortThirdPersonBody::Release();
     return;
   }
+  PortThirdPersonBody::Update(mgr, dt);
   const CTransform4f xf = mgr.GetCameraManager()->GetFirstPersonCamera()->GetTransform();
   const Geometry g = Compute(xf);
   static const CMaterialFilter filter = CMaterialFilter::MakeIncludeExclude(

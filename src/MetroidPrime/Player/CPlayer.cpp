@@ -7,6 +7,7 @@
 #include "port_mouse.h"
 #include "port_freecam.h"
 #include "port_third_person.h"
+#include "port_third_person_body.h"
 
 #include "Collision/CInternalCollisionStructure.hpp"
 #include "Kyoto/CDependencyGroup.hpp"
@@ -2521,6 +2522,11 @@ void CPlayer::PreRender(CStateManager& mgr, const CFrustumPlanes& frustum) {
 #endif
   ) {
     CActor::PreRender(mgr, frustum);
+#ifdef TARGET_PC
+    if (PortThirdPerson::Active()) {
+      PortThirdPersonBody::PreRender();
+    }
+#endif
   }
 }
 
@@ -2571,6 +2577,19 @@ void CPlayer::Render(const CStateManager& mgr) const {
     bool doBallRender = false;
     switch (x2f8_morphBallState) {
     case kMS_Unmorphed:
+#ifdef TARGET_PC
+      // Third person: the cutscene body that walks, when its pak has it.
+      if (PortThirdPerson::Active()) {
+        // The cutscene body stands on the origin, the player's origin is the middle of its box.
+        CTransform4f bodyXf = GetTransform();
+        CVector3f origin = bodyXf.GetTranslation();
+        origin.SetZ(GetBoundingBox().GetMinPoint().GetZ());
+        bodyXf.SetTranslation(origin);
+        if (PortThirdPersonBody::Render(mgr, bodyXf, GetActorLights())) {
+          break;
+        }
+      }
+#endif
       GetModelData()->Touch(mgr, 0);
       CPhysicsActor::Render(mgr);
       if (HasTransitionBeamModel()) {
