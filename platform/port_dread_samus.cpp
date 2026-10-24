@@ -275,6 +275,14 @@ bool Import(const Io& io, Result& result, std::string& error) {
       return false;
     }
     result.files.push_back(name);
+    // A CMDL does not name itself, so the alias is the same bytes.
+    if (name == Hex8(kPhazonCutsceneBody) + ".CMDL") {
+      const std::string alias = Hex8(kPhazonCutsceneAlias) + ".CMDL";
+      if (!io.write(alias, data)) {
+        return false;
+      }
+      result.files.push_back(alias);
+    }
     return true;
   };
   cio.log = [&](const std::string& line) {

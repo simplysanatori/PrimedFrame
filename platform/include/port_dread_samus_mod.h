@@ -15,10 +15,11 @@ inline constexpr const char* kStampName = ".dread-samus-version";
 // 2: suit materials carry REFL (env specular on the metal plates).
 // 3: shoulder pads skinned to the chest, not voted from Prime's collar.
 // 4: Dread proportions: meshes keep their own bind, with Dread-proportioned CINFs (D7EAD001-006).
-inline constexpr int kVersion = 4;
+// 5: Phazon = Dread's Metroid Suit (samushyper), skeletons D7EAD007-008.
+inline constexpr int kVersion = 5;
 
-// The in-game body CMDL of a CPlayerState::EPlayerSuit (0 Power, 1 Gravity, 2 Varia; also
-// BallTransitionsANCS's character index), 0 for the suits the mod leaves alone (Phazon, Fusion).
+// The in-game body CMDL of a CPlayerState::EPlayerSuit (0 Power, 1 Gravity, 2 Varia, 3 Phazon;
+// also BallTransitionsANCS's character index), 0 for the suits the mod leaves alone (Fusion).
 inline uint32_t InGameBody(int suit) {
   switch (suit) {
   case 0:
@@ -27,12 +28,14 @@ inline uint32_t InGameBody(int suit) {
     return 0x57489AD3;
   case 2:
     return 0xE449874A;
+  case 3:
+    return 0x891E00FD;
   default:
     return 0;
   }
 }
 
-// The cutscene body CMDL of a cutscene ANCS character (0 Power, 1 Gravity, 2 Varia, as every
+// The cutscene body CMDL of a cutscene ANCS character (0 Power, 1 Gravity, 2 Varia, 3 Phazon, as every
 // cutscene ANCS and the elevator's order them), 0 for the others.
 inline uint32_t CutsceneBody(int charIdx) {
   switch (charIdx) {
@@ -42,6 +45,8 @@ inline uint32_t CutsceneBody(int charIdx) {
     return 0x57F5C930;
   case 2:
     return 0x776C1A96;
+  case 3:
+    return 0x2782648E;
   default:
     return 0;
   }
@@ -62,6 +67,9 @@ inline uint32_t CutsceneSkin(uint32_t bodyCmdl) {
     return 0x1C43B540;
   case 0x57F5C930:
     return 0x3CDA66E6;
+  case 0x2782648E:
+  case 0xB333E1D7: // the Phazon body of one Tallon ANCS (BAD39B59): the same skin, served as a copy
+    return 0x4CADCB58;
   default:
     return 0;
   }
@@ -69,7 +77,7 @@ inline uint32_t CutsceneSkin(uint32_t bodyCmdl) {
 
 // The Dread-proportioned skeleton the mod ships for a body CMDL it serves: the retail CINF's joints
 // with their heads moved to the Dread body's (one per suit and skeleton), 0 for any other. New ids,
-// as Phazon still uses the retail CINFs.
+// none of them on the disc.
 inline uint32_t DreadCinf(uint32_t bodyCmdl) {
   switch (bodyCmdl) {
   case 0x4A1A8FD3:
@@ -84,6 +92,11 @@ inline uint32_t DreadCinf(uint32_t bodyCmdl) {
     return 0xD7EAD005;
   case 0x776C1A96:
     return 0xD7EAD006;
+  case 0x2782648E:
+  case 0xB333E1D7:
+    return 0xD7EAD007;
+  case 0x891E00FD:
+    return 0xD7EAD008;
   default:
     return 0;
   }

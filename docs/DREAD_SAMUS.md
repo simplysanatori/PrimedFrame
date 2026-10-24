@@ -1,7 +1,7 @@
 # Metroid Dread Samus models
 
 **Experimental.** The port can build a model mod from your own copy of Metroid
-Dread that puts Samus's Power, Varia and Gravity Suit bodies in place of
+Dread that puts Samus's Power, Varia, Gravity and Phazon Suit bodies in place of
 Prime's: in cutscenes, and wherever else her body is drawn (the Morph Ball
 transitions). It reads the game's `.nsp` or gamecard dump (`.xci`) and your
 console's key file, the way the Remastered model import does. Nothing of either
@@ -9,8 +9,8 @@ game ships; the mod is made on your machine from your own copies.
 
 The result is an ordinary mod folder, `dread-samus`, so the Mods page switches
 it off and on like any other mod. Power, Varia and Gravity take their Dread
-namesake; the Phazon Suit keeps its model (Dread has none), and the Fusion Suit
-is not touched either. Only the bodies and their suit materials come from Dread:
+namesake, the Phazon Suit takes Dread's Metroid Suit (`samushyper`), and the
+Fusion Suit is not touched. Only the bodies and their suit materials come from Dread:
 Prime's own animations drive them, and no Dread animation, sound or effect is
 used.
 
@@ -77,7 +77,7 @@ Dread's bodies do not fit Prime's skeletons: pinning and stretching Dread's
 mesh onto Prime's bone lengths stretches the skin between the hips, chest and
 shoulders. So Dread keeps its own proportions. For each body the import writes
 a skeleton with Prime's CINF joint layout but Dread's bind offsets (its own ids,
-`D7EAD001`-`D7EAD006`, one per suit and per Prime skeleton), binds Dread's mesh
+`D7EAD001`-`D7EAD008`, one per suit and per Prime skeleton), binds Dread's mesh
 to it with Dread's own weights, and writes the CMDL/CSKR/TXTR under the retail
 body ids so the game's characters draw them with no code change of their own.
 At run time Prime's animations are retargeted onto it rotation-only
@@ -109,5 +109,7 @@ replaces the old mod.
   cutscenes and in the Morph Ball transition unless the third-person camera
   (Video > Display, `third_person`, off by default; see `docs/SETTINGS.md`) is
   on. That camera is experimental.
-- Only the Power, Varia and Gravity bodies: Phazon and Fusion keep their models,
-  and nothing else of Dread is imported.
+- Only the Power, Varia, Gravity and Phazon bodies: Fusion keeps its models,
+  and nothing else of Dread is imported. One Tallon cutscene draws Phazon with a
+  second body id (`B333E1D7`) on the same skin; the mod serves the Metroid Suit
+  under it too.

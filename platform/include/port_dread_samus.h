@@ -12,11 +12,11 @@
 #include <utility>
 #include <vector>
 
-// The "dread-samus" mod (step 6 of the Dread Samus plan): Samus's Power, Varia and Gravity bodies
+// The "dread-samus" mod (step 6 of the Dread Samus plan): Samus's Power, Varia, Gravity and Phazon bodies
 // from the user's own Metroid Dread RomFS, re-skinned onto Prime's two Samus skeletons
 // (port_dread_reskin.h), given the suit materials (port_dread_material.h) and written by
 // PortRemastered::Converter as CMDL/CSKR/TXTR under the retail body ids, so the game's own
-// characters draw them. Phazon (and the Fusion suits) keep their models.
+// characters draw them. Phazon is Dread's Metroid Suit (samushyper); the Fusion suits keep their models.
 //
 // Everything comes and goes through Io, so the same code runs in the game (the NSP and the open
 // disc, port_dread_samus_import.cpp) and in the tests (an extracted RomFS and dumped resources).
@@ -35,14 +35,22 @@ struct Target {
 
 // Cutscene bodies (every cutscene ANCS, e.g. 06B034E2: Power/Varia/Gravity on CINF 19C53902; Varia
 // is bound with 8C72FDAC in ANCS 863C1B6A too) and BallTransitionsANCS 836C33B3's characters
-// PowerSuit/VariaSuit/GravitySuit on CINF A496DA02.
+// PowerSuit/VariaSuit/GravitySuit/PhazonSuit on CINF A496DA02. Phazon is Dread's Metroid Suit.
+// Tallon's ANCS BAD39B59 draws its Phazon character with CMDL B333E1D7 on the same skin 4CADCB58,
+// so the mod serves the cine50 Phazon body under that id too: the retail mesh would not fit the
+// Dread skin.
+inline constexpr uint32_t kPhazonCutsceneBody = 0x2782648E;
+inline constexpr uint32_t kPhazonCutsceneAlias = 0xB333E1D7;
+
 inline constexpr Target kTargets[] = {
     {"samuspower", "cine50", 0x19C53902, 0xF39476F2, {0x98BBD924, 0}},
     {"samusvaria", "cine50", 0x19C53902, 0x776C1A96, {0x1C43B540, 0x8C72FDAC}},
     {"samusgravity", "cine50", 0x19C53902, 0x57F5C930, {0x3CDA66E6, 0}},
+    {"samushyper", "cine50", 0x19C53902, 0x2782648E, {0x4CADCB58, 0}},
     {"samuspower", "game20", 0xA496DA02, 0x4A1A8FD3, {0x21352005, 0}},
     {"samusvaria", "game20", 0xA496DA02, 0xE449874A, {0x8F66289C, 0}},
     {"samusgravity", "game20", 0xA496DA02, 0x57489AD3, {0x3C673505, 0}},
+    {"samushyper", "game20", 0xA496DA02, 0x891E00FD, {0xE231AF2B, 0}},
 };
 
 struct Io {

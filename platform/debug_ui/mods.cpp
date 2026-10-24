@@ -260,7 +260,7 @@ void DrawRemasteredImport() {
   }
 }
 
-// The Dread Samus import (port_dread_samus.h): Samus's Power, Varia and Gravity bodies from the
+// The Dread Samus import (port_dread_samus.h): Samus's Power, Varia, Gravity and Phazon bodies from the
 // player's own Metroid Dread into the dread-samus mod. Same progress, notes and mods reload as the
 // Remastered import, with which it shares one worker (only one runs at a time).
 void DrawDreadSamusImport() {
@@ -312,9 +312,9 @@ void DrawDreadSamusImport() {
   }
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   ImGui::TextWrapped(
-      "Puts Samus's Power, Varia and Gravity Suit bodies from your own Metroid Dread in place of Prime's, in "
+      "Puts Samus's Power, Varia, Gravity and Phazon Suit bodies from your own Metroid Dread in place of Prime's, in "
       "cutscenes and wherever her body is drawn. Needs the game's .nsp or .xci and your console's prod.keys. "
-      "The Phazon Suit keeps its look. It is the dread-samus mod: switch it off on the Mods page.");
+      "Phazon takes Dread's Metroid Suit. It is the dread-samus mod: switch it off on the Mods page.");
   const PortMods::Status& status = PortMods::CurrentStatus();
   const bool installed = std::any_of(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& m) {
     return m.name == PortDreadSamus::kModName;

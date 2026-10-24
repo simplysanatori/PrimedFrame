@@ -539,13 +539,13 @@ at scale 2 sits 0.30 m forward of the barrel, as on native's LBEAM.
 
 ### Metroid Dread Samus models
 
-The other model import: Samus's Power, Varia and Gravity Suit bodies from your
+The other model import: Samus's Power, Varia, Gravity and Phazon Suit bodies from your
 own Metroid Dread `.nsp`/`.xci` and `prod.keys`, in place of Prime's, in
 cutscenes, the Morph Ball transitions and the third-person camera. It is a mod
 of its own, `dread-samus`, so it switches off on the Mods page without touching
 the Remastered models, and it shares the `prod.keys` row and the import panel
-with the Remastered import (only one of the two runs at a time). Phazon and
-Fusion keep their models. It needs the base Dread release only. See
+with the Remastered import (only one of the two runs at a time). Phazon takes
+Dread's Metroid Suit; Fusion keeps its models. It needs the base Dread release only. See
 [`docs/DREAD_SAMUS.md`](DREAD_SAMUS.md) for the import and its limits.
 
 ### Collision stays on the disc's model

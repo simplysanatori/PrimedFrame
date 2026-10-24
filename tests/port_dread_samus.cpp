@@ -10,6 +10,7 @@
 // that every target's CMDL and CSKRs were written. Nothing of either game is committed.
 
 #include "port_dread_samus.h"
+#include "port_dread_samus_mod.h"
 #include "port_remastered_convert.h"
 #include "port_remastered_storage.h"
 #include "port_test.h"
@@ -375,6 +376,36 @@ void TestModOrder() {
   CHECK(PortRemasteredStorage::ModPrecedence(PortDreadSamus::kModName) == 1);
 }
 
+// Every target's body is known to the run-time tables (port_dread_samus_mod.h): a cutscene body
+// by its skin and character, an in-game body by its suit, each with its own new skeleton.
+void TestTables() {
+  CHECK(std::size(PortDreadSamus::kTargets) == 8);
+  CHECK(PortDreadSamus::InGameBody(3) == 0x891E00FD);
+  CHECK(PortDreadSamus::CutsceneBody(3) == 0x2782648E);
+  CHECK(PortDreadSamus::CutsceneSkin(0x2782648E) == 0x4CADCB58);
+  CHECK(PortDreadSamus::DreadCinf(0x2782648E) == 0xD7EAD007);
+  CHECK(PortDreadSamus::DreadCinf(0x891E00FD) == 0xD7EAD008);
+  std::set<uint32_t> cinfs;
+  for (const PortDreadSamus::Target& t : PortDreadSamus::kTargets) {
+    const uint32_t cinf = PortDreadSamus::DreadCinf(t.cmdl);
+    CHECK(cinf != 0 && cinf != t.cinf);
+    CHECK(cinfs.insert(cinf).second);
+    bool listed = false;
+    for (int i = 0; i < 4; ++i) {
+      listed |= (t.cinf == 0x19C53902 ? PortDreadSamus::CutsceneBody(i) : PortDreadSamus::InGameBody(i)) == t.cmdl;
+    }
+    CHECK_MSG(listed, std::string(t.suit) + " " + t.skeleton + " body is not in the suit table");
+    if (t.cinf == 0x19C53902) {
+      CHECK(PortDreadSamus::CutsceneSkin(t.cmdl) == t.cskr[0]);
+    }
+  }
+  CHECK(PortDreadSamus::CutsceneSkin(PortDreadSamus::kPhazonCutsceneAlias) ==
+        PortDreadSamus::CutsceneSkin(PortDreadSamus::kPhazonCutsceneBody));
+  CHECK(PortDreadSamus::DreadCinf(PortDreadSamus::kPhazonCutsceneAlias) ==
+        PortDreadSamus::DreadCinf(PortDreadSamus::kPhazonCutsceneBody));
+  CHECK(PortDreadSamus::InGameBody(4) == 0 && PortDreadSamus::CutsceneBody(4) == 0);
+}
+
 // ---- real data ----
 
 void TestRealData() {
@@ -443,6 +474,13 @@ void TestRealData() {
       }
     }
   }
+  {
+    std::vector<char> body, alias;
+    std::ifstream a(out / "2782648E.CMDL", std::ios::binary), b(out / "B333E1D7.CMDL", std::ios::binary);
+    body.assign(std::istreambuf_iterator<char>(a), {});
+    alias.assign(std::istreambuf_iterator<char>(b), {});
+    CHECK_MSG(!body.empty() && body == alias, "B333E1D7.CMDL is not a copy of the Phazon body");
+  }
   size_t textures = 0;
   for (const std::string& f : result.files) {
     textures += f.size() > 5 && f.compare(f.size() - 5, 5, ".TXTR") == 0;
@@ -463,6 +501,7 @@ int main() {
   TestRetailSkin();
   TestBuildModel();
   TestModOrder();
+  TestTables();
   TestRealData();
   return PORT_TEST_RESULT();
 }
