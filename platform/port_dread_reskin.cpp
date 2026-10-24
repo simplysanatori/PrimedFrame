@@ -467,6 +467,14 @@ bool Solve(Ctx& c, int j, std::string* error) {
         scale = AxialScale(Unit(dbone), k);
         inv = AxialScale(Unit(dbone), 1.0 / k);
       }
+      {
+        const double turn = std::acos(std::clamp(Dot(Unit(Apply(parent.rot, dbone)), Unit(pbone)), -1.0, 1.0));
+        char buf[192];
+        std::snprintf(buf, sizeof(buf), "bone: %s -> %s: dread %.3f prime %.3f (x%.2f), turn %.1f deg, head moved %.3f",
+                      joint.name.c_str(), ForSide(tail.prime, side).c_str(), Len(dbone), Len(pbone),
+                      Len(pbone) / Len(dbone), turn * 180.0 / M_PI, Len(Sub(nh, XfPoint(parent, h))));
+        c.log.push_back(buf);
+      }
       break;
     }
     M3 squash = M3::I(), unsquash = M3::I();

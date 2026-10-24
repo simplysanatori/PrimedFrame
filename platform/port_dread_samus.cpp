@@ -354,6 +354,9 @@ bool Import(const Io& io, Result& result, std::string& error) {
       failTarget("re-skin: " + why);
       continue;
     }
+    for (const std::string& line : reskin.log) {
+      log("dread: " + label + ": " + line);
+    }
     std::vector<const PortDread::SuitMaterial*> meshMats;
     for (const PortDread::ReskinMesh& rm : reskin.meshes) {
       meshMats.push_back(rm.bsmat_path.empty() ? nullptr : material(rm.bsmat_path));
