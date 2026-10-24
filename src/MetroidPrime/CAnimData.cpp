@@ -32,6 +32,7 @@
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "port_debug.h"
+#include "port_dread_samus_mod.h"
 
 #include "Kyoto/Basics/CBasics.hpp"
 
@@ -76,6 +77,17 @@ rstl::reserved_vector< CInt32POINode, 16 > sInt32TransientCache;
 static int skPOICacheReferenceCount;
 static CInt32POINode* sInt32TransientCacheData;
 
+#ifdef TARGET_PC
+// The skeleton a character is posed on. A Dread Samus body (port_dread_samus_mod.h) is skinned on its
+// own Dread-proportioned CINF, so it is posed on that one; its animations still sample against the
+// retail CINF (layoutData) and RecalcPoseBuilder carries their translations across.
+static const TLockedToken< CCharLayoutInfo >& PortPoseLayout(const CCharacterInfo& charInfo,
+                                                             const TLockedToken< CCharLayoutInfo >& layoutData,
+                                                             const TLockedToken< CSkinnedModel >& modelData) {
+  return PortDreadSamus::Skeleton(charInfo.GetModelId()) != 0 ? modelData->GetLayoutInfo() : layoutData;
+}
+#endif
+
 CAnimData::CAnimData(
     uint selfId, const CCharacterInfo& charInfo, int defaultAnim, int charIdx, const bool loop,
     const TLockedToken< CCharLayoutInfo >& layoutData, const TToken< CSkinnedModel >& modelData,
@@ -118,7 +130,11 @@ CAnimData::CAnimData(
 , x220_30_poseBuilt(false)
 , x220_31_poseCached(false)
 , x224_pose(static_cast< uchar >(layoutData->GetBodyPartSegIds().size()))
+#ifdef TARGET_PC
+, x2fc_poseBuilder(CLayoutDescription(PortPoseLayout(charInfo, layoutData, xd8_modelData)))
+#else
 , x2fc_poseBuilder(CLayoutDescription(layoutData))
+#endif
 , x40c_playbackParms(-1, -1, 1.f, true)
 , x434_additiveAnims()
 #ifdef TARGET_PC
@@ -147,7 +163,11 @@ CAnimData::CAnimData(
 
   x120_particleDB.CacheParticleDesc(charInfo.GetParticleResData());
 
+#ifdef TARGET_PC
+  CLayoutDescription layoutDesc(PortPoseLayout(charInfo, xcc_layoutData, xd8_modelData));
+#else
   CLayoutDescription layoutDesc(xcc_layoutData);
+#endif
   CHierarchyPoseBuilder pb(layoutDesc);
   pb.BuildNoScale(x224_pose);
   x220_30_poseBuilt = true;
@@ -642,6 +662,15 @@ void CAnimData::RecalcPoseBuilder(const CCharAnimTime* time) const {
 
   AddAdditiveSegData(*segIdList, statementSet);
 
+#ifdef TARGET_PC
+  // Posed on another skeleton than the animations' (PortPoseLayout): rotations carry over as they
+  // are (both CINFs have identity bind rotations); a translation keeps its move away from the
+  // retail bind offset, applied to the posed skeleton's own offset, so its bone lengths stay.
+  const CCharLayoutInfo& animLayout = **xcc_layoutData;
+  const CCharLayoutInfo& poseLayout = **poseBuilder.CharLayoutInfo();
+  const bool retarget = &poseLayout != &animLayout;
+#endif
+
   int i = 0;
   const int segCount = segIdList->size();
   while (i < segCount) {
@@ -649,6 +678,13 @@ void CAnimData::RecalcPoseBuilder(const CCharAnimTime* time) const {
     if (seg.val() != 3) {
       poseBuilder.Insert(seg, statementSet.GetData(seg).Orientation());
       if (statementSet.GetData(seg).OffsetValid()) {
+#ifdef TARGET_PC
+        if (retarget) {
+          poseBuilder.Insert(seg, poseLayout.GetFromParentUnrotated(seg) +
+                                      (statementSet.GetData(seg).Offset() -
+                                       animLayout.GetFromParentUnrotated(seg)));
+        } else
+#endif
         poseBuilder.Insert(seg, statementSet.GetData(seg).Offset());
       }
     }

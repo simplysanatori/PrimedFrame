@@ -71,6 +71,8 @@ std::unordered_map<uint32_t, std::string> sRoomEffects;
 std::unordered_map<uint32_t, std::string> sHudBars;
 // The CMDLs the dread-samus mod serves (PortDreadSamus::Replaces).
 std::set<uint32_t> sDreadBodies;
+// The Dread-proportioned CINFs it serves (PortDreadSamus::Skeleton).
+std::set<uint32_t> sDreadSkeletons;
 // thermal.lut: the thermal visor's heat gradient (port_thermal.h).
 std::string sThermalLut;
 // envfx.bin: Remastered's EnvironmentFX textures (port_envfx_assets.h).
@@ -358,6 +360,11 @@ bool HasNativeTexture(uint32_t id) { return sNativeTextures.count(id) != 0; }
 
 bool PortDreadSamus::Replaces(uint32_t bodyCmdl) { return bodyCmdl != 0 && PortMods::sDreadBodies.count(bodyCmdl) != 0; }
 
+uint32_t PortDreadSamus::Skeleton(uint32_t bodyCmdl) {
+  const uint32_t cinf = DreadCinf(bodyCmdl);
+  return cinf != 0 && Replaces(bodyCmdl) && PortMods::sDreadSkeletons.count(cinf) != 0 ? cinf : 0;
+}
+
 namespace PortMods {
 
 bool BindTexture(const void* owner, uint32_t id) {
@@ -499,6 +506,7 @@ void Initialize() {
   sEnvFx.clear();
   sRetailPlacements.clear();
   sDreadBodies.clear();
+  sDreadSkeletons.clear();
   {
     std::lock_guard<std::mutex> lock(sEffectIdsMutex);
     sEffectIdMapPath.clear();
@@ -739,6 +747,11 @@ void Initialize() {
         char text[12];
         std::snprintf(text, sizeof(text), " %08X", key.second);
         ids += text;
+      }
+    }
+    for (const auto& [key, resource] : loose) {
+      if (key.first == 0x43494E46 && resource.mod == PortDreadSamus::kModName) { // 'CINF'
+        sDreadSkeletons.insert(key.second);
       }
     }
     if (!sDreadBodies.empty()) {

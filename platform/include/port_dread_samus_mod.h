@@ -88,4 +88,9 @@ inline uint32_t DreadCinf(uint32_t bodyCmdl) {
   }
 }
 
+// The Dread skeleton a body CMDL is skinned and posed on now: DreadCinf(bodyCmdl) when the mod serves
+// the body and that CINF (an import from before the skeletons shipped has none), 0 otherwise.
+// Animations still sample against the retail CINF; CAnimData::RecalcPoseBuilder retargets them.
+uint32_t Skeleton(uint32_t bodyCmdl);
+
 }  // namespace PortDreadSamus
