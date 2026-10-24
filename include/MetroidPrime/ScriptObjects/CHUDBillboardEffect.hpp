@@ -53,6 +53,8 @@ private:
   int xPortManagedType = -1;
   // Added to the visor effect override list (AddBillboardEffect).
   bool xPortVisorOverride = false;
+  // Aspect the local scale was last widened for (PreRender), 0 until the first frame.
+  float xPortScaleAspect = 0.f;
 #endif
 
   static int g_IndirectTexturedBillboardCount;

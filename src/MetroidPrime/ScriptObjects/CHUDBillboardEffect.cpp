@@ -109,6 +109,23 @@ void CHUDBillboardEffect::PreRender(CStateManager& mgr, const CFrustumPlanes& fr
     {
       xe8_generator->SetGlobalTranslation(camXf * xec_translation);
       xe8_generator->SetGlobalOrientation(camXf);
+#ifdef TARGET_PC
+      // Port: the effects are authored to fill a 4:3 view (GetScaleForPOV). Wider screens keep
+      // the vertical FOV and extend sideways, narrower ones extend vertically (Vert+), so stretch
+      // the effect along the extended axis to keep it covering the whole screen.
+      const float kMinAspect = 4.f / 3.f;
+      const float aspect = mgr.GetCameraManager()->GetCurrentCamera(mgr).GetAspectRatio();
+      if (aspect != xPortScaleAspect) {
+        xPortScaleAspect = aspect;
+        CVector3f scale = xf8_localScale;
+        if (aspect > kMinAspect) {
+          scale.SetX(scale.GetX() * (aspect / kMinAspect));
+        } else if (aspect > 0.f) {
+          scale.SetZ(scale.GetZ() * (kMinAspect / aspect));
+        }
+        xe8_generator->SetLocalScale(scale);
+      }
+#endif
     }
 #ifdef TARGET_PC
     // camXf is the presented camera: blending it again would trail a frame behind.
@@ -221,6 +238,7 @@ void CHUDBillboardEffect::PortSetVisorGoo(CStateManager& mgr, TUniqueId uid, flo
   CStateManager::PortVisorGooState& goo = mgr.PortVisorGooManager();
   if (CHUDBillboardEffect* old = TCastToPtr< CHUDBillboardEffect >(mgr.ObjectById(goo.effect))) {
     old->xPortManagedType = -1;
+    old->xPortScaleAspect = 0.f;
   }
   goo.effect = uid;
   CHUDBillboardEffect* fx = TCastToPtr< CHUDBillboardEffect >(mgr.ObjectById(uid));
