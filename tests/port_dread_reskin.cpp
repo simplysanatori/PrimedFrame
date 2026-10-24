@@ -118,7 +118,7 @@ std::vector<DJ> DreadFigure(bool bent) {
       {"C01_Spine0_SKN", "C01_Master_SKN", 0, 0, 0},
       {"C01_Spine1_SKN", "C01_Spine0_SKN", 0, 20, 0},
       {"C01_Head_SKN", "C01_Spine1_SKN", 0, 60, 0},
-      {"L01_ShoulderPad", "C01_Spine1_SKN", 15, 45, 0},
+      {"L01_Shoulder_Aux2_SKN", "C01_Spine1_SKN", 15, 45, 0},
       {"L01_UpperArm_SKN", "C01_Spine1_SKN", 20, 40, 0},
       {"L01_Forearm_SKN", "L01_UpperArm_SKN", 45, 40, 0},
       {"L01_Hand_SKN", "L01_Forearm_SKN", 70, 40, 0},
@@ -310,10 +310,10 @@ void TestWeights() {
        {{"C01_Spine1_SKN", 0.4f}, {"C01_Head_SKN", 0.3f}, {"L01_UpperArm_SKN", 0.2f}, {"C01_Master_SKN", 0.1f}}},
       // Unnormalised Dread weights still sum to 1; joints sharing a Prime bone merge.
       {{0, 0, 0}, {0, 1, 0}, {{"C01_Master_SKN", 1.f}, {"C01_Spine0_SKN", 0.5f}, {"DC_Root", 0.5f}}},
-      // A vote joint (shoulder pad).
-      {{15, 45, 0}, {0, 1, 0}, {{"L01_ShoulderPad", 1.f}}},
-      {{15, 45, 1}, {0, 1, 0}, {{"L01_ShoulderPad", 0.5f}, {"C01_Spine1_SKN", 0.5f}}},
-      {{15, 45, 2}, {0, 1, 0}, {{"L01_ShoulderPad", 1.f}}},
+      // A vote joint (shoulder helper).
+      {{15, 45, 0}, {0, 1, 0}, {{"L01_Shoulder_Aux2_SKN", 1.f}}},
+      {{15, 45, 1}, {0, 1, 0}, {{"L01_Shoulder_Aux2_SKN", 0.5f}, {"C01_Spine1_SKN", 0.5f}}},
+      {{15, 45, 2}, {0, 1, 0}, {{"L01_Shoulder_Aux2_SKN", 1.f}}},
   };
   const Bcmdl m = BuildModel(DreadFigure(false), verts);
   auto id = [&](const char* n) { return s.joints[size_t(s.Find(n))].id; };
@@ -362,7 +362,7 @@ void TestWeights() {
       CHECK_EQ(r.stats.verts_mixed, size_t(1));
     }
     // Weight targets per joint: the vote joint is -1 only when votes ran.
-    CHECK_EQ(r.weight_joint[size_t(m.FindJoint("L01_ShoulderPad"))], pass == 1 ? -1 : s.Find("L_collar"));
+    CHECK_EQ(r.weight_joint[size_t(m.FindJoint("L01_Shoulder_Aux2_SKN"))], pass == 1 ? -1 : s.Find("L_collar"));
     CHECK_EQ(r.weight_joint[size_t(m.FindJoint("L01_FingerX_SKN"))], s.Find("L_wrist"));
     CHECK_EQ(r.stats.joints, m.joints.size());
   }

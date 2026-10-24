@@ -12,7 +12,9 @@ namespace PortDreadSamus {
 inline constexpr const char* kModName = "dread-samus";
 inline constexpr const char* kStampName = ".dread-samus-version";
 // 1: Power/Varia/Gravity, cutscene (CINF 19C53902) and in-game (A496DA02) bodies.
-inline constexpr int kVersion = 1;
+// 2: suit materials carry REFL (env specular on the metal plates).
+// 3: shoulder pads skinned to the chest, not voted from Prime's collar.
+inline constexpr int kVersion = 3;
 
 // The in-game body CMDL of a CPlayerState::EPlayerSuit (0 Power, 1 Gravity, 2 Varia; also
 // BallTransitionsANCS's character index), 0 for the suits the mod leaves alone (Phazon, Fusion).

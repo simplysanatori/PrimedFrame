@@ -197,7 +197,9 @@ const WeightRow kWeights[] = {
     {"C01_Spine2_SKN", {"Collar", "Spine_2"}, false},
     {"C01_Neck_SKN", {"Neck_1"}, false},
     {"C01_Head_SKN", {"Head_1"}, false},
-    {"{S}01_ShoulderPad*", {"{s}_collar", "Spine_2"}, true},
+    // The pads are fixed to the chest plate, as the chest joint: voted from Prime's collar-weighted
+    // pads they shrugged up against the helmet, and on the shoulder they turned with the arm.
+    {"{S}01_ShoulderPad*", {"Collar", "Spine_2"}, false},
     {"{S}01_Shoulder_Aux*", {"{s}_collar", "Spine_2"}, true},
     {"{S}01_Shoulder_Armpit_SKN", {"{s}_shoulder"}, true},
     {"{S}01_UpperArm*", {"{s}_shoulder"}, false},  // with the twist joints
