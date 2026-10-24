@@ -1491,7 +1491,10 @@ void end_pipeline_frame() {
 bool get_pipeline(PipelineRef ref, wgpu::RenderPipeline& pipeline) {
   std::lock_guard guard{g_pipelineMutex};
   const auto it = g_pipelines.find(ref);
-  if (it == g_pipelines.end()) {
+  // A failed build stays cached as a null pipeline so it isn't retried every draw; report it as
+  // unavailable, or the caller binds null and Dawn invalidates the pass (other draws then render
+  // with stale state: wrong textures, black surfaces).
+  if (it == g_pipelines.end() || !it->second.pipeline) {
     return false;
   }
   pipeline = it->second.pipeline;
