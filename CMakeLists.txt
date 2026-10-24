@@ -341,6 +341,14 @@ set(MP_PORT_SOURCES
     platform/port_storage_report.cpp
     platform/port_remastered_import_retail.cpp
     platform/port_remastered_import_remastered.cpp
+    platform/port_dread_samus_import.cpp
+    platform/port_dread_samus.cpp
+    platform/port_dread_pkg.cpp
+    platform/port_dread_bcmdl.cpp
+    platform/port_dread_bsmat.cpp
+    platform/port_dread_bctex.cpp
+    platform/port_dread_reskin.cpp
+    platform/port_dread_material.cpp
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
     platform/port_remastered_room.cpp
@@ -1426,6 +1434,20 @@ if(MP_BUILD_TESTS)
         LIBRARIES mp_test_remastered_convert ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
         TIMEOUT 120)
     # --- end Dread suit material ---
+    # --- Dread Samus import (step 6: the dread-samus mod) ---
+    # The converter's explicit-weights path, the synthetic Model of a re-skinned body, the retail
+    # skin reader and the mod order rule over synthetic fixtures; the whole import on real data is
+    # opt-in (PORT_DREAD_ROMFS + PORT_PRIME_SAMUS_DIR).
+    mp_port_test(port_dread_samus_tests
+        SOURCES tests/port_dread_samus.cpp platform/port_dread_samus.cpp platform/port_dread_material.cpp
+            platform/port_dread_bctex.cpp platform/port_dread_bsmat.cpp platform/port_dread_bcmdl.cpp
+            platform/port_dread_pkg.cpp platform/port_dread_reskin.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_cmdl.cpp
+        INCLUDES platform platform/include
+        LIBRARIES mp_test_remastered_convert ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
+        TIMEOUT 600)
+    # --- end Dread Samus import ---
     # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)

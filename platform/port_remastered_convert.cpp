@@ -1630,6 +1630,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::vector<uint32_t> refBones = SkinBones(refSpan);
     skins.push_back(sids[0]);
     for (size_t i = 1; i < sids.size(); ++i) {
+      if (!opt.boneWeights.empty()) {
+        // Given weights name the bones of the caller's skeleton, which binds every one of these.
+        skins.push_back(sids[i]);
+        continue;
+      }
       Blob other;
       if (io.retail(FourCC('C', 'S', 'K', 'R'), sids[i], other)) {
         const std::vector<uint32_t> bones = SkinBones(Span{other.data(), other.size()});
@@ -1640,9 +1645,28 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
       Log("  note: skin " + Hex8(sids[i]) + " has a different skeleton, not writing weights for it");
     }
+    std::vector<WeightKey> perVertex;
+    if (!opt.boneWeights.empty()) {
+      // Weights chosen by the caller, already on retail bones: written as given.
+      std::vector<std::vector<std::pair<uint32_t, double>>> given;
+      given.reserve(n);
+      for (uint32_t bi : bufOrder) {
+        if (bi >= opt.boneWeights.size() || opt.boneWeights[bi].size() < buffers[bi].src->vertexCount) {
+          throw Fail{"the given skin weights do not cover vertex buffer " + std::to_string(bi)};
+        }
+        for (uint32_t v : buffers[bi].srcOf) {
+          auto& row = given.emplace_back();
+          for (const auto& w : opt.boneWeights[bi][v]) {
+            row.emplace_back(w.first, double(w.second));
+          }
+        }
+      }
+      perVertex = QuantiseWeights(given);
+      Log(Hex8(this->model) + "  weights as given: " + std::to_string(n) + " vertices");
+    }
     std::vector<uint16_t> J;
     std::vector<float> W;
-    if (skinned) {
+    if (skinned && opt.boneWeights.empty()) {
       for (uint32_t bi : bufOrder) {
         const ModelVertexBuffer& src = *buffers[bi].src;
         for (uint32_t v : buffers[bi].srcOf) {
@@ -1651,9 +1675,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         }
       }
     }
-    const std::vector<WeightKey> perVertex =
-        SkinWeights(P, n, skinned ? &J : nullptr, skinned ? &W : nullptr, retail, refSpan,
-                    [this](const std::string& line) { Log(Hex8(this->model) + line); });
+    if (opt.boneWeights.empty()) {
+      perVertex = SkinWeights(P, n, skinned ? &J : nullptr, skinned ? &W : nullptr, retail, refSpan,
+                              [this](const std::string& line) { Log(Hex8(this->model) + line); });
+    }
     std::map<WeightKey, int> intern;
     weights.resize(n);
     for (size_t v = 0; v < n; ++v) {

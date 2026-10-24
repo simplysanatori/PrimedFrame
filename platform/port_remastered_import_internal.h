@@ -97,6 +97,7 @@ constexpr uint32_t kSMDL = 0x534D444C;
 constexpr uint32_t kWMDL = 0x574D444C;  // a liquid's surface
 constexpr uint32_t kCSKR = 0x43534B52;
 constexpr uint32_t kANCS = 0x414E4353;
+constexpr uint32_t kCINF = 0x43494E46;
 constexpr uint32_t kTXTR = 0x54585452;
 constexpr uint32_t kMLVL = 0x4D4C564C;
 constexpr uint32_t kMREA = 0x4D524541;
@@ -125,6 +126,14 @@ constexpr uint32_t kPART = 0x50415254;  // a disc particle effect
 // The import's progress and its cancel flag (port_remastered_import.cpp), which the readers
 // report to.
 extern std::atomic<bool> sCancel;
+// The import's state and thread, shared with the Dread Samus import (port_dread_samus_import.cpp).
+extern std::mutex sStateMutex;
+extern ImportState sState;
+extern std::thread sThread;
+void Finish(bool ok, const std::string& message);
+int DefaultThreads();
+// A finished Dread Samus import still staged, moved into <mods>/dread-samus (port_dread_samus_import.cpp).
+bool ApplyPendingDreadImport();
 void SetMessage(const std::string& message);
 void SetStepProgress(size_t done, size_t total);
 void AddLine(const std::string& line);
@@ -173,7 +182,7 @@ private:
   std::map<int32_t, void*> m_handles;
   std::unordered_map<uint64_t, Where> m_resources;
   std::unordered_set<uint32_t> m_ids;
-  std::unordered_map<uint64_t, Where> m_wpsc;                 // the projectile weapons, read on demand
+  std::unordered_map<uint64_t, Where> m_wpsc;                 // the projectile weapons and skeletons, read on demand
   std::unordered_map<std::string, uint32_t> m_wpscNames;      // WPSC id by name
   std::unordered_set<std::string> m_ambiguousWpscNames;
   std::unordered_map<uint64_t, size_t> m_resourceCounts;      // typed ids, including PART/CRSC

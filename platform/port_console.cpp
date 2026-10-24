@@ -2665,18 +2665,24 @@ void CmdMods() {
 }
 
 void CmdRemastered() {
-  // remastered [start <image.nsp|xci> [key file] | cancel]: the import of
-  // port_remastered_import.h, and how far it is.
+  // remastered [start <image.nsp|xci> [key file] | dread <dread.nsp|xci> [key file] | cancel]: the
+  // imports of port_remastered_import.h (Remastered, Dread Samus), and how far one is.
   const std::string verb = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
   if (verb == "start" && sCmd.args.size() > 2) {
     const std::string keys = sCmd.args.size() > 3 ? sCmd.args[3] : PortRemastered::DefaultKeysPath();
     if (!PortDebug::StartRemasteredImport(sCmd.args[2], keys)) {
       return Finish("an import is already running, or there is no mods folder");
     }
+  } else if (verb == "dread" && sCmd.args.size() > 2) {
+    // The Dread Samus import (port_dread_samus.h); "-" for the image with MP_DREAD_ROMFS set.
+    const std::string keys = sCmd.args.size() > 3 ? sCmd.args[3] : PortRemastered::DefaultKeysPath();
+    if (!PortDebug::StartDreadSamusImport(sCmd.args[2], keys)) {
+      return Finish(PortRemastered::ImportStatus().message.c_str());
+    }
   } else if (verb == "cancel") {
     PortRemastered::CancelImport();
   } else if (!verb.empty()) {
-    return Finish("usage: remastered [start <image.nsp|xci> [key file] | cancel]");
+    return Finish("usage: remastered [start <image.nsp|xci> [key file] | dread <dread.nsp|xci> [key file] | cancel]");
   }
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   Out("%s %d/%d failed %d: %s",

@@ -2,6 +2,7 @@
 
 #include "port_console.h"
 #include "port_debug.h"
+#include "port_dread_samus_mod.h"
 #include "port_hints.h"
 #include "port_mouse.h"
 #include "port_freecam.h"
@@ -3225,7 +3226,9 @@ const CDamageVulnerability* CPlayer::GetDamageVulnerability() const {
 bool CPlayer::CanRenderUnsorted(const CStateManager& mgr) const { return false; }
 
 bool CPlayer::HasTransitionBeamModel() const {
-  return !x7f0_ballTransitionBeamModel.null() && !x7f0_ballTransitionBeamModel->IsNull();
+  // The Dread Samus body (port_dread_samus_mod.h) carries its own cannon: Prime's is not drawn on it.
+  return !x7f0_ballTransitionBeamModel.null() && !x7f0_ballTransitionBeamModel->IsNull() &&
+         !PortDreadSamus::Replaces(PortDreadSamus::InGameBody(x7cc_transitionSuit));
 }
 
 void CPlayer::LoadAnimationTokens() {

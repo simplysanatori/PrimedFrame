@@ -249,6 +249,7 @@ void DrawRemasteredTab() {
   DrawRemasteredModToggle();
   ImGui::SeparatorText("Import");
   DrawRemasteredImport();
+  DrawDreadSamusImport();
 
   ImGui::SeparatorText("Gallery");
   {

@@ -9,6 +9,7 @@
 #include "port_mods.h"
 #include "port_importers.h"
 #include "port_remastered_import.h"
+#include "port_dread_samus_mod.h"
 #include "port_remastered_text.h"
 #include "port_savestate.h"
 
@@ -234,6 +235,94 @@ void DrawRemasteredImport() {
       ImGui::SameLine();
       ImGui::TextDisabled("(the newest %d)", int(PortRemastered::kImportMaxLines));
     }
+    for (const std::string& line : state.lines) {
+      ImGui::TextWrapped("%s", line.c_str());
+    }
+    ImGui::TreePop();
+  }
+}
+
+// The Dread Samus import (port_dread_samus.h): Samus's Power, Varia and Gravity bodies from the
+// player's own Metroid Dread into the dread-samus mod. Same progress, notes and mods reload as the
+// Remastered import, with which it shares one worker (only one runs at a time).
+void DrawDreadSamusImport() {
+  static char sImage[1024] = "";
+  static char sKeys[1024] = "";
+  static bool sFilled = false;
+  static bool sStarted = false;  // the shared state is this import's
+  if (!sFilled) {
+    sFilled = true;
+    std::snprintf(sKeys, sizeof(sKeys), "%s",
+                  (sRemasteredKeysPath.empty() ? PortRemastered::DefaultKeysPath() : sRemasteredKeysPath).c_str());
+  }
+  {
+    std::lock_guard lock(sRemasteredPickMutex);
+    if (!sDreadPick.empty()) {
+      std::snprintf(sImage, sizeof(sImage), "%s", sDreadPick.c_str());
+      sDreadPick.clear();
+    }
+  }
+  if (!ImGui::CollapsingHeader("Metroid Dread Samus models")) {
+    return;
+  }
+  const PortRemastered::ImportState state = PortRemastered::ImportStatus();
+  ImGui::TextWrapped(
+      "Puts Samus's Power, Varia and Gravity Suit bodies from your own Metroid Dread in place of Prime's, in "
+      "cutscenes and wherever her body is drawn. Needs the game's .nsp or .xci and your console's prod.keys. "
+      "The Phazon Suit keeps its look. It is the dread-samus mod: switch it off on the Mods page.");
+  const PortMods::Status& status = PortMods::CurrentStatus();
+  const bool installed = std::any_of(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& m) {
+    return m.name == PortDreadSamus::kModName;
+  });
+  ImGui::TextDisabled(installed ? "Imported." : "Not imported yet.");
+#if defined(__ANDROID__)
+  ImGui::TextDisabled("Not on Android yet: import it on a computer and copy the dread-samus folder into the "
+                      "mods folder.");
+#else
+  ImGui::BeginDisabled(state.running);
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+  ImGui::InputTextWithHint("##dread-image", "Metroid Dread .nsp or .xci", sImage, sizeof(sImage));
+  ImGui::SameLine();
+  if (ImGui::Button("Browse...##dread-image")) {
+    OpenRemasteredDialog(kDreadPick);
+  }
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
+  ImGui::InputTextWithHint("##dread-keys", "prod.keys", sKeys, sizeof(sKeys));
+  ImGui::SameLine();
+  if (ImGui::Button("Browse...##dread-keys")) {
+    OpenRemasteredDialog(1);
+  }
+  ImGui::BeginDisabled(sImage[0] == '\0' || sKeys[0] == '\0');
+  if (ImGui::Button("Import##dread")) {
+    sStarted = StartDreadSamusImport(sImage, sKeys);
+  }
+  ImGui::EndDisabled();
+  ImGui::EndDisabled();
+#endif
+  if (!sStarted) {
+    return;
+  }
+  if (state.running) {
+    const float fraction = state.total > 0 ? float(state.done) / float(state.total) : 0.f;
+    ImGui::ProgressBar(fraction, ImVec2(-1.f, 0.f), state.cancelling ? "Cancelling..." : state.message.c_str());
+    ImGui::BeginDisabled(state.cancelling || state.installing);
+    if (ImGui::Button("Cancel##dread")) {
+      PortRemastered::CancelImport();
+    }
+    ImGui::EndDisabled();
+  } else if (state.finished && state.ok) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ThemeGoodColor(ImVec4(0.5f, 1.f, 0.5f, 1.f)));
+    ImGui::TextWrapped("%s", state.message.c_str());
+    ImGui::PopStyleColor();
+    DrawModReloadMessage();
+  } else if (state.finished && state.cancelled) {
+    ImGui::TextDisabled("The import was cancelled.");
+  } else if (state.finished) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ThemeBadColor());
+    ImGui::TextWrapped("The import failed: %s", state.message.c_str());
+    ImGui::PopStyleColor();
+  }
+  if (!state.lines.empty() && ImGui::TreeNode("dread-log", "%d notes", int(state.lines.size()))) {
     for (const std::string& line : state.lines) {
       ImGui::TextWrapped("%s", line.c_str());
     }

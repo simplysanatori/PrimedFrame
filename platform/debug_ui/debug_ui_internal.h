@@ -377,6 +377,9 @@ extern std::string sPalLanguagesPick;
 // Which 3 of the same picker: a PAL/JP GameCube or Trilogy image for the full Flaahgra theme.
 inline constexpr int kFlaahgraPick = 3;
 extern std::string sFlaahgraPick;
+// Which 4 of the same picker: the Metroid Dread image for the Dread Samus import (desktop).
+inline constexpr int kDreadPick = 4;
+extern std::string sDreadPick;
 std::string RemasteredPickFile(int which);
 void TakeRemasteredPickFiles();
 void OpenRemasteredDialog(int which);
@@ -410,6 +413,7 @@ void DrawDiscReadFailedAlert();
 
 // mods.cpp
 void DrawRemasteredImport();
+void DrawDreadSamusImport();
 void DrawMods();
 
 // game_sections.cpp

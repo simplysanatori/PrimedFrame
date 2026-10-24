@@ -763,6 +763,31 @@ int main(int argc, char** argv) {
         aurora_dvd_close();
         return result;
     }
+    // --import-dread-samus <image.nsp|xci> [key file]: Samus's bodies from the user's own Metroid
+    // Dread into <mods>/dread-samus (port_dread_samus.h), without starting the game. The disc comes
+    // from MP_DISC or the path the game remembers. With MP_DREAD_ROMFS=<extracted RomFS> the image
+    // argument is ignored (pass "-").
+    if (argc >= 2 && std::strcmp(argv[1], "--import-dread-samus") == 0) {
+        if (argc < 3) {
+            std::fprintf(stderr, "usage: %s %s <image.nsp|xci> [key file]\n", argv[0], argv[1]);
+            return 2;
+        }
+        PortDebug::LoadDiscPath();
+        const char* disc = ResolveDiscPath(1, argv);
+        if (disc == nullptr || !aurora_dvd_open(disc)) {
+            std::fprintf(stderr, "cannot open the Metroid Prime disc image; set MP_DISC\n");
+            return 1;
+        }
+        const DVDDiskID* id = DVDGetCurrentDiskID();
+        int result = 1;
+        if (!IsSupportedDisc(id)) {
+            std::fprintf(stderr, "unsupported disc: %s\n", DescribeUnsupportedDisc(id).c_str());
+        } else {
+            result = PortRemastered::RunDreadSamusImportFromCommandLine(argv[2], argc >= 4 ? argv[3] : "");
+        }
+        aurora_dvd_close();
+        return result;
+    }
     // --import-pal-languages <image>: add a PAL disc's languages to a USA game
     // (port_pal_languages.h), without starting it.
     if (argc >= 2 && std::strcmp(argv[1], "--import-pal-languages") == 0) {

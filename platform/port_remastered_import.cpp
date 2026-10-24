@@ -3951,10 +3951,14 @@ bool StartInstall() {
 bool ApplyPendingImport() {
   const fs::path staging = StagingFolder();
   // A running import is still writing there.
-  if (staging.empty() || ImportStatus().running) {
+  if (ImportStatus().running) {
     return false;
   }
-  return MoveIntoPlace(staging);
+  const bool dread = ApplyPendingDreadImport();
+  if (staging.empty()) {
+    return dread;
+  }
+  return MoveIntoPlace(staging) || dread;
 }
 
 void RemoveLegacyImport() {

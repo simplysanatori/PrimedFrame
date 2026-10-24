@@ -24,6 +24,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "port_remastered_cmdl.h"
@@ -79,6 +80,12 @@ struct ConvertOptions {
   // `retail` and `skins` are still read for the materials and the skeleton.
   uint32_t outputModel = 0;
   std::vector<uint32_t> outputSkins;
+  // Weights chosen elsewhere (a model re-skinned onto the retail skeleton, port_dread_samus.h): per
+  // vertex buffer of the model, per vertex, (retail bone id, weight). When set they are written as
+  // given, quantised as the votes are, instead of the nearest-retail-vertex votes, and under every
+  // id in `skins` (the caller's skeleton binds them all, so no bone-set check). Every buffer a mesh
+  // draws needs one list per vertex. Empty: the votes.
+  std::vector<std::vector<std::vector<std::pair<uint32_t, float>>>> boneWeights;
   // A texture's id is hashed from a tag naming its source. These wrap the
   // Remastered texture's uuid in that tag; the test tool sets them to
   // reproduce the reference converter's ids, the game leaves them empty.
