@@ -346,7 +346,6 @@
 {"Debug", "", "Remastered materials and lighting", "PBR surfaces show", "remastered pbr surfaces materials show"},
 {"Debug", "", "Remastered materials and lighting", "Reflection probe", "remastered reflection probe cube"},
 {"Debug", "", "Remastered materials and lighting", "Room environments", "remastered environment room reflections"},
-{"Debug", "", "Remastered materials and lighting", "Exposure by room", "remastered exposure room brightness"},
 {"Debug", "", "Remastered materials and lighting", "Baked light per pixel", "remastered baked light lightmap pixel"},
 {"Debug", "", "Remastered materials and lighting", "Baked ambient scale", "remastered baked ambient scale light"},
 {"Debug", "", "Remastered materials and lighting", "Baked surfaces show", "remastered baked surfaces show lightmap"}

@@ -1206,12 +1206,10 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   the mip a roughness of 1 reflects; unset, the cube's own top mip, which is
   what Remastered reads) and `MP_ROOM_ENV_AMBIENT` (scale of the
   baked ambient light, default 1; 0 keeps the game's ambient colour).
-  `MP_ROOM_ENV_EXPOSURE=0` (console `roomenv exposure on|off`) exposes each
-  cube on its own instead of the frame by the camera's room, and drops the
-  room's tone curve. Files older than version 4 lack the exposure bias and
+  Files older than version 4 lack the exposure bias and
   the curve's contrast, so re-import to get the right levels.
-  While room geometry is on screen the exposure follows the drawn picture's
-  average, held to the room's AutoExposureHint range and eased by its sigma
+  In a room with an AutoExposureHint the exposure follows the drawn picture's
+  average, whatever geometry draws, held to the room's AutoExposureHint range and eased by its sigma
   (Remastered's rule); a room change eases, a world load or warp snaps.
   `MP_ROOM_ENV_AUTO_EXPOSURE=0` (console `roomenv auto on|off`) keeps the
   probe-based exposure. Version 7 adds the hint's sigma and static lerp; older

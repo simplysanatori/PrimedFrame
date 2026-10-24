@@ -171,8 +171,7 @@ which are authoritative. Inside a mod:
   range its auto exposure is held to, cubes and baked ambient keep their
   level relative to that, and the result goes through that room's tone curve
   (the formulas are Remastered's own; the frame's average is stood in for by
-  the room's middle probe). `MP_ROOM_ENV_EXPOSURE=0` turns that off: every
-  cube is then exposed to middle grey and the game's ambient sets the level.
+  the room's middle probe).
   Files load and unload with their areas, and a cube is decoded
   on first use. The layout is in `platform/include/port_room_env.h`.
 - a file named `<MREA id, 8 hex digits>.roomgeo`, anywhere in the mod, is that

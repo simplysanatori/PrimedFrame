@@ -429,14 +429,6 @@ void DrawRemasteredDebug() {
                           "exposure and bloom.");
     ImGui::BeginDisabled(!env);
     ImGui::SameLine();
-    bool exposed = PortRoomEnv::RoomExposed();
-    if (ImGui::Checkbox("Exposure by room", &exposed)) {
-      PortRoomEnv::SetRoomExposed(exposed);
-    }
-    ImGui::SetItemTooltip("Recommended: on.\nSets brightness as Remastered does, from the camera's "
-                          "room and its tone curve.\n"
-                          "Off exposes every reflection cube to neutral grey.");
-    ImGui::SameLine();
     bool volumes = PortRoomEnv::VolumesEnabled();
     if (ImGui::Checkbox("Baked light per pixel", &volumes)) {
       PortRoomEnv::SetVolumesEnabled(volumes);

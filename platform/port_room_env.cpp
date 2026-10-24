@@ -63,7 +63,6 @@ uint32_t sHintArea = 0;
 float sHintCentre[3];
 float sHintLightmap[3] = {}; // SetLightmapHint; PortRoomGeo::HasLightmapLookup
 int sEnabled = -1;
-int sExposure = -1;
 int sBloom = -1;
 uint32_t sViewArea = 0;
 int sGrade = -1;
@@ -358,10 +357,9 @@ float FrameExposure(const Area& area) {
 }
 
 // The exposure baked light is read at: the frame's, or 1 with no tone data, where Remastered draws
-// through STonemapParams::BuildLinear(3.0) (E = 1) and uses the baked values as they are. RoomExposed
-// off (the user's toggle, not a Remastered mode) takes that same E = 1.
+// through STonemapParams::BuildLinear(3.0) (E = 1) and uses the baked values as they are.
 float ProbeExposure(const Area& area) {
-  const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
+  const float exposure = FrameExposure(area);
   return exposure > 0.f ? exposure : 1.f;
 }
 
@@ -512,7 +510,7 @@ void BuildTone(float mid, float contrast, float toe, float shoulder, float rows[
 }
 
 bool Tone(float rows[3][4]) {
-  if (!Enabled() || !RoomExposed()) {
+  if (!Enabled()) {
     return false;
   }
   if (!sFrame.hasTone) {
@@ -660,7 +658,7 @@ void UpdateFrame() {
     f.moving = tr.moving;
   }
   // UpdateTonemapping 0xaffb18 measures every frame in a room with a hint, whatever is drawn.
-  f.measuring = hint && AutoExposure() && Enabled() && RoomExposed();
+  f.measuring = hint && AutoExposure() && Enabled();
   if (hasRadiance && serial != sAverage.serial) {
     sAverage.serial = serial;
     if (f.measuring) {
@@ -702,7 +700,7 @@ float GlowScale() {
   if (sStatic < 0) {
     sStatic = port::EnvFlag("MP_ROOM_ENV_STATIC_EXPOSURE", true) ? 1 : 0;
   }
-  if (sStatic == 0 || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
+  if (sStatic == 0 || !sFrame.hasTone || !Enabled()) {
     return 1.f;
   }
   // The light is divided by the static exposure and the frame then multiplied by its own:
@@ -792,7 +790,7 @@ bool XRayPass(bool distortion) {
 }
 
 float SkyGain() {
-  if (GlowScale() <= 0.f || sStatic == 0 || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
+  if (GlowScale() <= 0.f || sStatic == 0 || !sFrame.hasTone || !Enabled()) {
     return 0.f;
   }
   // The shader multiplies an unlit surface by GlowScale, 2^(static EV - EV); this makes the
@@ -806,7 +804,7 @@ float GlowGain(bool frameExposed) {
   // exposure 1, so the glow is left as authored (kb topic/post-output.md "No tonemap data").
   constexpr float kFallback = 1.f;
   static const bool sOff = !port::EnvFlag("MP_REMASTERED_GLOW_EXPOSURE", true);
-  if (sOff || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
+  if (sOff || !sFrame.hasTone || !Enabled()) {
     return kFallback;
   }
   // The shader multiplies the glow by GlowScale, 2^(static EV - EV), where the static
@@ -819,7 +817,7 @@ float ParticleLightGain(bool inverseExposed) {
   // MP_PARTICLE_LIGHT_SCALE multiplies it (debug).
   static const float sScale = std::max(port::EnvFloat("MP_PARTICLE_LIGHT_SCALE", 1.f), 0.f);
   const float invPi = sScale / 3.14159265f;
-  const float exposure = Enabled() && RoomExposed() ? sFrame.exposure : 0.f;
+  const float exposure = Enabled() ? sFrame.exposure : 0.f;
   if (!(exposure > 0.f) || !std::isfinite(exposure)) {
     return invPi;
   }
@@ -829,7 +827,7 @@ float ParticleLightGain(bool inverseExposed) {
 
 float UnlitGain(bool frameExposed) {
   // Outside an exposed room Remastered's static default (exposure 1) applies: nothing to add.
-  if (!sFrame.hasTone || !Enabled() || !RoomExposed()) {
+  if (!sFrame.hasTone || !Enabled()) {
     return 1.f;
   }
   const float sky = SkyGain();
@@ -872,7 +870,7 @@ bool BloomEnabled() {
 void SetBloomEnabled(bool on) { sBloom = on ? 1 : 0; }
 
 bool Bloom(float& threshold, float tints[5][3]) {
-  if (!Enabled() || !RoomExposed() || !BloomEnabled()) {
+  if (!Enabled() || !BloomEnabled()) {
     return false;
   }
   // Bloom runs where the room (or its world) has a BloomEffect, tone curve or not
@@ -1074,7 +1072,7 @@ const Area* SunArea(float& exposure) {
     return nullptr;
   }
   // Remastered's light units only mean something at its exposure.
-  exposure = RoomExposed() ? FrameExposure(view->second) : 0.f;
+  exposure = FrameExposure(view->second);
   return exposure > 0.f ? &view->second : nullptr;
 }
 
@@ -1284,7 +1282,7 @@ void RoomLights(const float worldToView[3][4], std::vector<float>& out) {
   if (view == sAreas.end() || !view->second.hasFile) {
     return;
   }
-  const float exposure = RoomExposed() ? FrameExposure(view->second) : 0.f;
+  const float exposure = FrameExposure(view->second);
   if (exposure <= 0.f) {
     return;
   }
@@ -1351,7 +1349,7 @@ void RoomLights(std::vector< PortClusteredLights::LightSource >& out) {
   }
   // The same gate as the PBR form: without the room's exposure there is no Remastered lighting to gather
   // (the probe's AmbientAt is empty then too), and the port's own room lighting is what the effect sees.
-  if (!RoomExposed() || FrameExposure(view->second) <= 0.f) {
+  if (FrameExposure(view->second) <= 0.f) {
     return;
   }
   // The clustered gather's own cap; it reads the first kMaxLights records, so more would never be seen.
@@ -1999,18 +1997,6 @@ bool Enabled() {
   return sEnabled != 0;
 }
 
-bool RoomExposed() {
-  if (sExposure < 0) {
-    sExposure = port::EnvFlag("MP_ROOM_ENV_EXPOSURE", true) ? 1 : 0;
-  }
-  return sExposure != 0;
-}
-
-void SetRoomExposed(bool on) {
-  sExposure = on ? 1 : 0;
-  sLastValid = false;
-}
-
 void SetEnabled(bool enabled) {
   sEnabled = enabled ? 1 : 0;
   Invalidate();
@@ -2075,19 +2061,9 @@ bool HasVolume(uint32_t mrea) {
 
 namespace {
 
-// What an area's lightmap is multiplied by, 0 for none yet. Like the volume's level (see
-// Compose): the lightmap holds irradiance as the grid does. Without the room's exposure,
-// the grid's average comes out at the key.
-float LightmapLevel(const Area& area) {
-  const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
-  if (exposure > 0.f) {
-    return exposure * LightGain();
-  }
-  if (!area.file.grids.empty() && area.file.grids[0].average > 0.f) {
-    return 0.18f / area.file.grids[0].average;
-  }
-  return 0.f;
-}
+// What an area's lightmap is multiplied by. Like the volume's level (see Compose): the
+// lightmap holds irradiance as the grid does, read at the frame's exposure (1 with no tone data).
+float LightmapLevel(const Area& area) { return ProbeExposure(area) * LightGain(); }
 
 } // namespace
 
@@ -2364,7 +2340,6 @@ bool Compose(const Located& located, Selection& out) {
   static const float lod = port::EnvFloat("MP_ROOM_ENV_LOD", PortRoomEnvLod::kNoCap);
   static const float volumeBias = port::EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.f);
   const float ambient = AmbientScale();
-  const float grey = 0.18f * gain;
   out = {};
   BlendSource sources[kMaxBlend];
   const size_t sourceCount = ProbeBlend() ? BlendSources(sources) : 0;
@@ -2373,11 +2348,9 @@ bool Compose(const Located& located, Selection& out) {
     // the blended intensity (a lone probe's cube by its share of it, the rest being black).
     const Blend& blend = sBlend.blend;
     const BlendSource* heaviest = &sources[0];
-    float average = 0.f;
     uint32_t mips = sources[0].gpu->mipCount;
     for (size_t i = 0; i < sourceCount; ++i) {
       heaviest = sources[i].weight > heaviest->weight ? &sources[i] : heaviest;
-      average += sources[i].weight * sources[i].gpu->average;
       mips = std::min(mips, sources[i].gpu->mipCount);
     }
     float share = 1.f;
@@ -2385,13 +2358,11 @@ bool Compose(const Located& located, Selection& out) {
     if (sourceCount == 1) {
       out.cube = sources[0].gpu->id;
       share = sources[0].weight;
-      average = sources[0].gpu->average;
     } else if (s.shown >= 0) {
       // The last blend drawn, which is this one but for a frame where Aurora could not draw.
       out.cube = s.dst[s.shown];
     } else {
       out.cube = heaviest->gpu->id;
-      average = heaviest->gpu->average;
       mips = heaviest->gpu->mipCount;
     }
     const float exposure = ProbeExposure(*heaviest->area);

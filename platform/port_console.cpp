@@ -2817,9 +2817,6 @@ void CmdRoomEnv() {
       Out("at %.2f %.2f %.2f", at[0], at[1], at[2]);
       OutLines(info.empty() ? std::string("no room environment loaded") : info);
       return Finish();
-    } else if (arg == "exposure" && sCmd.args.size() > 2 &&
-               (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
-      PortRoomEnv::SetRoomExposed(Lower(sCmd.args[2]) == "on");
     } else if (arg == "auto" && sCmd.args.size() > 2 &&
                (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
       PortRoomEnv::SetAutoExposure(Lower(sCmd.args[2]) == "on");
@@ -2875,7 +2872,7 @@ void CmdRoomEnv() {
                 Lower(sCmd.args[2]) == "light")) {
       PortRoomEnv::SetVolumeView(Lower(sCmd.args[2]) == "off" ? 0 : Lower(sCmd.args[2]) == "coords" ? 1 : 2);
     } else {
-      return Finish("usage: roomenv [on|off|info [<x> <y> <z>]|exposure on|off|auto on|off|static on|off|"
+      return Finish("usage: roomenv [on|off|info [<x> <y> <z>]|auto on|off|static on|off|"
                     "arealights on|off|balllight on|off|<scale>|blend on|off|bloom on|off|"
                     "grade on|off|grades|fog|volfog on|off|fogregions on|off|"
                     "volume on|off|ambient <scale>|"
@@ -2891,11 +2888,11 @@ void CmdRoomEnv() {
   float backlightBack = 0.f;
   PortRoomEnv::Backlight(backlightTop, backlightBack);
   static const char* const kViews[] = {"off", "coords", "light"};
-  Out("roomenv %s: %d area(s), %d probe(s), %d cube(s) loaded, %d ambient grid(s), exposure by %s, "
+  Out("roomenv %s: %d area(s), %d probe(s), %d cube(s) loaded, %d ambient grid(s), "
       "auto %s, static %s (glow x%g), area lights %s, probe blend %s, bloom %s, grade %s, volume %s, "
       "ambient %g, show %s, backlight top %g back %g",
       PortRoomEnv::Enabled() ? "on" : "off", areas, probes, cubes, grids,
-      PortRoomEnv::RoomExposed() ? "room" : "cube", PortRoomEnv::AutoExposure() ? "on" : "off",
+      PortRoomEnv::AutoExposure() ? "on" : "off",
       PortRoomEnv::StaticExposure() ? "on" : "off", PortRoomEnv::GlowScale(),
       PortRoomEnv::AreaLights() ? "on" : "off",
       PortRoomEnv::ProbeBlend() ? "on" : "off",
@@ -3806,7 +3803,7 @@ const CommandSpec kCommands[] = {
     {"stats", CmdStats, nullptr,
      "stats [textures [n]]       the last frame's draws and buffers, texture and lighting totals, Dawn's GPU memory, the heap, room geometry and environments; `textures` lists the n (25) most numerous live texture groups by label, size and format"},
     {"roomenv", nullptr, nullptr,
-     "roomenv [on|off|exposure on|off]  the room environments mods supply; exposure: by room, not by cube\n"
+     "roomenv [on|off]           the room environments mods supply\n"
      "roomenv grades | state <id> <state>  the colour grades; as if script object <id> (hex) sent <state>\n"
      "roomenv volume on|off | ambient <scale> | show off|coords|light\n"
      "                           the baked light per pixel; the baked ambient's weight (0: the game's);\n"

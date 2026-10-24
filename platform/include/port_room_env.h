@@ -729,13 +729,6 @@ void Reset();
 // 0 off, 1 on; the console's `roomenv`.
 void SetEnabled(bool enabled);
 bool Enabled();
-// Whether cubes and ambient are exposed the way Remastered exposes a frame, by the
-// radiance of the room the camera is in and that room's exposure hint, and shaped by its
-// tone curve (MP_ROOM_ENV_EXPOSURE=0 turns it off, as does the console's `roomenv
-// exposure`). Otherwise each cube is exposed to middle grey and the ambient takes the
-// game's level.
-void SetRoomExposed(bool on);
-bool RoomExposed();
 // The frame's bloom (Remastered's CRenderPass_Bloom): the threshold of exposed luminance
 // above which light blooms, and the five tints (rgb), the last for the bright pass and the
 // others for the four levels it is spread over, coarsest first. False when the camera's
@@ -764,8 +757,8 @@ bool Backlight(float& top, float& back);
 // of those with the cast bit (LightFlags a103d675, the only lights Remastered builds a shadow map
 // for; none of the shipped rooms' has it). A sun on a story layer (the hangar intro's) only lights
 // its cinematic. `color` is as the PBR shader's lights take it: the light's at the frame's
-// exposure, over pi. False when there is none, no file, the rooms aren't exposed (RoomExposed),
-// or MP_ROOM_ENV is off. Which one Remastered shadows when several have the bit is not traced.
+// exposure, over pi. False when there is none, no file, or MP_ROOM_ENV is off. Which one
+// Remastered shadows when several have the bit is not traced.
 bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]);
 // Whether the camera area is lit by its Remastered file (the conditions of Sun): then the retail
 // world's lights are not what lights or shadows it.
@@ -779,8 +772,8 @@ std::string SunInfo();
 // The loaded areas' point and spot lights that shine now (active, on an active layer, not black),
 // in GXPortSetRoomLights' records: 16 floats each, appended to `out`. `worldToView` holds the
 // view matrix's three rows (retail world -> the view space the PBR shader lights in). Their
-// timelines step in UpdateFog. Nothing when the rooms aren't exposed (see Sun), MP_ROOM_LIGHTS=0
-// or MP_ROOM_ENV is off.
+// timelines step in UpdateFog. Nothing when the area has no file, MP_ROOM_LIGHTS=0 or MP_ROOM_ENV
+// is off.
 void RoomLights(const float worldToView[3][4], std::vector<float>& out);
 // The same lights in the shape Remastered's clustered gather takes them (PortClusteredLights::LightSource:
 // world space, colour x intensity, no exposure and no 1/pi), for PortClusteredLights::MakeLight. The vacated
