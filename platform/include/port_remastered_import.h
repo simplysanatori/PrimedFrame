@@ -638,4 +638,13 @@ bool StartInstall();
 // `--import-remastered-movies` is StartMovieImport() the same way.
 int RunImportFromCommandLine(const std::string& nspPath, const std::string& keysPath, bool moviesOnly = false);
 
+// The Dread Samus import (port_dread_samus.h): Samus's Power/Varia/Gravity bodies from the user's
+// own Metroid Dread .nsp/.xci into <mods>/dread-samus, with the disc open. It shares this import's
+// state, cancelling and thread (ImportStatus, CancelImport, StopImport), so only one of the two runs
+// at a time; it installs itself when it ends, or at the next start (ApplyPendingImport) when a file
+// was in the way. MP_DREAD_ROMFS=<dir> reads an extracted RomFS instead of the image (development).
+bool StartDreadSamusImport(const std::string& nspPath, const std::string& keysPath);
+// `--import-dread-samus <nsp> [keys]`, as RunImportFromCommandLine. Returns the exit code.
+int RunDreadSamusImportFromCommandLine(const std::string& nspPath, const std::string& keysPath);
+
 }  // namespace PortRemastered

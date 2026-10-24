@@ -253,6 +253,8 @@ set(MP_PORT_SOURCES
     platform/port_viewmodel.cpp
     platform/port_actor_shadow.cpp
     platform/port_freecam.cpp
+    platform/port_third_person.cpp
+    platform/port_third_person_body.cpp
     platform/port_photo.cpp
     platform/port_console.cpp
     platform/port_log_file.cpp
@@ -341,6 +343,14 @@ set(MP_PORT_SOURCES
     platform/port_storage_report.cpp
     platform/port_remastered_import_retail.cpp
     platform/port_remastered_import_remastered.cpp
+    platform/port_dread_samus_import.cpp
+    platform/port_dread_samus.cpp
+    platform/port_dread_pkg.cpp
+    platform/port_dread_bcmdl.cpp
+    platform/port_dread_bsmat.cpp
+    platform/port_dread_bctex.cpp
+    platform/port_dread_reskin.cpp
+    platform/port_dread_material.cpp
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
     platform/port_remastered_room.cpp
@@ -1387,6 +1397,66 @@ if(MP_BUILD_TESTS)
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # --- Dread readers A (PKG, BCTEX, title check) ---
+    # CRC-64, .pkg table, .bctex (gzip, block-linear, BC1/3/5) and the opened image's title id,
+    # over synthetic files; real-data checks are opt-in (PORT_DREAD_ROMFS, PORT_DREAD_NSP).
+    mp_port_test(port_dread_readers_a_tests
+        SOURCES tests/port_dread_readers_a.cpp
+            platform/port_dread_pkg.cpp platform/port_dread_bctex.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_nsp.cpp platform/port_remastered_nso.cpp
+        INCLUDES platform/include tests
+        LIBRARIES ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
+        TIMEOUT 120)
+    mp_websocket_tls(port_dread_readers_a_tests)
+    # --- end Dread readers A ---
+    # --- Dread readers B (BCMDL, BSMAT) ---
+    mp_port_test(port_dread_readers_b_tests
+        SOURCES tests/port_dread_readers_b.cpp platform/port_dread_bcmdl.cpp
+            platform/port_dread_bsmat.cpp
+        INCLUDES platform/include
+        LIBRARIES ZLIB::ZLIB)
+    # --- end Dread readers B ---
+    # --- Dread re-skin (step 4: Dread Samus onto Prime's skeletons) ---
+    # CINF parse, frame/scale fit, repose and weight mapping over synthetic stick figures;
+    # the real-data run is opt-in (PORT_DREAD_SAMUS_PKG_DIR + PORT_PRIME_SAMUS_DIR).
+    mp_port_test(port_dread_reskin_tests
+        SOURCES tests/port_dread_reskin.cpp platform/port_dread_reskin.cpp platform/port_dread_bcmdl.cpp
+        INCLUDES platform/include
+        LIBRARIES ZLIB::ZLIB)
+    # --- end Dread re-skin ---
+    # --- Dread suit material (step 5: mp_samuspbr -> synthetic Remastered PBR material) ---
+    # Channel remap, emissive and ids over synthetic fixtures, then through the converter's
+    # ReadMaterial; the real-data run is opt-in (PORT_DREAD_SAMUS_PKG_DIR).
+    mp_port_test(port_dread_material_tests
+        SOURCES tests/port_dread_material.cpp platform/port_dread_material.cpp platform/port_dread_bctex.cpp
+            platform/port_dread_bsmat.cpp platform/port_remastered_tegra_swizzle.cpp
+            platform/port_remastered_bcdec.cpp
+        INCLUDES platform platform/include
+        LIBRARIES mp_test_remastered_convert ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
+        TIMEOUT 120)
+    # --- end Dread suit material ---
+    # Third-person camera: eye placement and wall pull-in maths (header-only, no game state).
+    mp_port_test(port_third_person_tests
+        SOURCES tests/port_third_person.cpp
+        INCLUDES platform/include)
+    mp_port_test(port_third_person_body_tests
+        SOURCES tests/port_third_person_body.cpp
+        INCLUDES platform/include)
+    # --- Dread Samus import (step 6: the dread-samus mod) ---
+    # The converter's explicit-weights path, the synthetic Model of a re-skinned body, the retail
+    # skin reader and the mod order rule over synthetic fixtures; the whole import on real data is
+    # opt-in (PORT_DREAD_ROMFS + PORT_PRIME_SAMUS_DIR).
+    mp_port_test(port_dread_samus_tests
+        SOURCES tests/port_dread_samus.cpp platform/port_dread_samus.cpp platform/port_dread_material.cpp
+            platform/port_dread_bctex.cpp platform/port_dread_bsmat.cpp platform/port_dread_bcmdl.cpp
+            platform/port_dread_pkg.cpp platform/port_dread_reskin.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_cmdl.cpp
+        INCLUDES platform platform/include
+        LIBRARIES mp_test_remastered_convert ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
+        TIMEOUT 600)
+    # --- end Dread Samus import ---
     # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)

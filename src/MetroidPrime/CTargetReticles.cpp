@@ -1,5 +1,7 @@
 #include "MetroidPrime/CTargetReticles.hpp"
 
+#include "port_third_person.h"
+
 #include "MetroidPrime/CEulerAngles.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
@@ -47,6 +49,18 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifdef TARGET_PC
+namespace {
+// Reticles are drawn in the view the world is drawn from (third person moves it behind the
+// shoulder; PortThirdPerson::View is the game camera otherwise).
+CTransform4f PortReticleCameraXf(const CStateManager& mgr) {
+  return PortThirdPerson::View(mgr.GetCameraManager()->GetCurrentCameraTransform(mgr));
+}
+} // namespace
+#else
+#define PortReticleCameraXf(mgr) (mgr).GetCameraManager()->GetCurrentCameraTransform(mgr)
+#endif
 
 static const char skCrosshairsReticleAssetName[] = "CMDL_Crosshairs";
 static const char skOrbitZoneReticleAssetName[] = "CMDL_OrbitZone";
@@ -604,7 +618,7 @@ void CCompoundTargetReticle::UpdateOrbitZoneGroup(float dt, const CStateManager&
 void CCompoundTargetReticle::Draw(const CStateManager& mgr, bool hideLockon) const {
   if (mgr.GetPlayer()->GetMorphballTransitionState() == CPlayer::kMS_Unmorphed &&
       !mgr.GetCameraManager()->IsInCinematicCamera()) {
-    CTransform4f camXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
+    CTransform4f camXf = PortReticleCameraXf(mgr);
     CGraphics::SetViewPointMatrix(camXf);
     CMatrix3f rot = camXf.BuildMatrix3f();
 
@@ -1399,7 +1413,7 @@ void CCompoundTargetReticle::DrawOrbitZoneGroup(const CMatrix3f& rot,
     // simulation camera. Keep it where it is relative to the view while
     // smooth frames blend the camera between ticks or per-frame look turns it
     // ahead, else it slides off-centre and snaps back every tick (issue #24).
-    targetPos = camMgr->GetCurrentCameraTransform(mgr) *
+    targetPos = PortReticleCameraXf(mgr) *
                 (camMgr->GetSimulationCameraTransform(mgr).GetInverse() * targetPos);
     // Pointer aim: the crosshair is the pointer, moved every drawn frame. The model's
     // geometry sits well in front of its origin (it turns with the camera), so put its
@@ -1412,7 +1426,7 @@ void CCompoundTargetReticle::DrawOrbitZoneGroup(const CMatrix3f& rot,
       float pitch = 0.f;
       PortMouse::PointerAim::RayAngles(pointerX, pointerY, cam.GetRenderFov(),
                                        cam.GetAspectRatio(), yaw, pitch);
-      const CTransform4f camXf = camMgr->GetCurrentCameraTransform(mgr);
+      const CTransform4f camXf = PortReticleCameraXf(mgr);
       const CVector3f centre = model->GetBoundingBox().GetCenterPoint() * scale;
       const float depth = (camXf.GetInverse() * targetPos).GetY() + centre.GetY();
       const CVector3f dir(sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch));
@@ -1440,7 +1454,7 @@ void CCompoundTargetReticle::DrawOrbitZoneGroup(const CMatrix3f& rot,
     if (PortDebug::CrosshairStyle() == PortDebug::kCrosshairStyle_Remastered) {
       // Where the classic model's centre is drawn, with Remastered's cursor at its own size
       // (100% = Remastered's; the size slider scales it) facing the camera.
-      const CTransform4f camXf = camMgr->GetCurrentCameraTransform(mgr);
+      const CTransform4f camXf = PortReticleCameraXf(mgr);
       const CVector3f cursor = targetPos + rot * (model->GetBoundingBox().GetCenterPoint() * scale);
       const float depth = (camXf.GetInverse() * cursor).GetY();
       if (depth > 0.f) {
@@ -1491,7 +1505,7 @@ void CCompoundTargetReticle::PortPresentGroup(CTargetReticleRenderState& state,
   } else if (state.GetIsOrbitZoneIdlePosition()) {
     const CCameraManager* camMgr = mgr.GetCameraManager();
     state.SetTargetPositionWorld(
-        camMgr->GetCurrentCameraTransform(mgr) *
+        PortReticleCameraXf(mgr) *
         (camMgr->GetSimulationCameraTransform(mgr).GetInverse() * state.GetTargetPositionWorld()));
   }
 }
@@ -1541,6 +1555,8 @@ CVector3f CCompoundTargetReticle::CalculateOrbitZoneReticlePosition(const CState
   float dist = 224.f / halfExtY;
   dist /= CMath::SlowTangentR(cam.GetRenderFov() * 0.5f * (1.f / 360.f) * (2.f * M_PIF));
 
+  // The simulation camera's frame, not the third-person view: Draw and PortPresentGroup map
+  // this point to the presented view (View * Sim^-1), which is where the shoulder offset goes.
   CTransform4f camXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
   CVector3f fwd = camXf.GetForward();
 
@@ -1568,7 +1584,11 @@ float CCompoundTargetReticle::CalculateClampedScale(CVector3f pos, float scale, 
   // the point where it sits relative to the drawn camera.
   pos = mgr.GetCameraManager()->GetSimulationCameraTransform(mgr) * camXf.GetInverse() * pos;
 #endif
+#ifdef TARGET_PC
+  CVector3f viewSpace = PortThirdPerson::TickView(cam.GetTransform()).TransposeMultiply(pos);
+#else
   CVector3f viewSpace = cam.GetTransform().TransposeMultiply(pos);
+#endif
   float projX1 = cam.GetPerspectiveMatrix().MultiplyOneOverW(viewSpace).GetX();
   float pixelScale =
       cam.GetPerspectiveMatrix().MultiplyOneOverW(viewSpace + CVector3f(scale, 0.f, 0.f)).GetX() -
@@ -1621,7 +1641,7 @@ void CTargetingManager::Draw(const CStateManager& mgr, bool hideLockon) const {
   CGraphics::DisableAllLights();
   x21c_orbitPointMarker.Draw(mgr);
   const CGameCamera& curCam = mgr.GetCameraManager()->GetCurrentCamera(mgr);
-  CTransform4f camXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
+  CTransform4f camXf = PortReticleCameraXf(mgr);
   CGraphics::SetViewPointMatrix(camXf);
   CFrustumPlanes frustum(camXf, curCam.GetRenderFov() * 0.01745329238474369f, curCam.GetAspectRatio(),
                          1.f, false, 100.f);
@@ -1768,7 +1788,7 @@ void COrbitPointMarker::Draw(const CStateManager& mgr) const {
     const_cast< TCachedToken< CModel >& >(x28_orbitPointModel).TryCache();
     if (x28_orbitPointModel.GetObject() != NULL) {
       const CGameCamera& curCam = mgr.GetCameraManager()->GetCurrentCamera(mgr);
-      CTransform4f camXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
+      CTransform4f camXf = PortReticleCameraXf(mgr);
       CGraphics::SetViewPointMatrix(camXf);
       {
         CFrustumPlanes frustum(camXf, curCam.GetRenderFov() * 0.01745329238474369f,

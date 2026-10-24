@@ -9,6 +9,7 @@
 #include "port_gyro_motion.h"
 #include "port_dynamic_res.h"
 #include "port_photo.h"
+#include "port_third_person.h"
 #include "port_pointer.h"
 #include "port_hd_font.h"
 #include "port_log.h"
@@ -577,7 +578,7 @@ bool CrosshairColor(float rgb[3]) {
 
 bool HideHelmet() {
   EnsureInitialized();
-  return (sHideHelmet || PortPhoto::Active()) && !sOriginalExperience;
+  return (sHideHelmet || PortPhoto::Active() || PortThirdPerson::Active()) && !sOriginalExperience;
 }
 
 void SetHideHelmet(bool enabled) { StoreSetting(sHideHelmet, enabled); }

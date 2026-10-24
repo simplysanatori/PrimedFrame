@@ -2,9 +2,12 @@
 
 #include "port_console.h"
 #include "port_debug.h"
+#include "port_dread_samus_mod.h"
 #include "port_hints.h"
 #include "port_mouse.h"
 #include "port_freecam.h"
+#include "port_third_person.h"
+#include "port_third_person_body.h"
 
 #include "Collision/CInternalCollisionStructure.hpp"
 #include "Kyoto/CDependencyGroup.hpp"
@@ -2515,10 +2518,15 @@ void CPlayer::PreRender(CStateManager& mgr, const CFrustumPlanes& frustum) {
 
   if (x2f4_cameraState != kCS_FirstPerson
 #ifdef TARGET_PC
-      || PortFreeCam::ShowPlayer()
+      || PortFreeCam::ShowPlayer() || PortThirdPerson::Active()
 #endif
   ) {
     CActor::PreRender(mgr, frustum);
+#ifdef TARGET_PC
+    if (PortThirdPerson::Active()) {
+      PortThirdPersonBody::PreRender();
+    }
+#endif
   }
 }
 
@@ -2559,8 +2567,8 @@ void CPlayer::Render(const CStateManager& mgr) const {
 
   bool firstPerson = x2f4_cameraState == kCS_FirstPerson;
 #ifdef TARGET_PC
-  // Port: the free camera shows the body the first-person view leaves out.
-  if (PortFreeCam::ShowPlayer()) {
+  // Port: the free and third-person cameras show the body the first-person view leaves out.
+  if (PortFreeCam::ShowPlayer() || PortThirdPerson::Active()) {
     firstPerson = false;
   }
 #endif
@@ -2569,6 +2577,19 @@ void CPlayer::Render(const CStateManager& mgr) const {
     bool doBallRender = false;
     switch (x2f8_morphBallState) {
     case kMS_Unmorphed:
+#ifdef TARGET_PC
+      // Third person: the cutscene body that walks, when its pak has it.
+      if (PortThirdPerson::Active()) {
+        // The cutscene body stands on the origin, the player's origin is the middle of its box.
+        CTransform4f bodyXf = GetTransform();
+        CVector3f origin = bodyXf.GetTranslation();
+        origin.SetZ(GetBoundingBox().GetMinPoint().GetZ());
+        bodyXf.SetTranslation(origin);
+        if (PortThirdPersonBody::Render(mgr, bodyXf, GetActorLights())) {
+          break;
+        }
+      }
+#endif
       GetModelData()->Touch(mgr, 0);
       CPhysicsActor::Render(mgr);
       if (HasTransitionBeamModel()) {
@@ -3225,7 +3246,9 @@ const CDamageVulnerability* CPlayer::GetDamageVulnerability() const {
 bool CPlayer::CanRenderUnsorted(const CStateManager& mgr) const { return false; }
 
 bool CPlayer::HasTransitionBeamModel() const {
-  return !x7f0_ballTransitionBeamModel.null() && !x7f0_ballTransitionBeamModel->IsNull();
+  // The Dread Samus body (port_dread_samus_mod.h) carries its own cannon: Prime's is not drawn on it.
+  return !x7f0_ballTransitionBeamModel.null() && !x7f0_ballTransitionBeamModel->IsNull() &&
+         !PortDreadSamus::Replaces(PortDreadSamus::InGameBody(x7cc_transitionSuit));
 }
 
 void CPlayer::LoadAnimationTokens() {

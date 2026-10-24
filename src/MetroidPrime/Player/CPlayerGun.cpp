@@ -4,6 +4,8 @@
 #include "port_room_env.h"
 #include "port_shot_aim.h"
 #include "port_synthetic_effect.h"
+#include "port_third_person.h"
+#include "port_third_person_body.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 #endif
@@ -29,6 +31,7 @@
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/HUD/CSamusHud.hpp"
 #include "MetroidPrime/Player/CGrappleArm.hpp"
+#include "MetroidPrime/Cameras/CFirstPersonCamera.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/SFX/PhazonGun.h"
 #include "MetroidPrime/SFX/Weapons.h"
@@ -599,6 +602,10 @@ void CPlayerGun::PortShotFromDrawnMuzzle(const CStateManager& mgr, CTransform4f&
   // so on screen the muzzle sits where a world point at the same depth, scaled out from the
   // view axis by the ratio of the two projections, would. Shots start there, so they leave
   // the cannon as drawn; with pointer aim they still head for the pointed point.
+  if (PortThirdPerson::Active()) {
+    PortShotFromThirdPersonCannon(mgr, xf, aim);
+    return;
+  }
   const CCameraManager* camMgr = mgr.GetCameraManager();
   if (!camMgr->IsInFPCamera()) {
     return;
@@ -638,6 +645,38 @@ void CPlayerGun::PortShotFromDrawnMuzzle(const CStateManager& mgr, CTransform4f&
     xf = CTransform4f::LookAt(CVector3f::Zero(), toAim);
   }
   xf.SetTranslation(pos);
+}
+
+void CPlayerGun::PortShotFromThirdPersonCannon(const CStateManager& mgr, CTransform4f& xf,
+                                               bool aim) const {
+  // Third person: the shot leaves the body's cannon (the first-person muzzle if the body is not
+  // there) and heads for the point under the camera's centre ray, or the assisted aim point of
+  // the locked target, as retail's does under a lock.
+  const CPlayer& player = *mgr.GetPlayer();
+  CVector3f origin = xf.GetTranslation();
+  PortThirdPersonBody::CannonPosition(player, origin);
+  if (!aim) {
+    xf.SetTranslation(origin);
+    return;
+  }
+  CVector3f aimPoint;
+  const CVector3f camFwd = mgr.GetCameraManager()->GetFirstPersonCamera()->GetTransform().GetForward();
+  bool have = false;
+  if (player.GetOrbitTargetId() != kInvalidUniqueId &&
+      TCastToConstPtr< CActor >(mgr.GetObjectById(player.GetOrbitTargetId())) != nullptr) {
+    aimPoint = player.GetAssistedTargetAim();
+    have = true;
+  } else {
+    have = PortThirdPerson::AimPoint(aimPoint);
+  }
+  if (have && camFwd.CanBeNormalized()) {
+    const PortThirdPerson::Vec3 d = PortThirdPerson::AimDirection(
+        {origin.GetX(), origin.GetY(), origin.GetZ()},
+        {aimPoint.GetX(), aimPoint.GetY(), aimPoint.GetZ()},
+        {camFwd.AsNormalized().GetX(), camFwd.AsNormalized().GetY(), camFwd.AsNormalized().GetZ()});
+    xf = CTransform4f::LookAt(CVector3f::Zero(), CVector3f(d.x, d.y, d.z));
+  }
+  xf.SetTranslation(origin);
 }
 
 CVector3f CPlayerGun::PortShotAimPoint(const CStateManager& mgr, const CVector3f& from,
@@ -1480,7 +1519,7 @@ void CPlayerGun::UpdateNormalShotCycle(float dt, CStateManager& mgr) {
     xf.SetTranslation(pos);
   }
 #ifdef TARGET_PC
-  if (!x833_29_pointBlankWorldSurface) {
+  if (!x833_29_pointBlankWorldSurface || PortThirdPerson::Active()) {
     PortShotFromDrawnMuzzle(mgr, xf);
   }
 #endif
@@ -1574,7 +1613,7 @@ void CPlayerGun::FireSecondary(float dt, CStateManager& mgr) {
       xf.SetTranslation(pos);
     }
 #ifdef TARGET_PC
-    if (!x833_29_pointBlankWorldSurface) {
+    if (!x833_29_pointBlankWorldSurface || PortThirdPerson::Active()) {
       PortShotFromDrawnMuzzle(mgr, xf);
     }
 #endif

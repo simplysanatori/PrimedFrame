@@ -410,6 +410,8 @@ Java_org_metroidprime_port_MetroidPrimeActivity_nativeRemasteredPicked(JNIEnv* e
       PortDebug::sPalLanguagesPick = chars;
     } else if (which == PortDebug::kFlaahgraPick) {
       PortDebug::sFlaahgraPick = chars;
+    } else if (which == PortDebug::kDreadPick) {
+      PortDebug::sDreadPick = chars;
     } else {
       PortDebug::sRemasteredPicks.emplace_back(int(which), chars);
     }

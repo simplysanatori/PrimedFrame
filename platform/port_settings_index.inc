@@ -147,6 +147,7 @@
 {"Video", "Display", "HUD and view", "Custom crosshair colour", "crosshair color reticle tint"},
 {"Video", "Display", "HUD and view", "Secondary crosshairs", "crosshair secondary extra"},
 {"Video", "Display", "HUD and view", "Hide helmet", "helmet visor frame hide first person"},
+{"Video", "Display", "HUD and view", "Third-person camera", "third person camera behind shoulder body over the shoulder view"},
 {"Video", "Display", "HUD and view", "Hide visor effects", "visor effects static scanlines hide"},
 {"Video", "Display", "HUD and view", "Field of view", "fov field of view zoom camera"},
 {"Video", "Display", "HUD and view", "Arm cannon right", "arm cannon gun offset right position"},

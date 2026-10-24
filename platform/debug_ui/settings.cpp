@@ -8,6 +8,7 @@
 #include "port_debug.h"
 #include "port_gyro_motion.h"
 #include "port_photo.h"
+#include "port_third_person.h"
 #include "port_pointer.h"
 #include "port_room_geo.h"
 #include "port_log.h"
@@ -230,6 +231,17 @@ const SettingKey kSettingKeys[] = {
      },
      false, "ff8000", ""},
     BoolKey< &sHideHelmet >("hide_helmet"),
+    {"third_person", [](const std::string& value) { PortThirdPerson::SetEnabled(ParseBool(value)); },
+     [](std::ostream& out) { WriteBool(out, PortThirdPerson::Enabled()); }, false, "1", "0"},
+    {"third_person_distance",
+     [](const std::string& value) { PortThirdPerson::SetDistance(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortThirdPerson::GetParams().distance; }, false, "2.5", "4"},
+    {"third_person_shoulder",
+     [](const std::string& value) { PortThirdPerson::SetShoulder(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortThirdPerson::GetParams().shoulder; }, false, "0.5", "-0.5"},
+    {"third_person_height",
+     [](const std::string& value) { PortThirdPerson::SetHeight(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortThirdPerson::GetParams().height; }, false, "0.5", "0"},
     BoolKey< &sHideVisorEffects >("hide_visor_effects"),
     BoolKey< &sRevealMap >("reveal_map"),
     {"map_pickups",

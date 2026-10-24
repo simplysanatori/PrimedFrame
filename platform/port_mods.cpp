@@ -16,6 +16,7 @@
 #include "port_hud_bars.h"
 #include "port_log.h"
 #include "port_remastered_import.h"
+#include "port_dread_samus_mod.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
 #include "port_room_effects.h"
@@ -68,6 +69,10 @@ std::unordered_map<uint32_t, std::string> sRoomLiquids;
 std::unordered_map<uint32_t, std::string> sRoomEffects;
 // <FRME id>.hudbars files, by frame.
 std::unordered_map<uint32_t, std::string> sHudBars;
+// The CMDLs the dread-samus mod serves (PortDreadSamus::Replaces).
+std::set<uint32_t> sDreadBodies;
+// The Dread-proportioned CINFs it serves (PortDreadSamus::Skeleton).
+std::set<uint32_t> sDreadSkeletons;
 // thermal.lut: the thermal visor's heat gradient (port_thermal.h).
 std::string sThermalLut;
 // envfx.bin: Remastered's EnvironmentFX textures (port_envfx_assets.h).
@@ -351,6 +356,17 @@ std::string ExtraPakName(int index) { return "PortMods" + std::to_string(index +
 
 bool HasNativeTexture(uint32_t id) { return sNativeTextures.count(id) != 0; }
 
+}  // namespace PortMods
+
+bool PortDreadSamus::Replaces(uint32_t bodyCmdl) { return bodyCmdl != 0 && PortMods::sDreadBodies.count(bodyCmdl) != 0; }
+
+uint32_t PortDreadSamus::Skeleton(uint32_t bodyCmdl) {
+  const uint32_t cinf = DreadCinf(bodyCmdl);
+  return cinf != 0 && Replaces(bodyCmdl) && PortMods::sDreadSkeletons.count(cinf) != 0 ? cinf : 0;
+}
+
+namespace PortMods {
+
 bool BindTexture(const void* owner, uint32_t id) {
   UnbindTexture(owner);
   const auto found = sNativeTextures.find(id);
@@ -489,6 +505,8 @@ void Initialize() {
   sThermalLut.clear();
   sEnvFx.clear();
   sRetailPlacements.clear();
+  sDreadBodies.clear();
+  sDreadSkeletons.clear();
   {
     std::lock_guard<std::mutex> lock(sEffectIdsMutex);
     sEffectIdMapPath.clear();
@@ -532,6 +550,13 @@ void Initialize() {
       if (info.import) {
         const std::string text = port::ReadAllText(stamp);
         info.importStale = ImportStampStale(text, PortRemastered::kImportVersion);
+      }
+      if (info.name == PortDreadSamus::kModName) {
+        std::ifstream dreadStamp(modDir / PortDreadSamus::kStampName);
+        if (ImportStampStale(dreadStamp.is_open() ? port::ReadAllText(dreadStamp) : std::string(),
+                             PortDreadSamus::kVersion)) {
+          Message(info.name + " was imported by an older version; import the Dread Samus models again");
+        }
       }
       if (info.importStale && sStatus.staleImport.empty()) {
         sStatus.staleImport = info.name;
@@ -711,6 +736,28 @@ void Initialize() {
       }
     }
     PortSuitColours::SetServed(served);
+  }
+
+  // The bodies the Dread Samus import serves, for the game to leave out Prime's cannon on them.
+  {
+    std::string ids;
+    for (const auto& [key, resource] : loose) {
+      if (key.first == 0x434D444C && resource.mod == PortDreadSamus::kModName) { // 'CMDL'
+        sDreadBodies.insert(key.second);
+        char text[12];
+        std::snprintf(text, sizeof(text), " %08X", key.second);
+        ids += text;
+      }
+    }
+    for (const auto& [key, resource] : loose) {
+      if (key.first == 0x43494E46 && resource.mod == PortDreadSamus::kModName) { // 'CINF'
+        sDreadSkeletons.insert(key.second);
+      }
+    }
+    if (!sDreadBodies.empty()) {
+      PortLog::Write("mods: %s serves %zu Samus body model(s):%s\n", PortDreadSamus::kModName, sDreadBodies.size(),
+                     ids.c_str());
+    }
   }
 
   // Which loose resources each PAK takes. Ids no PAK holds are added to

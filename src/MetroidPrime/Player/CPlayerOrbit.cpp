@@ -34,6 +34,7 @@
 #include "Kyoto/Math/CMath.hpp"
 #include "math.h"
 #include "port_debug.h"
+#include "port_third_person.h"
 
 static const CMaterialList kLineOfSightIncludeList = CMaterialList(kMT_Solid);
 static const CMaterialList kLineOfSightExcludeList =
@@ -869,7 +870,12 @@ void CPlayer::UpdateOrbitableObjects(CStateManager& mgr) {
   if (CheckOrbitDisableSourceList(mgr)) {
     return;
   }
+  #ifdef TARGET_PC
+  // Third person: the search volume is the view the reticle is aimed in.
+  const CTransform4f cameraXf = PortThirdPerson::TickView(GetFirstPersonCameraTransform(mgr));
+#else
   const CTransform4f& cameraXf = GetFirstPersonCameraTransform(mgr);
+#endif
   float distance = GetOrbitMaxTargetDistance(mgr);
   if (x9c6_24_extendTargetDistance) {
     distance *= 5.f;
@@ -968,7 +974,12 @@ TUniqueId CPlayer::CheckEnemiesAgainstOrbitZone(const rstl::reserved_vector< TUn
 }
 
 TUniqueId CPlayer::FindAimTargetId(CStateManager& mgr) {
+  #ifdef TARGET_PC
+  // Third person: the search volume is the view the reticle is aimed in.
+  const CTransform4f cameraXf = PortThirdPerson::TickView(GetFirstPersonCameraTransform(mgr));
+#else
   const CTransform4f& cameraXf = GetFirstPersonCameraTransform(mgr);
+#endif
   float distance = gpTweakPlayer->GetAimMaxDistance();
   if (x9c6_24_extendTargetDistance) {
     distance *= 5.f;
@@ -1145,7 +1156,11 @@ void CPlayer::UpdateAimTarget(CStateManager& mgr) {
 }
 
 void CPlayer::SetOrbitPosition(float distance, CStateManager& mgr) {
+#ifdef TARGET_PC
+  CTransform4f cameraXf = PortThirdPerson::TickView(GetFirstPersonCameraTransform(mgr));
+#else
   CTransform4f cameraXf = GetFirstPersonCameraTransform(mgr);
+#endif
   if (x304_orbitState == kOS_OrbitPoint && x30c_orbitBrokenType == kOB_BadVerticalAngle) {
     cameraXf = GetTransform();
   }
