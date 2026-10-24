@@ -109,6 +109,7 @@ Nintendo and Retro Studios, and ships no game data.
 | `docs/SETTINGS.md` | Every control, setting and environment variable |
 | `docs/NATIVE_PORT.md` | The detailed reference: build options, smoke-test hooks, platform notes |
 | `docs/MODS.md` | HD texture packs and the mods folder |
+| `docs/DREAD_SAMUS.md` | The Metroid Dread Samus model import |
 | `docs/RANDOMIZER.md` | The built-in randomizer |
 | `docs/ARCHIPELAGO.md` | The Archipelago multiworld client |
 | `docs/CONSOLE.md` | The debug console (`MP_CONSOLE`) |

@@ -122,8 +122,9 @@ which are authoritative. Inside a mod:
   importer writes BC7 (BC5, two-channel, for PBR normal maps), or ASTC 4x4
   (normal maps as RGBA with B=0, A=255) when the GPU has ASTC and no BC; the
   loader also reads BC3, BC1 and RGBA8. `MP_REMASTERED_TEXTURE_FORMAT=bc|astc`
-  forces the choice (for testing); `--import-remastered` has no GPU and writes BC
-  unless told otherwise. The import logs `remastered: writing <BC7|ASTC 4x4>
+  forces the choice (for testing); `--import-remastered` and
+  `--import-dread-samus` have no GPU and write BC unless told otherwise. The
+  import logs `remastered: writing <BC7|ASTC 4x4>
   textures`. The ASTC encoder is ARM's astc-encoder (`extern/astcenc`, FAST
   preset, about 2 s for a 2048 px map with its mips on one desktop core). The TXTR still
   loads (the mod's own, which can be a few texels across, or the disc's) and
@@ -350,6 +351,7 @@ From a terminal,
 `metroid_prime_port --import-remastered <image.nsp|image.xci> [key file]` does the same
 on every core without starting the game and installs at once, printing the folder it installed into
 (the disc comes from `MP_DISC`, the remembered path, or a copy beside the executable).
+`--import-dread-samus` is the Dread import's, with the same arguments.
 
 Where the import lives, in full: on desktop it is a mod folder like any other
 (`mods/remastered-models`, and `MP_MODS`/`MP_USER_PATH` move it with the rest). On Android it is in
@@ -534,6 +536,17 @@ The importer already turns their vectors from Remastered's particle space (X
 left, Y up, Z forward) into the port's, so no extra frame goes on top: the Power
 charge disc's EMTR, Remastered `(0,0,0.15)`, becomes the port's `(0,0.15,0)` and
 at scale 2 sits 0.30 m forward of the barrel, as on native's LBEAM.
+
+### Metroid Dread Samus models
+
+The other model import: Samus's Power, Varia and Gravity Suit bodies from your
+own Metroid Dread `.nsp`/`.xci` and `prod.keys`, in place of Prime's, in
+cutscenes, the Morph Ball transitions and the third-person camera. It is a mod
+of its own, `dread-samus`, so it switches off on the Mods page without touching
+the Remastered models, and it shares the `prod.keys` row and the import panel
+with the Remastered import (only one of the two runs at a time). Phazon and
+Fusion keep their models. It needs the base Dread release only. See
+[`docs/DREAD_SAMUS.md`](DREAD_SAMUS.md) for the import and its limits.
 
 ### Collision stays on the disc's model
 

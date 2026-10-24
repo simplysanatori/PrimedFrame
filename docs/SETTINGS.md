@@ -656,6 +656,7 @@
   from behind Samus's shoulder, drawing her body animated with Prime's
   cutscene clips and hiding the arm cannon and helmet. The Morph Ball,
   cutscenes and scripted cameras are unchanged. The camera pulls in at walls.
+  It is how the Dread Samus bodies are seen in play (`docs/DREAD_SAMUS.md`).
   `third_person_distance` (metres behind, 0.5..10, default 3),
   `third_person_shoulder` (metres right, -2..2, default 0.6) and
   `third_person_height` (metres above the first-person eye, -1..2, default
