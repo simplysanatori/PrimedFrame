@@ -7,6 +7,9 @@
 #include <vector>
 
 class CStateManager;
+#ifdef TARGET_PC
+struct SPortExternalVar;  // Kyoto/Particles/CPortParticleVars.hpp
+#endif
 
 // Remastered's own particle effect actors (EffectMP1 entities the disc has no object for),
 // added to an area as retail Effect objects. A mod supplies them per area as
@@ -22,7 +25,7 @@ class CStateManager;
 // from kFirstInstance up: no retail area uses those (the import checks).
 //
 // The file is little endian:
-//   'MPRF', u32 version (1)
+//   'MPRF', u32 version (3)
 //   u32 skips, u32 editor id[skips] (retail objects not to create, layer bits included)
 //   u32 connected (effects left out because something connects to them; for the log)
 //   u32 layers, then per layer: u32 retail layer, u32 objects, u32 bytes, then that many
@@ -31,10 +34,14 @@ class CStateManager;
 //   version 2 then has, per object in order, u32 variables and that many Variable
 //   records (16 guid bytes as the particle tables store them, f32 colour[4], f32 vector[3],
 //   f32 real, s32 int). Version 1 files have no variables.
+//   version 3 then has u32 overrides, then per override: u32 editor id (layer bits included),
+//   u32 part (0xFFFFFFFF for none), u32 variables and that many Variable records. An override
+//   is a retail Effect object a Remastered effect actor matched: the object stays, with its
+//   connections, but takes the actor's PART and its particle variables.
 namespace PortRoomEffects {
 
 constexpr uint32_t kFileMagic = 0x4652504D;  // 'MPRF'
-constexpr uint32_t kFileVersion = 2;
+constexpr uint32_t kFileVersion = 3;
 constexpr uint8_t kEffectType = 7;
 constexpr uint32_t kEffectProps = 24;
 constexpr uint32_t kFirstInstance = 0xF000;
@@ -94,10 +101,20 @@ struct Layer {
   std::vector<std::vector<Variable>> vars;    // per object; empty, or `count` of them
 };
 
+// A retail Effect object a Remastered effect actor matched (the script matcher paired them):
+// it is created as retail has it, with its connections, then given this PART (0xFFFFFFFF for
+// none the mod has) and these particle variables.
+struct Override {
+  uint32_t id = 0;
+  uint32_t part = 0xFFFFFFFF;
+  std::vector<Variable> vars;
+};
+
 struct File {
   std::vector<uint32_t> skips;
   uint32_t connected = 0;
   std::vector<Layer> layers;
+  std::vector<Override> overrides;
 };
 
 // Appends the effect as one SCLY object. Its light parameters are retail's most common
@@ -113,6 +130,10 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error);
 // value, real 0xfd41dc4b, int 0xcd774f7a, colour 0x45eff31d or vector 0x282df928; the others
 // keep their defaults). False if it is malformed.
 bool ReadExternalVariables(const uint8_t* data, size_t size, std::vector<Variable>& out);
+// `vars` as CScriptEffect::PortSetExternalVars takes them (a value of each type per record).
+#ifdef TARGET_PC
+std::vector<SPortExternalVar> ExternalVars(const std::vector<Variable>& vars);
+#endif
 // "1A2B3C4D.roomfx" (any case) -> 0x1A2B3C4D.
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 
@@ -123,6 +144,8 @@ void BeginArea(uint32_t mrea);
 void EndArea();
 // Whether the retail object `eid` is one the area being loaded leaves out.
 bool Skips(uint32_t eid);
+// The override of the retail object `eid` in the area being loaded, or null.
+const Override* FindOverride(uint32_t eid);
 // Creates the add-ons of `layer` in area `area` (TAreaId) and adds their editor ids to `ids`,
 // for InitializedInArea.
 void LoadLayer(CStateManager& mgr, int area, uint32_t layer, std::vector<uint32_t>& ids);

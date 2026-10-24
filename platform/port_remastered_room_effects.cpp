@@ -93,7 +93,7 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
   if (!io.effect || !io.write || effects.empty()) {
     return {};
   }
-  char line[320];
+  char line[384];
   const std::vector<ScriptObject>& objects = area.objects;
   if (objects.empty()) {
     return "  " + name + ": no retail objects, its effect actors left out";
@@ -120,15 +120,12 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
 
   std::map<uint32_t, PortRoomEffects::Layer> layers;
   std::set<uint32_t> skips;
+  std::vector<PortRoomEffects::Override> overrides;
   std::vector<Vec3> added;
   std::set<int> seen;
-  size_t connectedCount = 0, noPart = 0, noLayer = 0, kept = 0, keptOwn = 0, full = 0, badVars = 0;
+  size_t connectedCount = 0, noPart = 0, noLayer = 0, kept = 0, keptOwn = 0, overridden = 0, full = 0, badVars = 0;
   for (const Component* c : effects) {
     if (c->entity < 0 || !seen.insert(c->entity).second) {
-      continue;
-    }
-    if (connected.count(c->entity) != 0) {
-      ++connectedCount;
       continue;
     }
     const auto f = room.Flat(*c);
@@ -138,16 +135,36 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
       continue;
     }
     const uint32_t part = io.effect(SwapUuid(room.Bytes(genp->second)));
-    // One the matcher paired with a retail object is that object, which stays (even where
-    // Remastered gave it an effect of its own: counted, for later).
+    // One the matcher paired with a retail object is that object, which stays, whatever
+    // connects to it; if Remastered gave it an effect of its own, or it has particle
+    // variables, the object takes those (an override).
     const auto matched = scripts.retail.find(c->entity);
     if (matched != scripts.retail.end()) {
       const ScriptObject& o = objects[matched->second];
-      if (o.type == kRetailEffect && (part >> 24) == 0xFE && o.props.size() >= 40 && ReadBE32(&o.props[36]) != part) {
-        ++keptOwn;
-      } else {
+      if (o.type != kRetailEffect) {
         ++kept;
+        continue;
       }
+      std::vector<PortRoomEffects::Variable> vars;
+      const auto ext = f.find(kPropExternalVariables);
+      if (ext != f.end() && !PortRoomEffects::ReadExternalVariables(room.Bytes(ext->second), ext->second.size, vars)) {
+        ++badVars;
+        vars.clear();
+      }
+      // The variables are the GENP's: they go only with its PART, the Remastered-only one or
+      // the one the mod gives the object's own retail id.
+      const uint32_t own = o.props.size() >= 40 ? ReadBE32(&o.props[36]) : 0;
+      const bool ownPart = part != 0 && (part >> 24) == 0xFE && part != own;
+      if (!ownPart && (part == 0 || part != own || vars.empty())) {
+        ++keptOwn;
+        continue;
+      }
+      overrides.push_back({o.id, part, std::move(vars)});
+      ++overridden;
+      continue;
+    }
+    if (connected.count(c->entity) != 0) {
+      ++connectedCount;
       continue;
     }
     if (part == 0) {
@@ -239,12 +256,13 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
     }
   }
   std::snprintf(line, sizeof line,
-                "  %s: %zu effect actor(s) added, %zu retail effect(s) replaced, %zu connected and left out, %zu "
-                "matched a retail object (%zu of them with an effect of Remastered's own), %zu without a PART, %zu on "
-                "an unknown layer%s%s",
-                name.c_str(), added.size(), replacedNear, connectedCount, kept + keptOwn, keptOwn, noPart, noLayer,
-                full != 0 ? ", the id range is full" : "", badVars != 0 ? ", unreadable particle variables" : "");
-  if (added.empty()) {
+                "  %s: %zu effect actor(s) added, %zu retail effect(s) replaced, %zu retail effect(s) take "
+                "Remastered's effect, %zu connected and left out, %zu matched a retail object (%zu of them still on "
+                "the retail PART), %zu without a PART, %zu on an unknown layer%s%s",
+                name.c_str(), added.size(), replacedNear, overridden, connectedCount, kept + keptOwn + overridden,
+                keptOwn, noPart, noLayer, full != 0 ? ", the id range is full" : "",
+                badVars != 0 ? ", unreadable particle variables" : "");
+  if (added.empty() && overrides.empty() && skips.empty()) {
     return line;
   }
   PortRoomEffects::File file;
@@ -253,6 +271,7 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
   for (auto& [index, layer] : layers) {
     file.layers.push_back(std::move(layer));
   }
+  file.overrides = std::move(overrides);
   char fileName[32];
   std::snprintf(fileName, sizeof fileName, "%08X.roomfx", mrea);
   if (!io.write(fileName, PortRoomEffects::Write(file))) {

@@ -81,6 +81,22 @@ bool ReadLE32(const std::vector<uint8_t>& d, size_t& at, uint32_t& v) {
   return true;
 }
 
+// Reads `n` Variable records at `at` (the caller checked that they are all there).
+void ReadVariables(const std::vector<uint8_t>& d, size_t& at, uint32_t n, std::vector<Variable>& out) {
+  out.resize(n);
+  for (Variable& v : out) {
+    std::memcpy(v.guid.data(), d.data() + at, 16);
+    at += 16;
+    uint32_t bits = 0;
+    for (float* f : {&v.color[0], &v.color[1], &v.color[2], &v.color[3], &v.vec[0], &v.vec[1], &v.vec[2], &v.real}) {
+      ReadLE32(d, at, bits);
+      std::memcpy(f, &bits, 4);
+    }
+    ReadLE32(d, at, bits);
+    v.integer = int32_t(bits);
+  }
+}
+
 }  // namespace
 
 void AppendEffect(const Effect& e, std::vector<uint8_t>& out) {
@@ -184,29 +200,35 @@ std::vector<uint8_t> Write(const File& file) {
   }
   PutLE32(out, file.connected);
   PutLE32(out, uint32_t(file.layers.size()));
+  auto putVariables = [&out](const std::vector<Variable>& vars) {
+    PutLE32(out, uint32_t(vars.size()));
+    for (const Variable& v : vars) {
+      out.insert(out.end(), v.guid.begin(), v.guid.end());
+      for (float f : v.color) {
+        PutLEFloat(out, f);
+      }
+      for (float f : v.vec) {
+        PutLEFloat(out, f);
+      }
+      PutLEFloat(out, v.real);
+      PutLE32(out, uint32_t(v.integer));
+    }
+  };
   for (const Layer& layer : file.layers) {
     PutLE32(out, layer.layer);
     PutLE32(out, layer.count);
     PutLE32(out, uint32_t(layer.objects.size()));
     out.insert(out.end(), layer.objects.begin(), layer.objects.end());
     for (uint32_t i = 0; i < layer.count; ++i) {
-      const std::vector<Variable>* vars = i < layer.vars.size() ? &layer.vars[i] : nullptr;
-      PutLE32(out, vars != nullptr ? uint32_t(vars->size()) : 0);
-      if (vars == nullptr) {
-        continue;
-      }
-      for (const Variable& v : *vars) {
-        out.insert(out.end(), v.guid.begin(), v.guid.end());
-        for (float f : v.color) {
-          PutLEFloat(out, f);
-        }
-        for (float f : v.vec) {
-          PutLEFloat(out, f);
-        }
-        PutLEFloat(out, v.real);
-        PutLE32(out, uint32_t(v.integer));
-      }
+      static const std::vector<Variable> kNoVariables;
+      putVariables(i < layer.vars.size() ? layer.vars[i] : kNoVariables);
     }
+  }
+  PutLE32(out, uint32_t(file.overrides.size()));
+  for (const Override& over : file.overrides) {
+    PutLE32(out, over.id);
+    PutLE32(out, over.part);
+    putVariables(over.vars);
   }
   return out;
 }
@@ -272,19 +294,7 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
         error = "layer " + std::to_string(layer.layer) + ": truncated variables of object " + std::to_string(i);
         return false;
       }
-      std::vector<Variable>& vars = layer.vars[i];
-      vars.resize(n);
-      for (Variable& v : vars) {
-        std::memcpy(v.guid.data(), data.data() + at, 16);
-        at += 16;
-        uint32_t bits = 0;
-        for (float* f : {&v.color[0], &v.color[1], &v.color[2], &v.color[3], &v.vec[0], &v.vec[1], &v.vec[2], &v.real}) {
-          ReadLE32(data, at, bits);
-          std::memcpy(f, &bits, 4);
-        }
-        ReadLE32(data, at, bits);
-        v.integer = int32_t(bits);
-      }
+      ReadVariables(data, at, n, layer.vars[i]);
     }
     total += layer.count;
     out.layers.push_back(std::move(layer));
@@ -292,6 +302,24 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
   if (total > kMaxAddOns) {
     error = "too many objects";
     return false;
+  }
+  if (version >= 3) {
+    uint32_t overrides = 0;
+    if (!ReadLE32(data, at, overrides) || overrides > (data.size() - at) / 12) {
+      error = "truncated override list";
+      return false;
+    }
+    for (uint32_t i = 0; i < overrides; ++i) {
+      Override over;
+      uint32_t n = 0;
+      if (!ReadLE32(data, at, over.id) || !ReadLE32(data, at, over.part) || !ReadLE32(data, at, n) ||
+          n > kMaxVariables || n > (data.size() - at) / kVariableBytes) {
+        error = "truncated override " + std::to_string(i);
+        return false;
+      }
+      ReadVariables(data, at, n, over.vars);
+      out.overrides.push_back(std::move(over));
+    }
   }
   if (at != data.size()) {
     error = "bytes after the layers";

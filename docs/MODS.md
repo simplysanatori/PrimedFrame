@@ -206,6 +206,9 @@ which are authoritative. Inside a mod:
   ids use instance numbers 0xF000 to 0xFFFF, which no retail area has; nothing
   saves them, and nothing can send them a message. The Remastered import writes
   one for each room with effects of Remastered's own that nothing connects to.
+  The same file may also override a retail Effect object that a Remastered
+  effect actor matched: the object is created as retail has it, connections and
+  all, then gets the actor's PART and its particle variables.
   The layout is in `platform/include/port_room_effects.h`.
   `MP_REMASTERED_EFFECT_ACTORS=0` ignores the files; the console's `fx addons`
   lists the current area's.

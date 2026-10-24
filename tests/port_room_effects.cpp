@@ -87,7 +87,7 @@ void TestFile() {
   bad.push_back(0);
   CHECK_MSG(!PortRoomEffects::Parse(bad, out, error), "trailing bytes");
   bad = data;
-  bad[4] = 3;
+  bad[4] = 4;
   CHECK_MSG(!PortRoomEffects::Parse(bad, out, error), "version");
 
   // An object outside the add-on range, or on another layer than its own, is refused.
@@ -142,18 +142,62 @@ void TestFileVariables() {
   CHECK(v.guid == MakeVariable(9).guid && v.color[0] == 0.59f && v.color[1] == 1.f && v.color[3] == 0.25f);
   CHECK(v.vec[2] == 0.5f && v.real == -0.0025f && v.integer == -3);
 
-  // Three u32 counts and three records follow the objects.
+  // Three u32 counts and three records follow the objects, then the override count.
   const size_t tail = 3 * 4 + 3 * PortRoomEffects::kVariableBytes;
   std::vector<uint8_t> bad = data;
   bad.resize(bad.size() - tail + 4);
   CHECK_MSG(!PortRoomEffects::Parse(bad, out, error), "truncated variables");
 
-  // The same file as version 1: the objects, no variable blocks.
-  std::vector<uint8_t> v1(data.begin(), data.end() - tail);
+  // The same file as version 1: the objects, no variable blocks and no overrides.
+  std::vector<uint8_t> v1(data.begin(), data.end() - tail - 4);
   v1[4] = 1;
   REQUIRE_MSG(PortRoomEffects::Parse(v1, out, error), error.c_str());
   CHECK(out.layers.size() == 1 && out.layers[0].count == 3 && out.layers[0].vars.size() == 3);
-  CHECK(out.layers[0].vars[0].empty() && out.layers[0].vars[2].empty());
+  CHECK(out.layers[0].vars[0].empty() && out.layers[0].vars[2].empty() && out.overrides.empty());
+}
+
+// Version 3 carries the overrides: the PART and the particle variables a matched retail Effect
+// object takes from its Remastered actor. They live outside the layers, so a file may have them
+// alone.
+void TestFileOverrides() {
+  File in;
+  in.skips = {0x040001CA};
+  in.connected = 2;
+  PortRoomEffects::Override over;
+  over.id = 0x04000210;
+  over.part = 0xFE123456;
+  over.vars = {MakeVariable(4), MakeVariable(5)};
+  in.overrides.push_back(over);
+  in.overrides.push_back({0x04000211, 0xFFFFFFFF, {}});
+  const std::vector<uint8_t> data = PortRoomEffects::Write(in);
+  File out;
+  std::string error;
+  REQUIRE_MSG(PortRoomEffects::Parse(data, out, error), error.c_str());
+  CHECK(out.layers.empty() && out.skips == in.skips && out.connected == 2);
+  REQUIRE(out.overrides.size() == 2);
+  CHECK(out.overrides[0].id == 0x04000210 && out.overrides[0].part == 0xFE123456);
+  REQUIRE(out.overrides[0].vars.size() == 2);
+  const PortRoomEffects::Variable& v = out.overrides[0].vars[1];
+  CHECK(v.guid == MakeVariable(5).guid && v.color[0] == 0.59f && v.color[3] == 0.25f && v.vec[2] == 0.5f);
+  CHECK(v.real == -0.0025f && v.integer == -3);
+  CHECK(out.overrides[1].id == 0x04000211 && out.overrides[1].part == 0xFFFFFFFF && out.overrides[1].vars.empty());
+
+  // The override block: its count, two ids, two parts, two counts and two records.
+  const size_t block = 4 + 2 * 12 + 2 * PortRoomEffects::kVariableBytes;
+  std::vector<uint8_t> v2(data.begin(), data.end() - block);
+  v2[4] = 2;
+  REQUIRE_MSG(PortRoomEffects::Parse(v2, out, error), error.c_str());
+  CHECK(out.overrides.empty() && out.skips == in.skips && out.layers.empty());
+
+  for (size_t cut = 1; cut < block; cut += 3) {
+    const std::vector<uint8_t> bad(data.begin(), data.end() - std::ptrdiff_t(cut));
+    CHECK_MSG(!PortRoomEffects::Parse(bad, out, error), "truncated overrides");
+  }
+  std::vector<uint8_t> many(data.begin(), data.end() - block);
+  for (uint8_t b : {0xFF, 0x00, 0x00, 0x00}) {
+    many.push_back(b);
+  }
+  CHECK_MSG(!PortRoomEffects::Parse(many, out, error), "override count");
 }
 
 void PutLE16(std::vector<uint8_t>& b, uint32_t v) {
@@ -233,6 +277,7 @@ int main() {
   TestEffect();
   TestFile();
   TestFileVariables();
+  TestFileOverrides();
   TestExternalVariables();
   uint32_t id = 0;
   CHECK_MSG(PortRoomEffects::ParseFileName("1a2B3c4D.ROOMFX", id) && id == 0x1A2B3C4D, "file name");
