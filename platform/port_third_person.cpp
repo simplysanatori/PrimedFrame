@@ -27,6 +27,8 @@ float sLength = 0.f;
 float sPrevLength = 0.f;
 uint sPrevGeneration = 0;
 CVector3f sPosition = CVector3f::Zero();
+CVector3f sAimPoint = CVector3f::Zero();
+bool sAimValid = false;
 
 float Clamp(float v, float lo, float hi, float old) {
   return std::isfinite(v) ? std::clamp(v, lo, hi) : old;
@@ -104,6 +106,7 @@ void Update(CStateManager& mgr, float dt) {
   const bool allowed = StateAllows(mgr);
   if (!allowed) {
     sActive = false;
+    sAimValid = false;
     PortThirdPersonBody::Release();
     return;
   }
@@ -130,12 +133,48 @@ void Update(CStateManager& mgr, float dt) {
     }
   }
   sPosition = g.pivot + g.dir * sLength;
+
+  // The centre of the view is what the player points at: a ray from the camera along its
+  // facing, stopped by the world or a solid actor like a shot (CPlayerGun::PortShotAimPoint).
+  const CVector3f camFwd = xf.GetForward();
+  if (camFwd.CanBeNormalized()) {
+    const CVector3f dir = camFwd.AsNormalized();
+    static const CMaterialFilter aimFilter = CMaterialFilter::MakeIncludeExclude(
+        CMaterialList(kMT_Solid), CMaterialList(kMT_Player, kMT_ProjectilePassthrough));
+    TEntityList nearList;
+    mgr.BuildNearList(nearList, sPosition, dir, kAimRange, aimFilter, mgr.GetPlayer());
+    TUniqueId hitId = kInvalidUniqueId;
+    const CRayCastResult hit =
+        mgr.RayWorldIntersection(hitId, sPosition, dir, kAimRange, aimFilter, nearList);
+    sAimPoint = hit.IsValid() ? hit.GetPoint() : sPosition + dir * kAimRange;
+    sAimValid = true;
+  } else {
+    sAimValid = false;
+  }
+}
+
+bool AimPoint(CVector3f& out) {
+  if (!Active() || !sAimValid) {
+    return false;
+  }
+  out = sAimPoint;
+  return true;
 }
 
 void GetCameraPosition(float out[3]) {
   out[0] = sPosition.GetX();
   out[1] = sPosition.GetY();
   out[2] = sPosition.GetZ();
+}
+
+CTransform4f TickView(const CTransform4f& game) {
+  if (!Active()) {
+    return game;
+  }
+  const Geometry g = Compute(game);
+  CTransform4f xf = game;
+  xf.SetTranslation(g.pivot + g.dir * std::min(sLength, g.full));
+  return xf;
 }
 
 CTransform4f View(const CTransform4f& game) {

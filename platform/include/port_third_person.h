@@ -5,6 +5,7 @@
 
 class CStateManager;
 class CTransform4f;
+class CVector3f;
 
 // An opt-in third-person gameplay camera: while Samus stands unmorphed under the first-person
 // camera, the world is drawn from behind her shoulder, her body is shown and the arm cannon
@@ -58,6 +59,20 @@ inline Vec3 PullIn(const Vec3& pivot, const Vec3& desired, float hitDistance,
   return {pivot.x + d.x * s, pivot.y + d.y * s, pivot.z + d.z * s};
 }
 
+// The unit direction a shot leaves `origin` to hit `aim` (the point under the camera's centre
+// ray). A target nearer than kAimMinDistance, or one behind the camera's facing (between the
+// camera and Samus), would turn the shot around or aim it wildly: those fire along `camForward`.
+constexpr float kAimMinDistance = 0.5f;
+constexpr float kAimRange = 100.f; // the gun's free-aim distance
+inline Vec3 AimDirection(const Vec3& origin, const Vec3& aim, const Vec3& camForward) {
+  const Vec3 d{aim.x - origin.x, aim.y - origin.y, aim.z - origin.z};
+  const float len = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+  if (len >= kAimMinDistance && d.x * camForward.x + d.y * camForward.y + d.z * camForward.z > 0.f) {
+    return {d.x / len, d.y / len, d.z / len};
+  }
+  return camForward;
+}
+
 bool Enabled();
 void SetEnabled(bool on);
 // Third person is drawing this tick (enabled, and the camera and player are in a state it takes).
@@ -70,10 +85,16 @@ void SetHeight(float metres);
 
 // Once per game tick, after the camera manager's update.
 void Update(CStateManager& mgr, float dt);
+// Where the camera's centre ray meets the world or a solid actor (the far point if it meets
+// nothing), found once per tick; false when not Active().
+bool AimPoint(CVector3f& out);
 // The camera's tick position (for the console); valid while Active().
 void GetCameraPosition(float out[3]);
 // The view the world is drawn from: the first-person view moved back to the blended,
 // wall-clamped distance; `game` when not active.
 CTransform4f View(const CTransform4f& game);
+// The same at this tick's camera distance, for what the simulation projects (orbit target
+// search, lock-on boxes); `game` when not active.
+CTransform4f TickView(const CTransform4f& game);
 
 } // namespace PortThirdPerson

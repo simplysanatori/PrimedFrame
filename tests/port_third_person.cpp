@@ -29,5 +29,13 @@ int main() {
   CHECK(Near(PullIn(pivot, desired, 0.1f), pivot));              // inside the margin
   CHECK(Near(PullIn(pivot, pivot, 1.f), pivot));                 // degenerate line
   CHECK(std::fabs(PullInLength(4.f, 2.f) - 1.8f) < 1e-5f);
+
+  // Aim: the shot goes from the cannon to the point under the centre ray.
+  const Vec3 cannon{1.f, 0.f, 0.f}, camFwd{0.f, 1.f, 0.f};
+  CHECK(Near(AimDirection(cannon, Vec3{1.f, 10.f, 0.f}, camFwd), Vec3{0.f, 1.f, 0.f}));
+  CHECK(Near(AimDirection(cannon, Vec3{-3.f, 3.f, 0.f}, camFwd), Vec3{-0.8f, 0.6f, 0.f}));
+  CHECK(Near(AimDirection(cannon, Vec3{1.f, 0.2f, 0.f}, camFwd), camFwd));  // too near
+  CHECK(Near(AimDirection(cannon, Vec3{1.f, -4.f, 0.f}, camFwd), camFwd));  // behind the camera
+  CHECK(Near(AimDirection(cannon, cannon, camFwd), camFwd));                 // degenerate
   return PORT_TEST_RESULT();
 }

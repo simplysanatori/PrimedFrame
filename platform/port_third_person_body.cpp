@@ -247,6 +247,19 @@ bool Render(const CStateManager& mgr, const CTransform4f& xf, const CActorLights
   return true;
 }
 
+bool CannonPosition(const CPlayer& player, CVector3f& out) {
+  if (!Ready()) {
+    return false;
+  }
+  // The body stands where CPlayer::Render puts it: on the floor of the player's box.
+  CTransform4f bodyXf = player.GetTransform();
+  CVector3f origin = bodyXf.GetTranslation();
+  origin.SetZ(player.GetBoundingBox().GetMinPoint().GetZ());
+  bodyXf.SetTranslation(origin);
+  out = (bodyXf * s.body->GetScaledLocatorTransform("GUN_LCTR")).GetTranslation();
+  return true;
+}
+
 void Release() { Drop(); }
 
 } // namespace PortThirdPersonBody
