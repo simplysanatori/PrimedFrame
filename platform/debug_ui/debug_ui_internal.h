@@ -353,6 +353,9 @@ void EndOriginalLocked(bool locked);
 extern PortDynamicRes::Controller sDynController;
 extern double sDynGpuMs;
 float EffectiveRenderScale();
+float DynamicResTop();
+// Lines of the frame buffer drawn at `scale` (0 = auto) in the current window.
+int DrawnLines(float scale);
 int EffectiveMsaa();
 void ApplyPresentSharpness();
 double DynamicResTargetFps();

@@ -462,17 +462,42 @@ void DrawVideoQuality() {
         "is drawn.");
   }
 
-  bool autoScale = sRenderScale <= 0.f;
-  if (ImGui::Checkbox("Auto render scale (native)", &autoScale)) {
-    SetRenderScale(autoScale ? 0.f : 1.f);
+  // Dynamic resolution's mode is the two saved settings together: Auto draws up to the
+  // window's own scale (auto render scale), User up to the resolution scale set.
+  int dynMode = !sDynamicRes ? 0 : sRenderScale <= 0.f ? 1 : 2;
+  if (ImGui::Combo("Dynamic resolution", &dynMode, "Off\0" "Auto\0" "User\0")) {
+    sDynamicRes = dynMode != 0;
+    if (dynMode == 1) {
+      SetRenderScale(0.f);
+    } else if (dynMode == 2 && sRenderScale <= 0.f) {
+      SetRenderScale(std::clamp(std::round(BaseRenderScale() * 4.f) / 4.f, 1.f, 4.f));
+    }
+    ResetDynamicRes();
     MarkDirty();
   }
-  if (!autoScale) {
-    // Applied when the slider is let go: each new scale reallocates the EFB targets, which
-    // a drag would otherwise do every frame.
-    static float sPendingScale = 0.f;
+  ImGui::SetItemTooltip(
+      "Lowers the resolution scale while the GPU can't hold the target frame rate, and\n"
+      "raises it back when there is room. Each change stutters for a frame, so it moves\n"
+      "only when that is worth it.\n"
+      "Auto: up to the window's own resolution. User: between a minimum and a maximum.");
+  // Applied when a slider is let go: each new scale reallocates the EFB targets, which
+  // a drag would otherwise do every frame.
+  static float sPendingScale = 0.f;
+  static float sPendingMin = 0.f;
+  static int sPendingTarget = -1;
+  if (dynMode == 0) {
+    bool autoScale = sRenderScale <= 0.f;
+    if (ImGui::Checkbox("Auto render scale (native)", &autoScale)) {
+      SetRenderScale(autoScale ? 0.f : 1.f);
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Draws at the window's own resolution.");
+  }
+  if (dynMode != 1 && sRenderScale > 0.f) {
     float scale = sPendingScale > 0.f ? sPendingScale : sRenderScale;
-    if (ImGui::SliderFloat("EFB scale", &scale, 1.f, 4.f, "%.2fx")) {
+    char label[32];
+    std::snprintf(label, sizeof(label), "%.2fx (%dp)", scale, DrawnLines(scale));
+    if (ImGui::SliderFloat(dynMode == 2 ? "Maximum resolution scale" : "Resolution scale", &scale, 1.f, 4.f, label)) {
       sPendingScale = scale;
     }
     if (sPendingScale > 0.f && !ImGui::IsItemActive()) {
@@ -480,62 +505,71 @@ void DrawVideoQuality() {
       MarkDirty();
       sPendingScale = 0.f;
     }
-    ImGui::SetItemTooltip("Scales the internal EFB; higher values use more GPU memory.\n"
-                          "Above 2x it supersamples, and each step costs much more GPU time.");
-    if (ImGui::Checkbox("Dynamic resolution", &sDynamicRes)) {
+    ImGui::SetItemTooltip("The resolution the game draws at, as a multiple of the GameCube's 480 lines;\n"
+                          "higher values use more GPU memory. Above 2x it supersamples, and each step\n"
+                          "costs much more GPU time.");
+  } else if (sRenderScale <= 0.f) {
+    ImGui::TextDisabled("Window resolution: %.2fx (%dp)", BaseRenderScale(), DrawnLines(0.f));
+  }
+  if (dynMode != 0) {
+    float lowest = sPendingMin > 0.f ? sPendingMin : sDynamicResMin;
+    const float top = std::max(DynamicResTop(), PortDebug::kDynamicResMinLowest);
+    char label[32];
+    std::snprintf(label, sizeof(label), "%.2fx (%dp)", lowest, DrawnLines(lowest));
+    if (ImGui::SliderFloat("Minimum resolution scale", &lowest, PortDebug::kDynamicResMinLowest, top, label,
+                           ImGuiSliderFlags_AlwaysClamp)) {
+      sPendingMin = lowest;
+    }
+    if (sPendingMin > 0.f && !ImGui::IsItemActive()) {
+      sDynamicResMin = sPendingMin;
+      sPendingMin = 0.f;
       ResetDynamicRes();
       MarkDirty();
     }
-    ImGui::SetItemTooltip(
-        "Lowers the EFB scale (down to the lowest scale below) while the GPU can't hold\n"
-        "the target frame rate, and raises it back when there is room. Each change\n"
-        "stutters for a frame, so it moves only when that is worth it.");
-    if (sDynamicRes) {
-      static const int kTargets[] = {0, 30, 60, 90, 120};
-      int target = 0;
-      for (int i = 0; i < 5; ++i) {
-        if (kTargets[i] == sDynamicResTarget) {
-          target = i;
-        }
-      }
-      ImGui::SameLine();
-      ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.f);
-      if (ImGui::Combo("Target", &target, "Display\0" "30 fps\0" "60 fps\0" "90 fps\0" "120 fps\0")) {
-        sDynamicResTarget = kTargets[target];
-        ResetDynamicRes();
-        MarkDirty();
-      }
-      ImGui::SetItemTooltip("Display: the screen's refresh rate, or 60 with the 60 FPS cap on.");
-      static const float kLowest[] = {0.5f, 0.75f, 1.f};
-      int lowest = 2;
-      for (int i = 0; i < 3; ++i) {
-        if (kLowest[i] == sDynamicResMin) {
-          lowest = i;
-        }
-      }
-      ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.f);
-      if (ImGui::Combo("Lowest scale", &lowest, "0.5x\0" "0.75x\0" "1x\0")) {
-        sDynamicResMin = kLowest[lowest];
-        ResetDynamicRes();
-        MarkDirty();
-      }
-      ImGui::SetItemTooltip("Below 1x it draws fewer pixels than the GameCube did and looks softer,\n"
-                            "which lets a phone reach 90 or 120 fps.");
-      ImGui::Text("Drawing at %.2fx (target %.0f fps)", sDynScale > 0.f ? sDynScale : sRenderScale,
-                  DynamicResTargetFps());
-      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-      const char* reason = PortDynamicRes::ReasonText(sDynController.LastReason());
-      if (sDynController.GpuTimesDropped()) {
-        ImGui::Text("GPU times not used (none arrived, or lowering on them gained nothing): %s", reason);
-      } else if (sDynGpuMs > 0.0) {
-        ImGui::Text("GPU %.1f of %.1f ms a frame: %s", sDynGpuMs, 1000.0 / DynamicResTargetFps(), reason);
-      } else if (sDynGpuMs < 0.0) {
-        ImGui::Text("No GPU times (unsupported, or MP_DYNRES_GPU_TIMES=0); following the frame rate: %s", reason);
-      } else {
-        ImGui::Text("%s", reason);
-      }
-      ImGui::PopStyleColor();
+    ImGui::SetItemTooltip("The lowest it drops to. Below 1x it draws fewer pixels than the GameCube did\n"
+                          "and looks softer, which lets a phone reach 90 or 120 fps; the lowest values are\n"
+                          "for very high resolution displays.");
+    // The left end is "Display" (saved as 0).
+    constexpr int kTargetMin = 30;
+    constexpr int kTargetMax = kFpsCapMax;
+    const int saved = sPendingTarget >= 0 ? sPendingTarget : sDynamicResTarget;
+    int target = saved > 0 ? std::clamp(saved, kTargetMin, kTargetMax) : kTargetMin - 1;
+    if (ImGui::SliderInt("Frame rate target", &target, kTargetMin - 1, kTargetMax,
+                         target < kTargetMin ? "Display" : "%d fps", ImGuiSliderFlags_AlwaysClamp)) {
+      sPendingTarget = target < kTargetMin ? 0 : target;
     }
+    // Applied when let go, like the scales: a change starts the controller over.
+    if (sPendingTarget >= 0 && !ImGui::IsItemActive()) {
+      sDynamicResTarget = sPendingTarget;
+      sPendingTarget = -1;
+      ResetDynamicRes();
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Display (all the way left): the screen's refresh rate. Never above the frame\n"
+                          "rate cap: with the 60 FPS cap on it aims for 60. Ctrl+click to type a value.");
+    if (DynamicResTop() <= sDynamicResMin) {
+      ImGui::PushTextWrapPos(0.f);
+      ImGui::TextColored(ThemeWarnColor(), "Not lowering: the minimum is not below the top scale (%.2fx). "
+                         "Lower the minimum%s.", DynamicResTop(), dynMode == 1 ? " or enlarge the window" : "");
+      ImGui::PopTextWrapPos();
+    }
+    const float drawing = sDynScale > 0.f ? sDynScale : DynamicResTop();
+    ImGui::Text("Drawing at %.2fx (%dp), target %.0f fps", drawing,
+                DrawnLines(sDynScale > 0.f ? sDynScale : sRenderScale), DynamicResTargetFps());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    const char* reason = PortDynamicRes::ReasonText(sDynController.LastReason());
+    if (sDynController.GpuTimesDropped()) {
+      ImGui::Text("GPU times not used (none arrived, or lowering on them gained nothing): %s", reason);
+    } else if (sDynGpuMs > 0.0) {
+      ImGui::Text("GPU %.1f of %.1f ms a frame: %s", sDynGpuMs, 1000.0 / DynamicResTargetFps(), reason);
+    } else if (sDynGpuMs < 0.0) {
+      ImGui::Text("No GPU times (unsupported, or MP_DYNRES_GPU_TIMES=0); following the frame rate: %s", reason);
+    } else {
+      ImGui::Text("%s", reason);
+    }
+    ImGui::PopStyleColor();
+  }
+  if (dynMode != 0 || sRenderScale > 0.f) {
     int sharpen = sSharpenMode;
     if (ImGui::Combo("Sharpen when upscaled", &sharpen, "Off\0" "With dynamic resolution\0" "Always\0")) {
       sSharpenMode = sharpen;

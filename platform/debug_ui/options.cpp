@@ -45,6 +45,10 @@
 #include <sstream>
 #include <string>
 
+namespace aurora {
+bool frame_buffer_size_for_scale(float scale, uint32_t* width, uint32_t* height) noexcept;
+} // namespace aurora
+
 namespace PortDebug {
 
 // State only this part uses.
@@ -140,6 +144,12 @@ static float sCaptureScale = 0.f;
 float EffectiveRenderScale() {
   return sCaptureScale > 0.f ? sCaptureScale : sOriginalExperience ? 1.f : sRenderScale;
 }
+// The most dynamic resolution draws at: the scale set, or with auto render scale the
+// window's own (BaseRenderScale), which follows the window as it is resized.
+float DynamicResTop() {
+  const float scale = EffectiveRenderScale();
+  return scale > 0.f ? scale : BaseRenderScale();
+}
 int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
 static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
 
@@ -148,7 +158,7 @@ static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy;
 void ApplyPresentSharpness() {
   float amount = 0.f;
   if (!sOriginalExperience && sSharpenAmount > 0) {
-    const bool lowered = sDynScale > 0.f && sDynScale < EffectiveRenderScale();
+    const bool lowered = sDynScale > 0.f;
     if (sSharpenMode == 2 || (sSharpenMode == 1 && lowered)) {
       amount = static_cast< float >(sSharpenAmount) / 100.f;
     }
@@ -197,7 +207,7 @@ void WantGpuTimes(unsigned user, bool on) {
 }
 
 void ResetDynamicRes() {
-  sDynController.Reset(EffectiveRenderScale());
+  sDynController.Reset(DynamicResTop());
   sDynGpuMs = -1.0;
   if (sDynScale > 0.f) {
     sDynScale = 0.f;
@@ -213,9 +223,13 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
   if (sCaptureScale > 0.f) {
     return;
   }
-  const float top = EffectiveRenderScale();
+  const float top = DynamicResTop();
   const float bottom = std::min(sDynamicResMin, top);
   const bool active = sDynamicRes && !sOriginalExperience && top > bottom && !sTurbo;
+  // Auto's top moves with the window: start over from the new one.
+  static float sDynTop = 0.f;
+  const bool topMoved = sDynTop != top;
+  sDynTop = top;
   // MP_DYNRES_GPU_TIMES=0 steers on the frame rate alone, as on a GPU without timestamps.
   static const bool gpuTimesAllowed = port::EnvFlag("MP_DYNRES_GPU_TIMES", true);
   const bool gpuTimes = gpuTimesAllowed && GXPortGpuTimesSupported() == GX_TRUE;
@@ -227,7 +241,7 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
     }
     return;
   }
-  if (!sDynActive) {
+  if (!sDynActive || topMoved) {
     sDynActive = true;
     ResetDynamicRes();
   }
@@ -247,8 +261,9 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
   sDynGpuMs = sample.gpuMs;
   const PortDynamicRes::Decision decision = sDynController.Update(sample);
   if (decision.changed) {
-    sDynScale = decision.scale;
-    VISetFrameBufferScale(decision.scale);
+    // Back at the top draws as the setting does (auto: the window's exact size).
+    sDynScale = decision.scale < top ? decision.scale : 0.f;
+    VISetFrameBufferScale(sDynScale > 0.f ? sDynScale : EffectiveRenderScale());
     ApplyPresentSharpness();
     PortLog::Write("port: dynamic resolution %.2fx (%.0f fps, target %.0f, GPU %.1f ms): %s\n", decision.scale,
                    fps, sample.targetFps, sample.gpuMs, PortDynamicRes::ReasonText(decision.reason));
@@ -361,13 +376,28 @@ float BaseRenderScale() {
   if (sRenderScale > 0.f) {
     return sRenderScale;
   }
-  // Auto draws at the window's pixel size; as a multiple of the 480-line base.
-  int width = 0, height = 0;
+  // Auto draws at the window's pixel size, fitted to the game's aspect when that is
+  // narrower than the window's (16:9 in a 4:3 window); as a multiple of what 1x draws,
+  // the render mode's EFB height (480 lines NTSC, 528 PAL).
+  uint32_t width = 0, native = 0, base = 0;
+  if (aurora::frame_buffer_size_for_scale(0.f, &width, &native) &&
+      aurora::frame_buffer_size_for_scale(1.f, &width, &base) && native > 0 && base > 0) {
+    return static_cast< float >(native) / static_cast< float >(base);
+  }
+  int w = 0, h = 0;
   SDL_Window* window = MainWindow();
-  if (window != nullptr && SDL_GetWindowSizeInPixels(window, &width, &height) && height > 0) {
-    return static_cast< float >(height) / 480.f;
+  if (window != nullptr && SDL_GetWindowSizeInPixels(window, &w, &h) && h > 0) {
+    return static_cast< float >(h) / 480.f;
   }
   return 1.f;
+}
+
+int DrawnLines(float scale) {
+  uint32_t width = 0, height = 0;
+  if (aurora::frame_buffer_size_for_scale(scale, &width, &height)) {
+    return static_cast< int >(height);
+  }
+  return static_cast< int >(std::lround(scale * 480.f));
 }
 
 void SetCaptureRenderScale(float scale) {

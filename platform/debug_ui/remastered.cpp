@@ -166,7 +166,7 @@ void DrawRemasteredRoomModels(bool geoReady) {
       MarkDirty();
     }
     ImGui::SetItemTooltip(
-        "Turns anti-aliasing off and sets the EFB scale to 2x (Quality settings).\nRemastered "
+        "Turns anti-aliasing off and sets the resolution scale to 2x (Quality settings).\nRemastered "
         "rooms draw many more models, which is heavy for a phone's GPU.");
   }
 #endif
