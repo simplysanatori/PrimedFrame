@@ -652,6 +652,15 @@
   second drops the faceplate decoration, Samus's face reflection and the
   on-visor billboard effects (rain, splashes, steam). Console:
   `hudscale <50..100>`, `helmet <0|1>`, `visorfx <0|1>` (0 hides).
+- Third-person camera (Video > Display, `third_person`, off by default): plays
+  from behind Samus's shoulder, drawing her body animated with Prime's
+  cutscene clips and hiding the arm cannon and helmet. The Morph Ball,
+  cutscenes and scripted cameras are unchanged. The camera pulls in at walls.
+  `third_person_distance` (metres behind, 0.5..10, default 3),
+  `third_person_shoulder` (metres right, -2..2, default 0.6) and
+  `third_person_height` (metres above the first-person eye, -1..2, default
+  -0.6) place it. Console: `thirdperson [on|off] [distance N] [shoulder N]
+  [height N]`.
 - Speedrun timer and LiveSplit (F1 > Game > Speedrun; the timer also in pause Options >
   Display as In-Game Timer). `speedrun_timer` draws the in-game time (the play
   time the save shows, which stops in cutscenes, menus and loads) in the bottom
