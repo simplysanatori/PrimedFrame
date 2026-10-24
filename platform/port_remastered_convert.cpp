@@ -626,6 +626,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // material's meshes the same class, and 1 and 3 only to materials flagged 0x1.
   // An additive surface's alpha is its opacity unless the base alpha masks the glow.
   for (const ModelMesh& mesh : model.meshes) {
+    if (mesh.material < mats.size() && mats[mesh.material].blendClass < 0) {
+      mats[mesh.material].blendClass = mesh.bits2;
+    }
     if (mesh.bits2 == 3 && mesh.material < mats.size()) {
       RemMaterial& m = mats[mesh.material];
       m.additive = true;
@@ -1266,7 +1269,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   std::vector<bool> dlColor;                   // and whether a colour index comes before them
   // The materials report: one row per output material, as it is pushed.
   auto decide = [&](const RemMaterial& rem, uint32_t sourceIndex, const char* path, const std::string& pathReason,
-                    const std::string& notes, const std::string& tag, uint32_t cube, const RetailMaterial& pm) {
+                    const std::string& notes, const std::string& tag, uint32_t cube, const RetailMaterial& pm,
+                    const std::string& uv) {
     if (!io.decision) {
       return;
     }
@@ -1294,6 +1298,18 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     char retailBlend[48];
     std::snprintf(retailBlend, sizeof(retailBlend), "%u,%u 0x%X", pm.blendSrc, pm.blendDst, pm.flags);
     d.retail = retailBlend;
+    // The TEV path writes the retail material as it is.
+    uint32_t src = pm.blendSrc;
+    uint32_t dst = pm.blendDst;
+    if (std::strcmp(path, "pbr") == 0) {
+      PbrBlend(rem, pm, src, dst);
+    }
+    d.meshClass = rem.blendClass >= 0 ? std::to_string(rem.blendClass) : "-";
+    d.blend = std::to_string(src) + "," + std::to_string(dst);
+    uint32_t classSrc = 0;
+    uint32_t classDst = 0;
+    d.classBlend = !ClassBlend(rem.blendClass, classSrc, classDst) ? "-" : classSrc == src && classDst == dst ? "yes" : "no";
+    d.uv = uv;
     io.decision(d);
   };
   for (size_t outputMaterial = 0; outputMaterial < keys.size(); ++outputMaterial) {
@@ -1567,7 +1583,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           setBlobs[si].back().insert(setBlobs[si].back().end(), {'L', 'M', 'U', 'V'});
         }
       }
-      decide(rem, std::get<1>(key), "pbr", "ok", loopNotes, recordTag, cube, pm);
+      std::string uv = std::to_string(ntexattr) + ":";
+      for (int k = 0; k < nmaps; ++k) {
+        uv += (k ? "," : "") + std::to_string(coords[k]);
+      }
+      decide(rem, std::get<1>(key), "pbr", "ok", loopNotes, recordTag, cube, pm, uv);
       continue;
     }
     ++tev;
@@ -1616,7 +1636,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
     }
     dlAttrs.push_back(attrs);
-    decide(rem, std::get<1>(key), "tev", tevReason, loopNotes, wrap != 0x55555555u ? "WRAP" : "TEV", 0, pm);
+    decide(rem, std::get<1>(key), "tev", tevReason, loopNotes, wrap != 0x55555555u ? "WRAP" : "TEV", 0, pm,
+           std::to_string(ntexattr) + ":-");
     for (size_t si = 0; si < retail.nmat; ++si) {
       const MaterialSet& set = retail.sets[si];
       if (size_t(rmat) >= set.mats.size()) {

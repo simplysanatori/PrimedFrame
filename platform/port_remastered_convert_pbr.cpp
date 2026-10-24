@@ -168,6 +168,19 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   }
 }
 
+// The matcap shell (kind 13) is drawn premultiplied, GX_BL_ONE and GX_BL_INVSRCALPHA: its
+// shader scales the diffuse by the opacity, and the rim and reflection are added unscaled.
+// The boundary shield (kind 14) and cracked glass (kind 8, class 1 with the scene in rgb) are plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
+// The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
+// 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
+// The pause visor's glass (kind 36) is SrcAlpha / InvSrcAlpha (mesh class 1), its lit layer (kind 37)
+// SrcAlpha / One (mesh class 3).
+void PbrBlend(const RemMaterial& rem, const RetailMaterial& pm, uint32_t& src, uint32_t& dst) {
+  const bool lambertFx = rem.family == kShaderLambertFx || rem.opaqueFx;
+  dst = rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 || rem.kind == 34 || rem.kind == 36 ? 5 : rem.kind == 37 ? 1 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 || rem.kind == 33 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst;
+  src = rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || rem.kind == 34 || rem.kind == 36 || rem.kind == 37 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 || rem.kind == 33 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc;
+}
+
 // A retail material rebuilt for the port's PBR path: maps 0-3 are base, MR,
 // normal and emissive, each on the texcoord its Remastered map used, lit
 // channel 0 kept from retail. The TEV is the fallback the black, shadow,
@@ -214,16 +227,11 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
       P32(b, k << 24 | k << 16 | k << 8 | 0xFF);
     }
   }
-  // The matcap shell (kind 13) is drawn premultiplied, GX_BL_ONE and GX_BL_INVSRCALPHA: its
-  // shader scales the diffuse by the opacity, and the rim and reflection are added unscaled.
-  // The boundary shield (kind 14) and cracked glass (kind 8, class 1 with the scene in rgb) are plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
-  // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
-  // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
-  // The pause visor's glass (kind 36) is SrcAlpha / InvSrcAlpha (mesh class 1), its lit layer (kind 37)
-  // SrcAlpha / One (mesh class 3).
-  const bool lambertFx = rem.family == kShaderLambertFx || rem.opaqueFx;
-  P16(b, rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 || rem.kind == 34 || rem.kind == 36 ? 5 : rem.kind == 37 ? 1 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 || rem.kind == 33 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
-  P16(b, rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || rem.kind == 34 || rem.kind == 36 || rem.kind == 37 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 || rem.kind == 33 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
+  uint32_t blendSrc = 0;
+  uint32_t blendDst = 0;
+  PbrBlend(rem, pm, blendSrc, blendDst);
+  P16(b, blendDst);
+  P16(b, blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
