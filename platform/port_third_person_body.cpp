@@ -33,6 +33,9 @@ namespace {
 constexpr uint32_t kAncsCandidates[] = {0xC2E1F513, 0x1413466E, 0x27550808,
                                         0x0C6B791C, 0x58673D8D, 0xC2BF3133};
 constexpr int kPhazonChars[] = {3, 8};
+// The scale the game's own CScriptPlayerActor cutscene Samus uses in its SCLY (1.799, measured; the
+// clip is 1.756 m tall at scale 1). The suit and cannon are scaled alike, so the locators follow.
+constexpr float kBodyScale = 1.799f;
 
 struct ClipNames {
   const char* a;
@@ -119,7 +122,7 @@ void StartLoad(int charIdx) {
   if (s.ancs == 0) {
     return;
   }
-  const CAnimRes res(s.ancs, charIdx, CVector3f(1.f, 1.f, 1.f), 0, true);
+  const CAnimRes res(s.ancs, charIdx, CVector3f(kBodyScale, kBodyScale, kBodyScale), 0, true);
   TLockedToken<CCharacterFactory> factory = gpCharacterFactoryBuilder->GetFactory(res);
   const CCharacterInfo& info = factory->GetCharInfo(charIdx);
   s.suitModel.reset(
@@ -140,7 +143,7 @@ int Find(const CAnimData& data, const ClipNames& n) {
 }
 
 void Build(CStateManager& mgr) {
-  const CAnimRes res(s.ancs, s.loadedChar, CVector3f(1.f, 1.f, 1.f), 0, true);
+  const CAnimRes res(s.ancs, s.loadedChar, CVector3f(kBodyScale, kBodyScale, kBodyScale), 0, true);
   s.body.reset(new CModelData(res));
   CAnimData* data = s.body->AnimationData();
   s.idx[int(Clip::Idle)] = s.idx[int(Clip::Hold)] = Find(*data, kIdle);
@@ -177,7 +180,7 @@ void PumpBeam(const CStateManager& mgr) {
   if (s.beamModel && !s.beamData && s.beamModel->IsLoaded()) {
     // The id is the one the token was made from.
     const CAssetId id = gpTweakPlayerRes->GetCinematicBeamResId(CPlayerState::EBeamId(s.beam));
-    s.beamData.reset(new CModelData(CStaticRes(id, CVector3f(1.f, 1.f, 1.f))));
+    s.beamData.reset(new CModelData(CStaticRes(id, CVector3f(kBodyScale, kBodyScale, kBodyScale))));
   }
 }
 
