@@ -70,6 +70,8 @@ std::unordered_map<uint32_t, std::string> sRoomEffects;
 std::unordered_map<uint32_t, std::string> sHudBars;
 // thermal.lut: the thermal visor's heat gradient (port_thermal.h).
 std::string sThermalLut;
+// envfx.bin: Remastered's EnvironmentFX textures (port_envfx_assets.h).
+std::string sEnvFx;
 // retailplacements.bin: the transforms objects draw Remastered's per-object retail models through (port_retail_placement.h).
 std::string sRetailPlacements;
 // effectids.map: the retail effect ids a mod gives a second user its own effect for. Loaded on first use.
@@ -404,6 +406,8 @@ std::string HudBarsPath(uint32_t frame) {
 
 std::string ThermalLutPath() { return sThermalLut; }
 
+std::string EnvFxPath() { return sEnvFx; }
+
 std::string RetailPlacementPath() { return sRetailPlacements; }
 
 uint32_t RemapEffectId(uint32_t owner, uint32_t field, uint32_t id) {
@@ -483,6 +487,7 @@ void Initialize() {
   sRoomEffects.clear();
   sHudBars.clear();
   sThermalLut.clear();
+  sEnvFx.clear();
   sRetailPlacements.clear();
   {
     std::lock_guard<std::mutex> lock(sEffectIdsMutex);
@@ -603,6 +608,10 @@ void Initialize() {
       }
       if (name == "thermal.lut") {
         sThermalLut = PathString(file);
+        continue;
+      }
+      if (name == "envfx.bin") {
+        sEnvFx = PathString(file);
         continue;
       }
       if (name == PortRetailPlacement::kFileName) {

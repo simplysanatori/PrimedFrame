@@ -1,5 +1,6 @@
 #include "port_remastered_import_internal.h"
 #include "port_remastered_effect_convert.h"
+#include "port_envfx_file.h"
 #include "port_retail_placement.h"
 
 namespace PortRemastered {
@@ -3331,6 +3332,85 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         }
       } else {
         AddLine("thermal visor gradient: " + (lutError.empty() ? std::string("unexpected size") : lutError));
+      }
+    }
+    // The EnvironmentFX textures (port_envfx_file.h) as envfx.bin: the rain, snow and underwater
+    // flakes and the fade gradient the native EnvFX draw samples. All four or no file.
+    {
+      // A GUID string as the bytes of a ModelUuid, in the order written, else the mixed-endian one.
+      const auto uuids = [](const char* text, ModelUuid& plain, ModelUuid& swapped) {
+        size_t n = 0;
+        for (const char* c = text; *c != 0 && n < 16; ++c) {
+          if (*c == '-') {
+            continue;
+          }
+          const auto hex = [](char h) { return h <= '9' ? h - '0' : (h | 0x20) - 'a' + 10; };
+          plain[n++] = uint8_t(hex(c[0]) << 4 | hex(c[1]));
+          ++c;
+        }
+        swapped = plain;
+        std::swap(swapped[0], swapped[3]);
+        std::swap(swapped[1], swapped[2]);
+        std::swap(swapped[4], swapped[5]);
+        std::swap(swapped[6], swapped[7]);
+      };
+      PortEnvFx::Assets envfx;
+      std::string envfxError;
+      for (int i = 0; i < 4 && envfxError.empty(); ++i) {
+        const char* guid = i == 0 ? PortEnvFx::kGradientGuid : PortEnvFx::kFlakeGuid[i - 1];
+        PortEnvFx::Image& image = i == 0 ? envfx.gradient : envfx.flake[i - 1];
+        ModelUuid plain{};
+        ModelUuid swapped{};
+        uuids(guid, plain, swapped);
+        std::vector<uint8_t> raw;
+        std::string error;
+        if (!remastered.ReadTexture(plain, raw, error) && !remastered.ReadTexture(swapped, raw, error)) {
+          envfxError = std::string(guid) + ": " + error;
+          break;
+        }
+        if (i == 0) {
+          TxtrImage gradient;
+          if (!DecodeTxtr(raw.data(), raw.size(), gradient, error)) {
+            envfxError = std::string(guid) + ": " + error;
+            break;
+          }
+          // DecodeTxtr's R8 is already (v, v, v, 255) or (v, 0, 0, 255); the draw reads .r.
+          image.width = gradient.width;
+          image.height = gradient.height;
+          image.layers = 1;
+          image.rgba.assign(gradient.rgba.size(), 0);
+          for (size_t p = 0; p + 3 < gradient.rgba.size(); p += 4) {
+            image.rgba[p] = gradient.rgba[p];
+            image.rgba[p + 3] = 255;
+          }
+          continue;
+        }
+        if (!DecodeTxtrLayersRgba8(raw.data(), raw.size(), image.width, image.height, image.layers, image.rgba,
+                                   error)) {
+          // The underwater flake may be a plain 2D texture: one layer.
+          TxtrImage single;
+          if (!DecodeTxtr(raw.data(), raw.size(), single, error)) {
+            envfxError = std::string(guid) + ": " + error;
+            break;
+          }
+          image.width = single.width;
+          image.height = single.height;
+          image.layers = 1;
+          image.rgba = std::move(single.rgba);
+        }
+      }
+      PortEnvFx::Assets check;
+      std::vector<uint8_t> file;
+      if (envfxError.empty()) {
+        file = PortEnvFx::Serialize(envfx);
+        if (!PortEnvFx::Parse(file.data(), file.size(), check, envfxError)) {  // the sizes the draw expects
+          envfxError = "unexpected size: " + envfxError;
+        }
+      }
+      if (!envfxError.empty()) {
+        AddLine("EnvironmentFX textures: " + envfxError);
+      } else if (!makeIO(0, hudFolder).write("envfx.bin", file)) {
+        AddLine("EnvironmentFX textures: cannot write");
       }
     }
     if (hudFrames == 0 && compassModels == 0) {
