@@ -175,6 +175,9 @@ extern "C" {
 void aurora_set_pipeline_eviction(uint32_t) {}
 void aurora_trim_pipelines(uint32_t) {}
 uint32_t aurora_get_pipeline_count(void) { return 0; }
+uint64_t aurora_pipeline_set_context(uint64_t) { return AURORA_PIPELINE_CONTEXT_FRONTEND; }
+void aurora_pipeline_prefetch(uint64_t) {}
+void aurora_get_pipeline_stats(AuroraPipelineStats* out) { *out = {}; }
 }
 
 // --- Buffer push stubs ---
