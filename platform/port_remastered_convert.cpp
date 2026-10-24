@@ -1175,20 +1175,18 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       i += uint32_t(buffers[p.buffer].offset);
     }
   }
-  // Vertex colours, for a room's own materials that are tinted by them. The
-  // alpha is an opacity only on a blended surface (on an opaque one it weighs
-  // the material's layers), so a vertex no blended surface uses is opaque.
-  // On a retail model, only a glow that is all vertex colour reads them: an
-  // unlit Remastered surface over a retail effect (a door shield's cyan rim),
-  // and the arm cannon's beam glow (kind 9), which is all vertex colour and ramp.
+  // Vertex colours, for the materials that read them: tinted by them, or a shader
+  // whose kind is drawn from them (the beam glow, the shields), on a retail model as
+  // on a room's own; the descriptor the converter writes is its own. The alpha is an
+  // opacity only on a blended surface (on an opaque one it weighs the material's
+  // layers), so a vertex no blended surface uses is opaque.
   auto ownGlow = [&](const RemMaterial& m, const RetailMaterial& pm) {
     return !opt.standalone && m.unlit && m.tinted && IsFx(pm);
   };
   std::vector<uint8_t> C;
   bool useColor = false;
   for (const Prim& p : prims) {
-    const bool reads = opt.standalone ? mats[p.mat].tinted || mats[p.mat].vcolor
-                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9 || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 29 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18;
+    const bool reads = mats[p.mat].tinted || mats[p.mat].vcolor;
     useColor = useColor || (reads && buffers[p.buffer].colored);
   }
   if (useColor) {
@@ -1199,7 +1197,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     std::vector<bool> keepAlpha(n, false);
     for (const Prim& p : prims) {
       if (((mats[p.mat].blended || mats[p.mat].layered) && mats[p.mat].tinted) || mats[p.mat].vcolor ||
-          ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 29 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18) {
+          ownGlow(mats[p.mat], retail.mats[p.rmat])) {
         for (uint32_t i : p.I) {
           keepAlpha[i] = true;
         }
@@ -1417,7 +1415,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       ntexattr += ((vtx >> (8 + 2 * k)) & 3) ? 1 : 0;
     }
     // Bits 4 and 5 are colour 0. Only a material that reads it declares it.
-    const bool colored = useColor && (opt.standalone ? rem.tinted || rem.vcolor : glow || gunGlow || matcapShell || shield);
+    const bool colored = useColor && (rem.tinted || rem.vcolor);
     rem.tinted = colored && rem.tinted;
     if (colored) {
       vtx |= 3u << 4;
@@ -1560,7 +1558,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           setBlobs[si].back().insert(setBlobs[si].back().end(), {'L', 'M', 'U', 'V'});
         }
       }
-      std::string uv = std::to_string(ntexattr) + ":";
+      std::string uv = std::to_string(ntexattr) + (dlColor.back() ? "c:" : ":");
       for (int k = 0; k < nmaps; ++k) {
         uv += (k ? "," : "") + std::to_string(coords[k]);
       }
@@ -1614,7 +1612,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     }
     dlAttrs.push_back(attrs);
     decide(rem, std::get<1>(key), "tev", tevReason, loopNotes, wrap != 0x55555555u ? "WRAP" : "TEV", 0, pm,
-           std::to_string(ntexattr) + ":-");
+           std::to_string(ntexattr) + (dlColor.back() ? "c:-" : ":-"));
     for (size_t si = 0; si < retail.nmat; ++si) {
       const MaterialSet& set = retail.sets[si];
       if (size_t(rmat) >= set.mats.size()) {
