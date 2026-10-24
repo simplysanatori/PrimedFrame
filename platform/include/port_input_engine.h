@@ -172,7 +172,12 @@ enum class ActionKind : uint8_t {
   X(MenuUp, Digital, "menu_up", "Menu up")                                                         \
   X(MenuDown, Digital, "menu_down", "Menu down")                                                   \
   X(MenuLeft, Digital, "menu_left", "Menu left")                                                   \
-  X(MenuRight, Digital, "menu_right", "Menu right")
+  X(MenuRight, Digital, "menu_right", "Menu right")                                                \
+  X(BallBomb, Digital, "ball_bomb", "Bomb")                                                        \
+  X(BallPowerBomb, Digital, "ball_power_bomb", "Power Bomb")                                       \
+  X(BallBoost, Digital, "ball_boost", "Boost Ball")                                                \
+  X(BallSpider, Digital, "ball_spider", "Spider Ball")                                             \
+  X(BallUnmorph, Digital, "ball_unmorph", "Unmorph")
 
 enum class Action : uint16_t {
 #define PORT_INPUT_ACTION_ENUM(id, kind, key, label) id,

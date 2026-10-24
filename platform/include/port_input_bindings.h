@@ -152,6 +152,14 @@ void Revert(UserProfile& user, Action action, Family family);
 // Every override and unbind in one family (a reset to the built-in controls).
 void ClearFamily(UserProfile& user, Family family);
 
+// The Morph Ball rows (issue #167): each presses a GameCube button, only in Morph
+// Ball. The game action one stands for, or Action::None when `a` isn't one.
+Action BallGameAction(Action a);
+// Before a poll: scopes the Morph Ball rows to Morph Ball, and there makes an input
+// bound to one do only that, so it replaces what the input does elsewhere rather
+// than doing both. A row that isn't bound changes nothing.
+void ApplyBallButtons(Profile& profile);
+
 // The touch overlay's own buttons (issue #92): the layout editor adds up to
 // kTouchButtonSlots, each with one action, on touch codes kTouchButtonBase + slot. They live in the touch layout string
 // (TouchControlsView owns it), not in controls.toml, as entries

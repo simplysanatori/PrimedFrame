@@ -380,6 +380,11 @@
   rows apply in menus and the map with or without a controller, replacing what that key
   does in gameplay there; touch is unchanged. With
   the option off, menus and the map follow the gameplay bindings and the rows do nothing.
+  The Morph Ball rows (issue #167: Bomb, Power Bomb, Boost Ball, Spider Ball, Unmorph;
+  `ball_bomb`, `ball_power_bomb`, `ball_boost`, `ball_spider`, `ball_unmorph` in
+  controls.toml) press A, Y, B, R and X only in Morph Ball. They start unbound, so the ball
+  uses the game buttons until one is set; an input bound to one does only that in the ball
+  (its other bindings still apply outside it), and the prompts there follow it.
   "Point and click menus" (on by default; `pointer_menus=`, `MP_POINTER_MENUS`) lets
   the mouse and touch work the game's own menus (front end, pause screen, save stations,
   upgrade messages) and the map. A hover selects (a tap on touch), a click confirms (a

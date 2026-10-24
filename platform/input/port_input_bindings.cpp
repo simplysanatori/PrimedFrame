@@ -914,6 +914,36 @@ void ClearFamily(UserProfile& user, Family family) {
   std::erase_if(user.bindings, [&](const Binding& b) { return b.count > 0 && BindingFamily(b) == family; });
 }
 
+Action BallGameAction(Action a) {
+  switch (a) {
+  case Action::BallBomb: return Action::PadA;
+  case Action::BallBoost: return Action::PadB;
+  case Action::BallUnmorph: return Action::PadX;
+  case Action::BallPowerBomb: return Action::PadY;
+  case Action::BallSpider: return Action::PadR;
+  default: return Action::None;
+  }
+}
+
+void ApplyBallButtons(Profile& profile) {
+  const auto isBall = [](const Binding& b) { return BallGameAction(b.action) != Action::None; };
+  std::vector<Input> rows;
+  for (Binding& b : profile.bindings) {
+    if (!isBall(b))
+      continue;
+    b.contexts = kCtxMorphBall;
+    if (b.count == 1)
+      rows.push_back(b.inputs[0]);
+  }
+  for (Binding& b : profile.bindings) {
+    if (isBall(b) || b.count != 1 || (b.contexts & kCtxMorphBall) == 0)
+      continue;
+    if (std::find(rows.begin(), rows.end(), b.inputs[0]) != rows.end())
+      b.contexts = uint16_t(b.contexts & ~kCtxMorphBall);
+  }
+  std::erase_if(profile.bindings, [](const Binding& b) { return b.count > 0 && b.contexts == 0; });
+}
+
 bool TouchButtonAction(Action a) {
   if (a == Action::None || Info(a).kind != ActionKind::Digital)
     return false;

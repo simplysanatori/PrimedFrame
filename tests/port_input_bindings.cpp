@@ -449,9 +449,51 @@ void TestTouchButtons() {
   Input back;
   REQUIRE(InputFromText("touch:k9", back) && back == In(Device::Touch, 73));
 }
+// Issue #167: a Morph Ball row's input does only that row in the ball, and keeps
+// its other bindings elsewhere; an unbound row changes nothing.
+void TestBallButtons() {
+  REQUIRE(BallGameAction(Action::BallBomb) == Action::PadA);
+  REQUIRE(BallGameAction(Action::BallSpider) == Action::PadR);
+  REQUIRE(BallGameAction(Action::PadA) == Action::None);
+  REQUIRE(ActionFromKey("ball_power_bomb") == Action::BallPowerBomb);
+
+  const Input rb = In(Device::PadButton, 10);
+  Profile p;
+  p.bindings.push_back(Bind(Action::PadA, {In(Device::PadButton, 0)}));
+  p.bindings.push_back(Bind(Action::PadR, {rb}));
+  Binding ballOnly = Bind(Action::SpringBall, {rb});
+  ballOnly.contexts = kCtxMorphBall;
+  p.bindings.push_back(ballOnly);
+  const Profile unbound = p;
+  ApplyBallButtons(p);
+  REQUIRE(p == unbound);
+
+  Binding bomb = Bind(Action::BallBomb, {rb});
+  bomb.contexts = kCtxGameplay;
+  p.bindings.push_back(bomb);
+  ApplyBallButtons(p);
+  REQUIRE(p.bindings.size() == 3); // the Spring Ball binding, only in the ball, is gone
+  REQUIRE(p.bindings[0].contexts == kCtxAll);
+  REQUIRE(p.bindings[1].action == Action::PadR && p.bindings[1].contexts == uint16_t(kCtxAll & ~kCtxMorphBall));
+  REQUIRE(p.bindings[2].action == Action::BallBomb && p.bindings[2].contexts == kCtxMorphBall);
+
+  Runtime runtime;
+  runtime.SetProfile(&p);
+  RawState raw;
+  raw.padButtons = 1u << 10;
+  runtime.Poll(raw, kCtxMorphBall, 1000);
+  REQUIRE(runtime.Poll(raw, kCtxMorphBall, 1100).Held(Action::BallBomb));
+  REQUIRE(!runtime.Last().Held(Action::PadR));
+  raw.padButtons = 0;
+  runtime.Poll(raw, kCtxGameplay, 1200);
+  raw.padButtons = 1u << 10;
+  REQUIRE(runtime.Poll(raw, kCtxGameplay, 1300).Held(Action::PadR));
+  REQUIRE(!runtime.Last().Held(Action::BallBomb));
+}
 } // namespace
 
 int main() {
+  TestBallButtons();
   TestTouchButtons();
   TestDuplicateBindings();
   TestFamilyEditing();

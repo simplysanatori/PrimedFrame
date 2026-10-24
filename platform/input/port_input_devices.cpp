@@ -937,6 +937,14 @@ static const SMenuAction* FindMenuAction(Action a, bool menu) {
   return nullptr;
 }
 
+// The Morph Ball row that presses a game button, or Action::None.
+static Action BallRowFor(Action game) {
+  for (int i = 1; i < PortInput::kActionCount; ++i) {
+    if (game != Action::None && PortInput::BallGameAction(Action(i)) == game) return Action(i);
+  }
+  return Action::None;
+}
+
 // Port 0's pad, unless it's missing or the touch overlay's virtual one.
 static SDL_Gamepad* RealPad() {
   const s32 index = PADGetIndexForPort(kPort);
@@ -1089,7 +1097,14 @@ bool PromptButtonInput(unsigned padButton, PortInput::Family family, Input& out)
   for (const SMenuAction& m : kMenuActions) {
     if (m.padButton == padButton) menu = &m;
   }
+  // In Morph Ball a bound Morph Ball row comes first (scoped there, so elsewhere
+  // its button's own bindings match first).
   const Action game = PadBitAction(padButton);
+  const Action ball = BallRowFor(game);
+  if (ball != Action::None && (GameContexts() & PortInput::kCtxMorphBall) != 0 &&
+      PromptInputFor({ball}, family, out)) {
+    return true;
+  }
   if (menu == nullptr) return PromptInputFor({game}, family, out);
   const bool l = padButton == PAD_TRIGGER_L;
   const bool r = padButton == PAD_TRIGGER_R;
@@ -1111,7 +1126,8 @@ PADStatus Synthesize(const PortInput::Output& out) {
                                           PAD_TRIGGER_Z,   PAD_BUTTON_START, PAD_TRIGGER_L,   PAD_TRIGGER_R,
                                           PAD_BUTTON_UP,   PAD_BUTTON_DOWN,  PAD_BUTTON_LEFT, PAD_BUTTON_RIGHT};
   for (unsigned b : kButtons) {
-    if (out.Held(PadBitAction(b))) s.button |= static_cast< u16 >(b);
+    const Action ball = BallRowFor(PadBitAction(b));
+    if (out.Held(PadBitAction(b)) || (ball != Action::None && out.Held(ball))) s.button |= static_cast< u16 >(b);
   }
   for (const SMenuAction& m : kMenuActions) {
     if (m.padButton != 0 && out.Held(m.menu)) s.button |= static_cast< u16 >(m.padButton);
@@ -1138,6 +1154,7 @@ SPoll Poll(unsigned mouseHeld, bool focused) {
   Profile next;
   BuildProfile(next);
   ApplyMenuButtons(next);
+  PortInput::ApplyBallButtons(next);
   if (!sInit || next != sProfile) {
     UpdatePromptBindings(next);
     sProfile = std::move(next);
