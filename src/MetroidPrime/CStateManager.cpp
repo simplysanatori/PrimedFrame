@@ -8,6 +8,7 @@
 #include "port_env.h"
 #include "port_freecam.h"
 #include "port_photo.h"
+#include "port_pipeline_context.h"
 #include "port_discord.h"
 #include "port_hold_toggle.h"
 #include "port_livesplit.h"
@@ -3709,6 +3710,7 @@ void CStateManager::DrawWorld() const {
   if (morphingPlayerVisible) {
 #ifdef TARGET_PC
     CPortActorRenderScope presented(*x84c_player);
+    CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
 #endif
     x84c_player->Render(*this);
   }
@@ -3813,7 +3815,12 @@ void CStateManager::DrawWorld() const {
 #ifdef TARGET_PC
     if (!PortViewModel::Active() && !PortFreeCam::Active())
 #endif
-    x84c_player->RenderGun(*this, x870_cameraManager->GetGlobalCameraTranslation(*this));
+    {
+#ifdef TARGET_PC
+      CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
+#endif
+      x84c_player->RenderGun(*this, x870_cameraManager->GetGlobalCameraTranslation(*this));
+    }
 #ifdef TARGET_PC
     if (gunFov) {
       CGraphics::SetProjectionState(gunProj);
@@ -3848,6 +3855,9 @@ void CStateManager::DrawWorld() const {
   }
 
   DrawDebugStuff();
+#ifdef TARGET_PC
+  CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
+#endif
   RenderCamerasAndAreaLights();
   ResetViewAfterDraw(backupViewport, backupViewMatrix);
   DrawE3DeathEffect();

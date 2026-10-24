@@ -23,6 +23,7 @@
 #include "WorldFormat/CPVSAreaSet.hpp"
 
 #ifdef TARGET_PC
+#include "port_pipeline_context.h"
 #include "port_randomizer.h"
 #include "port_room_effects.h"
 #include "port_room_geo.h"
@@ -699,6 +700,11 @@ void CGameArea::StartStreamIn(CStateManager& mgr) {
     }
     // The Remastered room geometry's file is read and parsed while the area streams in.
     PortRoomGeo::Prefetch(static_cast< uint32_t >(x84_mrea));
+    // A lazy pipeline cache builds the pipelines this area drew last time, in the background.
+    if (const CWorld* world = mgr.GetWorld()) {
+      aurora_pipeline_prefetch(
+          PortPipelineAreaContext(static_cast< uint32_t >(world->IGetWorldAssetId()), x4_selfIdx.Value()));
+    }
 #endif
     VerifyTokenList(mgr);
     if (!xf0_26_tokensReady) {

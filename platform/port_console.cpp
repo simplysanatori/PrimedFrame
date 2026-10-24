@@ -1562,6 +1562,14 @@ void CmdStats() {
     Out("frame: %.0f fps, %u draws (%u merged), %u PBR, %u passes, pipelines %u made %u waiting", aurora_get_fps(),
         stats->drawCallCount, stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount,
         stats->createdPipelines, stats->queuedPipelines);
+    AuroraPipelineStats pipes{};
+    aurora_get_pipeline_stats(&pipes);
+    Out("pipeline cache: %llu skipped draws, misses %llu new %llu known %llu late; %llu prefetches queued %llu; "
+        "%u pinned, %u known",
+        static_cast< unsigned long long >(pipes.skippedDraws), static_cast< unsigned long long >(pipes.newMisses),
+        static_cast< unsigned long long >(pipes.knownMisses), static_cast< unsigned long long >(pipes.lateMisses),
+        static_cast< unsigned long long >(pipes.prefetches), static_cast< unsigned long long >(pipes.prefetchQueued),
+        pipes.pinned, pipes.known);
     Out("buffers: %.1f MiB vertices, %.1f indices, %.1f arrays, %.1f uniforms, %.1f texture uploads",
         stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f, stats->lastStorageSize / 1048576.f,
         stats->lastUniformSize / 1048576.f, stats->lastTextureUploadSize / 1048576.f);

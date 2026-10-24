@@ -31,6 +31,10 @@
 #include "port_freecam.h"
 #include "port_mods.h"
 #include "port_photo.h"
+#include "port_pipeline_context.h"
+#include "MetroidPrime/CWorld.hpp"
+
+#include <cstdio>
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "port_room_env.h"
 #include "MetroidPrime/HUD/CSamusHud.hpp"
@@ -274,6 +278,40 @@ void CMFGame::Draw() const {
 
   Touch();
 
+#ifdef TARGET_PC
+  // Pipelines the world draws are tagged with the camera's area (issue #187); a change of area
+  // asks a lazy pipeline cache to build the new area's recorded pipelines in the background.
+  uint64_t pipelineContext = AURORA_PIPELINE_CONTEXT_FRONTEND;
+  if (const CWorld* world = mStateManager->GetWorld();
+      world != nullptr && mStateManager->GetNextAreaId() != kInvalidAreaId) {
+    pipelineContext = PortPipelineAreaContext(static_cast< uint32_t >(world->IGetWorldAssetId()),
+                                              mStateManager->GetNextAreaId().Value());
+  }
+  {
+    static uint64_t sLastContext = AURORA_PIPELINE_CONTEXT_FRONTEND;
+    static AuroraPipelineStats sLastStats{};
+    if (pipelineContext != sLastContext) {
+      AuroraPipelineStats stats{};
+      aurora_get_pipeline_stats(&stats);
+      if (sLastContext != AURORA_PIPELINE_CONTEXT_FRONTEND) {
+        std::fprintf(stderr,
+                     "MP pipeline context %llx left: %llu skipped draws, %llu new, %llu known, %llu late misses\n",
+                     static_cast< unsigned long long >(sLastContext),
+                     static_cast< unsigned long long >(stats.skippedDraws - sLastStats.skippedDraws),
+                     static_cast< unsigned long long >(stats.newMisses - sLastStats.newMisses),
+                     static_cast< unsigned long long >(stats.knownMisses - sLastStats.knownMisses),
+                     static_cast< unsigned long long >(stats.lateMisses - sLastStats.lateMisses));
+      }
+      sLastStats = stats;
+      sLastContext = pipelineContext;
+      if (pipelineContext != AURORA_PIPELINE_CONTEXT_FRONTEND) {
+        aurora_pipeline_prefetch(pipelineContext);
+      }
+    }
+  }
+  CPortPipelineContextScope pipelineScope(pipelineContext);
+#endif
+
   if (mGuiManager->GetIsGameDraw()) {
     gpMain->SetGameFrameDrawn(true);
     mStateManager->PreRender();
@@ -399,7 +437,12 @@ void CMFGame::Draw() const {
   // The debug free camera looks at the world, not through the visor.
   if (!PortFreeCam::Active() || mFlowState != kGFS_InGame)
 #endif
-  mGuiManager->Draw(*mStateManager);
+  {
+#ifdef TARGET_PC
+    CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
+#endif
+    mGuiManager->Draw(*mStateManager);
+  }
 #ifdef TARGET_PC
   // A zoomed copy the visor didn't draw this frame must not show on a later one.
   CPlayerVisor::PortDropScanZoom();
