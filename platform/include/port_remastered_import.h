@@ -161,7 +161,7 @@ inline constexpr int kEffects = 99;    // port_remastered_effect_import and the 
 // 28: retail model placements (RetailPlacement); their entities leave the room's geometry.
 // 29: a retail model's objects pair with its entities by order (RetailPlacement orient, entity).
 // 30: roomenv version 26, the EnvironmentFX colour intensity (a RelayAutoFire-fired density controller).
-inline constexpr int kRooms = 31;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+inline constexpr int kRooms = 32;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 // 9: envfx.bin, the EnvironmentFX flake textures (port_envfx_file.h).

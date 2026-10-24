@@ -142,6 +142,31 @@ struct Placement {
   Vec3 pos{};  // GameCube world coordinates, once the world shift is added
 };
 
+// A world master room's Skybox (see PortRoomGeo::Instance::worldSky): its model, turn and
+// scale (Remastered axes; the master and its rooms share them) and its radiance.
+struct WorldSky {
+  Id16 model{};
+  Vec3 rot{}, scale{};
+  float radiance[3] = {};
+};
+
+// A Skybox's colour times its intensity (PortRoomGeo::Instance::skyRadiance).
+void SkyRadiance(const Room& room, const Component& c, float out[3]) {
+  const auto f = room.Flat(c);
+  const auto intensity = f.find(kPropSkyboxIntensity);
+  const float level =
+      intensity != f.end() && intensity->second.size == 4 ? ReadLEFloat(room.Bytes(intensity->second)) : 1.f;
+  const auto colour = f.find(kPropSkyboxColor);
+  for (int i = 0; i < 3; ++i) {
+    Span s;
+    const float channel = colour != f.end() && colour->second.size >= 12 ? ReadLEFloat(room.Bytes(colour->second) + 4 * i)
+                          : room.Nested(c, {kPropSkyboxColor, kPropColorChannel[i]}, s) && s.size == 4
+                              ? ReadLEFloat(room.Bytes(s))
+                              : 1.f;
+    out[i] = std::isfinite(channel * level) ? std::max(channel * level, 0.f) : 0.f;
+  }
+}
+
 class Writer {
 public:
   Writer(const RoomPak& master, const std::vector<RoomPak>& rooms, const std::vector<RoomPak>& others,
@@ -229,6 +254,7 @@ private:
   const std::vector<RoomPak>& m_others;
   const RoomIO& m_io;
   std::vector<Area> m_areas;
+  std::vector<WorldSky> m_worldSkies;  // the master's (Run), for rooms with no Skybox of their own
 };
 
 double Spread(const std::vector<Vec3>& a, const std::vector<Vec3>& b) {
@@ -2502,21 +2528,33 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     PortRoomGeo::Instance& inst = instances.emplace_back();
     inst.model = id;
     inst.sky = true;
-    const auto intensity = f.find(kPropSkyboxIntensity);
-    const float level =
-        intensity != f.end() && intensity->second.size == 4 ? ReadLEFloat(r.room.Bytes(intensity->second)) : 1.f;
-    const auto colour = f.find(kPropSkyboxColor);
-    for (int i = 0; i < 3; ++i) {
-      Span s;
-      const float channel = colour != f.end() && colour->second.size >= 12 ? ReadLEFloat(r.room.Bytes(colour->second) + 4 * i)
-                            : r.room.Nested(*c, {kPropSkyboxColor, kPropColorChannel[i]}, s) && s.size == 4
-                                ? ReadLEFloat(r.room.Bytes(s))
-                                : 1.f;
-      inst.skyRadiance[i] = std::isfinite(channel * level) ? std::max(channel * level, 0.f) : 0.f;
-    }
+    SkyRadiance(r.room, *c, inst.skyRadiance);
     place(inst, Vec3{}, rot, scale);
     script(inst, c->entity, active);
     ++skies;
+  }
+  // A room with no Skybox of its own (not even one on a layer) carries the world master's,
+  // which Remastered draws there (Phendrana's: !IceWorld's). It stands in for retail's world
+  // sky only where retail draws that. The master's triggers that switch it are not followed.
+  size_t worldSkies = 0;
+  if (r.room.Of(kSkybox).empty()) {
+    for (const WorldSky& sky : m_worldSkies) {
+      if (m_io.cancelled && m_io.cancelled()) {
+        return;
+      }
+      uint32_t id = 0;
+      if (!m_io.model(sky.model, id)) {
+        ++dropped;
+        continue;
+      }
+      PortRoomGeo::Instance& inst = instances.emplace_back();
+      inst.model = id;
+      inst.sky = true;
+      inst.worldSky = true;
+      std::copy(sky.radiance, sky.radiance + 3, inst.skyRadiance);
+      place(inst, Vec3{}, sky.rot, sky.scale);
+      ++worldSkies;
+    }
   }
   if (instances.empty()) {
     return;
@@ -2547,11 +2585,11 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   }
   char line[512];
   std::snprintf(line, sizeof line,
-                "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu skies, %zu inactive objects left out; %zu on a layer, "
+                "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu skies, %zu world skies, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
                 "platform, %zu with untraced links, %zu glowing, %zu animated, %zu left to retail actors, %zu left to "
                 "cinematics; %zu of %zu entities matched; %zu with a material driver), %zu dropped",
-                r.name.c_str(), mrea, count, modcons, actors, skies, inactive, gated, linked, grouped, scripts.group.size(),
+                r.name.c_str(), mrea, count, modcons, actors, skies, worldSkies, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
                 glowing, animated, retailDrawn, posed, scripts.matched, scripts.entities, drivenActors, dropped);
   Log(line);
@@ -3522,13 +3560,37 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
                   v.centre[0], v.centre[1], v.centre[2], v.half[0], v.half[1], v.half[2], best, bestArea);
     Log(line);
   }
+  // The world's skies: the master's Skyboxes, one per model (!IceWorld's two are the same
+  // sky, switched by its triggers), an active one's transform first.
+  m_worldSkies.clear();
+  for (const bool wantActive : {true, false}) {
+    for (const Component* c : master.room.Of(kSkybox)) {
+      const auto f = master.room.Flat(*c);
+      const auto prop = f.find(kPropSkyboxModel);
+      Vec3 pos, rot, scale;
+      if (master.room.Active(*c) != wantActive || prop == f.end() || prop->second.size != 16 ||
+          !master.room.Xform(*c, pos, rot, scale)) {
+        continue;
+      }
+      const Id16 model = SwapUuid(master.room.Bytes(prop->second));
+      if (model == Id16{} || std::any_of(m_worldSkies.begin(), m_worldSkies.end(),
+                                         [&](const WorldSky& s) { return s.model == model; })) {
+        continue;
+      }
+      WorldSky& sky = m_worldSkies.emplace_back();
+      sky.model = model;
+      sky.rot = rot;
+      sky.scale = scale;
+      SkyRadiance(master.room, *c, sky.radiance);
+    }
+  }
   std::vector<GradeData> grades;
   ReadGrades(master, nullptr, grades, &masterScripts);
   std::vector<BacklightData> backlights;
   ReadBacklights(master, nullptr, backlights, &masterScripts);
   std::vector<FogData> fogs;
   ReadFogs(master, nullptr, fogs, &masterScripts);
-  Log("world: " + std::to_string(grades.size()) + " grade(s), " + std::to_string(backlights.size()) +
+  Log("world: " + std::to_string(m_worldSkies.size()) + " sky model(s), " + std::to_string(grades.size()) + " grade(s), " + std::to_string(backlights.size()) +
       " backlight(s), " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(volumes.size()) +
       " camera volume(s)");
   // Every room is matched before any is written: two rooms matching one area

@@ -150,6 +150,7 @@ struct Placed {
   bool wasShown = false;
   CTransform4f base = CTransform4f::Identity();
   bool sky = false; // Instance::sky: drawn by Sky, not with the room
+  bool worldSky = false; // Instance::worldSky
   float skyRadiance[3] = {};
   float lightmap[3] = {}; // Instance::lightmap
   // Instance::drivers[0]: a float driver of one kind parameter. `value` is the spline at the
@@ -1040,6 +1041,7 @@ void Load(uint32_t mrea, Area& area) {
     item.shown = item.active = instance.active;
     item.glows = instance.glows;
     item.sky = instance.sky;
+    item.worldSky = instance.sky && instance.worldSky;
     std::copy(instance.skyRadiance, instance.skyRadiance + 3, item.skyRadiance);
     std::copy(instance.glow, instance.glow + 3, item.glow);
     std::copy(instance.lightmap, instance.lightmap + 3, item.lightmap);
@@ -1821,9 +1823,10 @@ bool Hides(const CGameArea& gameArea, uint32_t editorId) {
   return false;
 }
 
-// The room's sky instances that are shown and on a layer that is on.
+// The room's sky instances that are shown and on a layer that is on: its own, or (`world`)
+// the world's (Instance::worldSky).
 template < typename Fn >
-void ForEachSky(const CGameArea& gameArea, Fn&& fn) {
+void ForEachSky(const CGameArea& gameArea, bool world, Fn&& fn) {
   if (GetMode() == Mode::Off || gpGameState == nullptr) {
     return;
   }
@@ -1835,7 +1838,7 @@ void ForEachSky(const CGameArea& gameArea, Fn&& fn) {
   const Area& area = found->second;
   const CScriptLayerManager* const layers = gpGameState->CurrentWorldState().GetLayerState().GetPtr();
   for (const Placed& item : area.items) {
-    if (!item.sky || !item.shown || area.models[item.model].hidden ||
+    if (!item.sky || item.worldSky != world || !item.shown || area.models[item.model].hidden ||
         (item.layer != kEveryLayer && layers != nullptr && !layers->IsLayerActive(gameArea.GetAreaId(), item.layer))) {
       continue;
     }
@@ -1845,12 +1848,12 @@ void ForEachSky(const CGameArea& gameArea, Fn&& fn) {
   }
 }
 
-int Skies(const CGameArea& gameArea, SkyLayer (&out)[kMaxSkyLayers]) {
+int Skies(const CGameArea& gameArea, SkyLayer (&out)[kMaxSkyLayers], bool world) {
   int count = 0;
   bool loading = false;
   float corners[kMaxSkyLayers];
   float largest = 0.f;
-  ForEachSky(gameArea, [&](const Area& area, const Placed& item) {
+  ForEachSky(gameArea, world, [&](const Area& area, const Placed& item) {
     const Model& model = area.models[item.model];
     if (!model.data->IsLoaded(0)) {
       // Draw loads the area's models, but only while the area is drawn.
@@ -1898,7 +1901,7 @@ int Skies(const CGameArea& gameArea, SkyLayer (&out)[kMaxSkyLayers]) {
 
 bool HasSky(const CGameArea& gameArea) {
   bool has = false;
-  ForEachSky(gameArea, [&](const Area&, const Placed&) {
+  ForEachSky(gameArea, false, [&](const Area&, const Placed&) {
     has = true;
     return false;
   });
