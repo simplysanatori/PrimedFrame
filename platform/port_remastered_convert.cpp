@@ -1342,24 +1342,14 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       loopNotes += "missilelock: emissive map dropped; ";
       rem.maps[kEmissive].has = false;
     }
-    // A retail material's vertices have no layer weight.
-    // A shader of its own needs none: without colours the up-facing one goes by
-    // the normal alone.
-    // The beam glow is the exception: it is the vertex colour's, on the gun's own vertices.
-    // Without the colours (the inventory and cinematic guns) the shader reads (0,0,0,1)
-    // in their place: Remastered has no colourless variant (kb topic/gun-beam-glow-no-vtxcolor.md).
-    const bool gunGlow = rem.kind == 9;
-    // So is the Ice Beam cannon's frost shell, which needs no vertex colours: drawn as a
-    // plain surface it would freeze the gun for good.
+    // The Ice Beam cannon's frost shell (kind 12) needs no vertex colours: its glow mask is
+    // the shader's own.
     const bool frostShell = rem.kind == 12;
     // The Metroid dome's matcap shell (kind 13) is a retail model's blended surface drawn by
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
     const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28 || rem.kind == 29 || rem.kind == 31 || rem.kind == 33 || rem.kind == 34;
-    // The Phazon Beam's own materials (Core_Phazon_Mat 1ac34e37, Phazon_Veins_Mat d61ae63a) are retail gun surfaces
-    // drawn by their shaders too.
-    const bool phazonGun = rem.kind == 35 || (rem.kind == 32 && rem.shader == 0x1AC34E37);
     // The pause visor's two materials (kinds 36, 37) are retail fx surfaces drawn by their shaders,
     // and only by those: no vertex colour, no second layer.
     const bool inventory = rem.kind == 36 || rem.kind == 37;
@@ -1370,16 +1360,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
       rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;
     }
-    if (!opt.standalone && !gunGlow && !frostShell && !matcapShell && !shield && !phazonGun && !inventory) {
-      if (rem.kind != 0) {
-        loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";
-      }
-      rem.kind = 0;
-      rem.vcolor = false;
-    }
-    rem.macro = rem.macro && opt.standalone;
-    rem.layered = rem.layered && (gunGlow || frostShell || matcapShell || shield || phazonGun || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
-    rem.macroLayered = rem.macroLayered && rem.layered && opt.standalone;
+    // A retail model's material keeps its kind, macro and second layer as a room's does: its
+    // vertices carry the colour and its texcoords every set (above). A second layer is
+    // weighed by a kind's shader or by the vertex colour.
+    rem.layered = rem.layered && (rem.kind != 0 || (useColor && rem.tinted));
+    rem.macroLayered = rem.macroLayered && rem.layered;
     const MapRef* rt = rem.maps;
     // Every set has its slot already (above), the beam glow's noise and the frost shell's
     // glow map (ICAN, texcoord 1) among them.
