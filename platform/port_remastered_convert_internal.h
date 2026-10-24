@@ -549,8 +549,7 @@ constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
 // 7159ecc8, 6f1f0438 (CAdd), 2d32d109 (sky) and 1350d65d are the same formula (kb material/7159ecc8.md etc.).
 constexpr uint32_t kShaderSurfaceUnlit[] = {0x67135A0B, 0x6FC4D540, 0x7159ECC8, 0x6F1F0438, 0x2D32D109, 0x1350D65D};
 // Blended fx shaders with no port kind yet (kb material/<id>.md, port_kind NEW): a retail model's material keeps its TEV.
-constexpr uint32_t kShaderFxNoKind[] = {0x0C0B6119, 0x084A8DB5, 0x1FBAFBCA, 0x8C7A939F,
-                                        0x67053FFE};
+constexpr uint32_t kShaderFxNoKind[] = {0x0C0B6119, 0x084A8DB5, 0x1FBAFBCA, 0x8C7A939F};
 // The port kinds of unlit shaders with no exposure factor of their own, exposed by the frame as kShaderSurfaceUnlit
 // (mode bit 131072): 38 (5854e91b, bda080c0).
 constexpr bool BareUnlitKind(int kind) { return kind == 38; }

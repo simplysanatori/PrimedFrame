@@ -2285,6 +2285,23 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                           underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
   }
+  // Kind 41, Remastered's 67053ffe (the gun fx CCFE3C49's CAdd layer, permutation 002 assumed; kb material/67053ffe.md):
+  // no light and no exposure,
+  //   rgb = METL.x x BCLR x (1 - METL.z) x DIFC + ICAN x ICNC + ICMC   alpha = BCLR.a^2 x DIFC.a
+  // METL.x and .z are the MR map's r and b (pbr_ao, pbr_metal). Row 5 = ICMC, row 6 = ICNC, row 7 = DIFC. ICAN is map 3
+  // on its reference's texcoord (the kb's uv set 1 for it is a guess).
+  if (config.pbrKind == 41) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 40.5 && pbr_kind < 41.5) {{
+        let pbr_xi = max({1}.rgb, vec3f(0.0));
+        pbr_lo = vec3f(0.0);
+        pbr_glow = pbr_ao * max({0}.rgb, vec3f(0.0)) * (1.0 - pbr_metal) * ubuf.pbr_shield[7].rgb +
+                   pbr_xi * ubuf.pbr_shield[6].rgb + ubuf.pbr_shield[5].rgb;
+        pbr_alpha = clamp({0}.a * {0}.a * ubuf.pbr_shield[7].w, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""",
+                          base, mapStage[3] == -1 ? "vec4f(0.0)"s : sampled(3, "vec4f(0.0)"));
+  }
   // Kind 28, Remastered's 088e025e (Model_IceSpreader, permutation 002_0). Shield rows: 0 = CCH0 (z normal strength,
   // w frost parallax), 1 = CCH1 (x frost gain, y rim gain, z rim power), 2 = CCH2 rgb (cube tint) and CCH5.x in w
   // (cube gain), 3 = CCH3 rgb (rim colour). Map 3 is the frost TCH0. L is the baked probe's mean (BLPD) times BLCM:

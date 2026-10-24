@@ -90,7 +90,8 @@ namespace ImportStage {
 // 67: 5854e91b and bda080c0 draw as Remastered's unlit Surface with a reflection cube (kind 38).
 // 68: af330de4 draws as Remastered's unlit DIFT x DIFC x vertex colour (kind 39).
 // 69: 664ee5ca draws as Remastered's unlit matcap, DIFT x DIFC + REFS x REFV (kind 40).
-inline constexpr int kConverter = 69;
+// 70: 67053ffe draws as Remastered's unlit METL-weighted BCLR + ICAN (kind 41).
+inline constexpr int kConverter = 70;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.

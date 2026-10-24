@@ -141,6 +141,9 @@ constexpr uint32_t kShaderUnlitVertex = 0xAF330DE4;
 // 664ee5ca (the zoomer's blinn2; kb material/664ee5ca.md): kind 19's matcap without the light, DIFT x DIFC + REFS x
 // REFV + ICNC + ICMC (kind 40).
 constexpr uint32_t kShaderUnlitMatcap = 0x664EE5CA;
+// 67053ffe (the gun fx CCFE3C49's CAdd layer; kb material/67053ffe.md): unlit METL-weighted BCLR x DIFC + ICAN x ICNC +
+// ICMC (kind 41).
+constexpr uint32_t kShaderUnlitAdd = 0x67053FFE;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -339,6 +342,7 @@ const char* KindName(int kind) {
   case 38: return "unlit-cube";
   case 39: return "unlit-vertex";
   case 40: return "unlit-matcap";
+  case 41: return "unlit-add";
   default: return "kind?";
   }
 }
@@ -1321,6 +1325,21 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.shieldRows[28 + i] = c.difc[i];
     }
   }
+  if (shader == kShaderUnlitAdd && out.maps[kBase].has && out.maps[kMr].has) {
+    // Unlit (perm 002 assumed): METL.x x BCLR x (1 - METL.z) x DIFC + ICAN x ICNC + ICMC, alpha BCLR.a^2 x DIFC.a, no
+    // exposure (kind 41). Row 5 = ICMC, row 6 = ICNC (apart: only ICNC scales ICAN), row 7 = DIFC. ICAN keeps the
+    // texcoord its reference names (the kb guesses it is the sampler on uv set 1; unverified).
+    out.kind = 41;
+    out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
+    const ShaderColors c = ReadShaderColors(mat);
+    for (int i = 0; i < 3; ++i) {
+      out.shieldRows[20 + i] = c.icmc[i];
+      out.shieldRows[24 + i] = c.icnc[i];
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = c.difc[i];
+    }
+  }
   if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has && cch[0] && cch[1] && cch[2] && cch[3]) {
     // Ice (088e025e, kind 28): TCH0 is the frost, shifted by a parallax along the view and drawn
     // over the lit surface with a rim. Rows: CCH0 (normal strength z, parallax scale w), CCH1
@@ -1540,7 +1559,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
                                              "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha", "phazon-pool", "phazon-veins",
-                                             "inventory-glass", "inventory-add", "unlit-cube", "unlit-vertex", "unlit-matcap"};
+                                             "inventory-glass", "inventory-add", "unlit-cube", "unlit-vertex", "unlit-matcap", "unlit-add"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -1558,7 +1577,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   const bool iceSingleLayerMapsBound = out.kind == 28 && !out.layered && out.maps[kBase].has && out.maps[kMr].has &&
                                        out.maps[kNormal].has && out.maps[kEmissive].has;
   if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 &&
-      out.kind != 34 && out.kind != 36 && out.kind != 37 && out.kind != 38 && out.kind != 39 && !out.layered && !iceSingleLayerMapsBound) {
+      out.kind != 34 && out.kind != 36 && out.kind != 37 && out.kind != 38 && out.kind != 39 && out.kind != 41 && !out.layered && !iceSingleLayerMapsBound) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
