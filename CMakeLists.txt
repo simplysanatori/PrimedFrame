@@ -1387,6 +1387,26 @@ if(MP_BUILD_TESTS)
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # --- Dread readers A (PKG, BCTEX, title check) ---
+    # CRC-64, .pkg table, .bctex (gzip, block-linear, BC1/3/5) and the opened image's title id,
+    # over synthetic files; real-data checks are opt-in (PORT_DREAD_ROMFS, PORT_DREAD_NSP).
+    mp_port_test(port_dread_readers_a_tests
+        SOURCES tests/port_dread_readers_a.cpp
+            platform/port_dread_pkg.cpp platform/port_dread_bctex.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_nsp.cpp platform/port_remastered_nso.cpp
+        INCLUDES platform/include tests
+        LIBRARIES ZLIB::ZLIB ${CMAKE_THREAD_LIBS_INIT}
+        TIMEOUT 120)
+    mp_websocket_tls(port_dread_readers_a_tests)
+    # --- end Dread readers A ---
+    # --- Dread readers B (BCMDL, BSMAT) ---
+    mp_port_test(port_dread_readers_b_tests
+        SOURCES tests/port_dread_readers_b.cpp platform/port_dread_bcmdl.cpp
+            platform/port_dread_bsmat.cpp
+        INCLUDES platform/include
+        LIBRARIES ZLIB::ZLIB)
+    # --- end Dread readers B ---
     # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
