@@ -87,7 +87,8 @@ namespace ImportStage {
 // 64: ... and its alpha, unlit, mask and height as a room's, sorted and depth-written by its class.
 // 65: ... and its kind, macro and second layer as a room's (no kind dropped).
 // 66: a retail model's fx material with a port kind draws as its Remastered shader, not its retail TEV.
-inline constexpr int kConverter = 66;
+// 67: 5854e91b and bda080c0 draw as Remastered's unlit Surface with a reflection cube (kind 38).
+inline constexpr int kConverter = 67;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.

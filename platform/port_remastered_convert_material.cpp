@@ -131,6 +131,10 @@ constexpr uint32_t kShaderEyeGloss3 = 0xF16BFFFC;
 constexpr bool IsEyeGloss(uint32_t shader) {
   return shader == kShaderEyeGloss || shader == kShaderEyeGloss2 || shader == kShaderEyeGloss3;
 }
+// 5854e91b, the unlit Surface with a reflection cube, and bda080c0, the same with a normal map: kind 38
+// (kb material/5854e91b.md, bda080c0.md).
+constexpr uint32_t kShaderUnlitCube = 0x5854E91B;
+constexpr uint32_t kShaderUnlitCubeNormal = 0xBDA080C0;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -326,8 +330,35 @@ const char* KindName(int kind) {
   case 35: return "phazon-veins";
   case 36: return "inventory-glass";
   case 37: return "inventory-add";
+  case 38: return "unlit-cube";
   default: return "kind?";
   }
+}
+
+// A shader's DIFC, ICNC and ICMC constants (white, black and black where the material has none).
+struct ShaderColors {
+  double difc[4] = {1.0, 1.0, 1.0, 1.0};
+  double icnc[3] = {0.0, 0.0, 0.0};
+  double icmc[3] = {0.0, 0.0, 0.0};
+};
+ShaderColors ReadShaderColors(const ModelMaterial& mat) {
+  ShaderColors c;
+  for (const ModelMaterialData& d : mat.data) {
+    if (d.kind != ModelMaterialData::Kind::Color) {
+      continue;
+    }
+    if (d.usage == FourCC('D', 'I', 'F', 'C')) {
+      for (int i = 0; i < 4; ++i) {
+        c.difc[i] = ShortestDouble(d.color[i]);
+      }
+    } else if (d.usage == FourCC('I', 'C', 'N', 'C') || d.usage == FourCC('I', 'C', 'M', 'C')) {
+      double* row = d.usage == FourCC('I', 'C', 'N', 'C') ? c.icnc : c.icmc;
+      for (int i = 0; i < 3; ++i) {
+        row[i] = ShortestDouble(d.color[i]);
+      }
+    }
+  }
+  return c;
 }
 
 RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
@@ -443,7 +474,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     case FourCC('R', 'E', 'F', 'L'):
       refl = refl || texture;
       if (texture && (shader == kShaderIceSpreader || shader == kShaderHoloRefl || shader == kShaderInventoryGlass ||
-                      shader == kShaderInventoryAdd)) {
+                      shader == kShaderInventoryAdd || shader == kShaderUnlitCube || shader == kShaderUnlitCubeNormal)) {
         set(kBase, d.texture, &out.refl);
         if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
           out.refl = MapRef{};
@@ -1238,6 +1269,21 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (shader == kShaderInventoryAdd && !out.cutout) {
     out.kind = 37;
   }
+  if ((shader == kShaderUnlitCube || shader == kShaderUnlitCubeNormal) && out.maps[kBase].has) {
+    // Unlit: A x BCLR x (1 - M) x DIFC + F0 x REFL + ICNC + ICMC, METL = (A, rough, M) (kind 38). Row 6 = ICNC + ICMC,
+    // row 7 = DIFC; no exposure factor (mode bit 131072).
+    out.kind = 38;
+    out.unlit = true;
+    out.tint[0] = out.tint[1] = out.tint[2] = 1.0;
+    const ShaderColors c = ReadShaderColors(mat);
+    for (int i = 0; i < 3; ++i) {
+      out.shieldRows[24 + i] = c.icnc[i] + c.icmc[i];
+    }
+    out.shieldRows[27] = 1.0;
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = c.difc[i];
+    }
+  }
   if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has && cch[0] && cch[1] && cch[2] && cch[3]) {
     // Ice (088e025e, kind 28): TCH0 is the frost, shifted by a parallax along the view and drawn
     // over the lit surface with a rim. Rows: CCH0 (normal strength z, parallax scale w), CCH1
@@ -1448,7 +1494,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
                                              "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha", "phazon-pool", "phazon-veins",
-                                             "inventory-glass", "inventory-add"};
+                                             "inventory-glass", "inventory-add", "unlit-cube"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -1457,8 +1503,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   } else {
     out.reason += std::string("kind ") + KindName(out.kind) + " from the shader (" + out.role + "); ";
   }
-  // All but lava, premultiplied glass, the holograms (kinds 16-18, one map) and the decal cutouts draw
-  // with the second layer's maps.
+  // All but lava, premultiplied glass, the holograms (kinds 16-18, one map), the decal cutouts and the unlit cube
+  // surface (38) draw with the second layer's maps.
   // Ice's fragment shader (088e025e) uses the standard single-layer PBR slots 0-2
   // plus its frost map in slot 3. Keep its kind only when those source maps exist;
   // otherwise the shader would bind neutral placeholders. Its CCH0-CCH3 row guard
@@ -1466,7 +1512,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   const bool iceSingleLayerMapsBound = out.kind == 28 && !out.layered && out.maps[kBase].has && out.maps[kMr].has &&
                                        out.maps[kNormal].has && out.maps[kEmissive].has;
   if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 &&
-      out.kind != 34 && out.kind != 36 && out.kind != 37 && !out.layered && !iceSingleLayerMapsBound) {
+      out.kind != 34 && out.kind != 36 && out.kind != 37 && out.kind != 38 && !out.layered && !iceSingleLayerMapsBound) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }

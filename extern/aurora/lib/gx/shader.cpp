@@ -2230,6 +2230,27 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                         underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
   }
+  // Kind 38, Remastered's unlit Surface with a reflection cube, 5854e91b, and bda080c0, the same with a normal map
+  // (permutation 002_0; kb material/5854e91b.md, bda080c0.md): no light,
+  //   rgb = A x BCLR x (1 - M) x DIFC + F0 x cube + ICNC + ICMC   F0 = M x (BCLR - 0.04) + 0.04
+  // METL = (A, rough, M) in the MR map's r, g, b; the cube (the material's REFL, else the room's) at the horizon-lifted
+  // reflection, probe-rotated, at LOD rough x 7 (pbr_cubel), with no BRDF table, fresnel or AO. Row 7 = DIFC, row 6 =
+  // ICNC + ICMC. Alpha = BCLR.a^2 x DIFC.a. No exposure factor of its own (kb: bare): the converter sets mode bit
+  // 131072, so backlight.rgb holds the exposure the static one (tone row 0 w) leaves, and both give the frame's.
+  if (config.pbrKind == 38) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 37.5 && pbr_kind < 38.5) {{
+        let pbr_ue = max(ubuf.pbr_backlight.rgb, vec3f(0.0)) *
+                     select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
+        let pbr_uf0 = mix(vec3f(0.04), pbr_base, pbr_metal);
+        pbr_lo = (pbr_base * pbr_ao * (1.0 - pbr_metal) * ubuf.pbr_shield[7].rgb +
+                  pbr_uf0 * pbr_cubel * min(ubuf.pbr_probe[0].w, 1.0)) * pbr_ue;
+        pbr_glow = ubuf.pbr_shield[6].rgb * pbr_ue;
+        pbr_alpha = clamp({0}.a * {0}.a * ubuf.pbr_shield[7].w, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""",
+                          base);
+  }
   // Kind 28, Remastered's 088e025e (Model_IceSpreader, permutation 002_0). Shield rows: 0 = CCH0 (z normal strength,
   // w frost parallax), 1 = CCH1 (x frost gain, y rim gain, z rim power), 2 = CCH2 rgb (cube tint) and CCH5.x in w
   // (cube gain), 3 = CCH3 rgb (rim colour). Map 3 is the frost TCH0. L is the baked probe's mean (BLPD) times BLCM:
