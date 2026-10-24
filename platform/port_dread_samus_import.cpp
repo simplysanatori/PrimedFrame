@@ -136,7 +136,7 @@ void RunDread(std::string nspPath, std::string keysPath, std::string romfsDir, f
       sState.done = int(done);
       sState.total = int(total);
     }
-    SetMessage("Converting Samus's bodies (" + std::to_string(done) + " of " + std::to_string(total) + ")");
+    SetMessage("Converting Samus's models (" + std::to_string(done) + " of " + std::to_string(total) + ")");
   };
   PortDreadSamus::Result result;
   const bool ok = PortDreadSamus::Import(io, result, error);
@@ -156,8 +156,13 @@ void RunDread(std::string nspPath, std::string keysPath, std::string romfsDir, f
     fail("Cannot write " + Utf8(staging));
     return;
   }
+  if (sCancel.load()) {
+    fs::remove_all(staging, ec);
+    fail("cancelled");
+    return;
+  }
   const bool placed = MoveDreadIntoPlace(mods);
-  std::string message = std::to_string(result.converted) + " Samus bodies converted";
+  std::string message = std::to_string(result.converted) + " Samus models converted";
   if (result.failed > 0) {
     message += ", " + std::to_string(result.failed) + " failed";
   }

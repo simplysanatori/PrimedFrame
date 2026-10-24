@@ -364,7 +364,7 @@ void TestIdsAndErrors() {
   Bsmat b = MakeBsmat("x", 1, {1, 1, 1, 1});
   b.shader_path = "system/shd/mp_opaque.bshdat";
   CHECK(!BuildSuitMaterial(b, f.bc, f.at, f.nm, m, &err));
-  CHECK_MSG(err.find("mp_samuspbr") != std::string::npos, err);
+  CHECK_MSG(err.find("unsupported shader") != std::string::npos, err);
   Bctex empty;
   err.clear();
   CHECK(!BuildSuitMaterial(MakeBsmat("x", 1, {1, 1, 1, 1}), f.bc, empty, f.nm, m, &err));
@@ -381,6 +381,46 @@ void TestIdsAndErrors() {
 }
 
 // The synthetic ModelMaterial through the converter's own reader.
+void TestHyperBall() {
+  Fixture f;
+  std::string err;
+  Bsmat b = MakeBsmat("hyper_ball", 50, {0,0,0,1},
+                      {{"vAlbedoEmissiveColorMultiplier", {0.8f,0.003f,0.003f,1}},
+                       {"vConstant0", {1,1,1,1}}});
+  b.shader_path = "system/shd/mp_opaque_constant_selfilum.bshdat";
+  BsmatUniform tint;
+  tint.name = "iTintAlbedo";
+  tint.type = 'i';
+  tint.i = {0};
+  b.stages[0].uniforms.push_back(tint);
+  SuitMaterial m;
+  REQUIRE_MSG(BuildSuitMaterial(b, f.bc, f.at, f.nm, m, &err), err);
+  CHECK(std::fabs(m.emissiveLinear[0] - 40) < 1e-5);
+  CHECK(std::fabs(m.emissiveLinear[1] - .15) < 1e-5);
+  const auto* base = Img(m, kSuitBclr);
+  const auto* orm = Img(m, kSuitMetl);
+  const auto* glow = Img(m, kSuitIcan);
+  REQUIRE(base && orm && glow);
+  for (uint32_t i = 0; i < kN; ++i) {
+    const auto bc = BcPx(i), at = AtPx(i);
+    for (int c = 0; c < 3; ++c) CHECK(base->rgba[4*i+c] == bc[c]);
+    CHECK(base->rgba[4*i+3] == 255);
+    CHECK(orm->rgba[4*i] == at[3]);
+    CHECK(orm->rgba[4*i+1] == std::max<int>(at[1], Byte(.05*255)));
+    CHECK(orm->rgba[4*i+2] == at[2]);
+    const double mask = std::pow(bc[3]/255.0, 2.2);
+    CHECK(glow->rgba[4*i] == Byte(255*Srgb(mask)));
+    CHECK(glow->rgba[4*i+1] == Byte(255*Srgb(mask*.15/40)));
+  }
+  b.stages[0].uniforms.back().i = {1};
+  CHECK(!BuildSuitMaterial(b, f.bc, f.at, f.nm, m, &err));
+  b.stages[0].uniforms.back().i = {0};
+  for (const char* path : {"system/shd/mp_samuspbr_extra.bshdat", "system/shd/mp_opaque_constant_selfilum_extra.bshdat", "mp_samuspbr"}) {
+    b.shader_path = path;
+    CHECK(!BuildSuitMaterial(b, f.bc, f.at, f.nm, m, &err));
+  }
+}
+
 void TestReadMaterial() {
   Fixture f;
   std::string err;
@@ -521,6 +561,7 @@ int main() {
   TestEmissive();
   TestIdsAndErrors();
   TestReadMaterial();
+  TestHyperBall();
   TestRealData();
   return PORT_TEST_RESULT();
 }

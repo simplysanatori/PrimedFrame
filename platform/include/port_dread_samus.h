@@ -80,8 +80,9 @@ struct Result {
   float tipFromCharge[3] = {};
 };
 
-// Runs the whole import. False when nothing could be converted or it was cancelled, with the
-// reason in `error`; a target that fails alone is logged and counted in Result::failed.
+// Runs the whole import. Every target must succeed before writes start. False on any failed
+// target, cancellation or write failure; the caller must discard staging on false. Body target
+// failures are logged and counted in Result::failed; ball failures carry their reason in error.
 bool Import(const Io& io, Result& result, std::string& error);
 
 // A retail body's per-vertex weights for the re-skin's votes: the CMDL's positions (the section
@@ -96,6 +97,11 @@ bool RetailSkinFromCmdl(const std::vector<uint8_t>& cmdl, const std::vector<uint
 bool BuildModel(const PortDread::ReskinResult& reskin,
                 const std::vector<const PortDread::SuitMaterial*>& meshMaterials, PortRemastered::Model& out,
                 std::vector<std::vector<std::vector<std::pair<uint32_t, float>>>>& boneWeights,
-                std::string* error);
+                 std::string* error);
+
+// Enabled shell only (not sonar/FX), measured uniformly against the retail CMDL bounds;
+// rigid weight on the retail ball shell's joint. No humanoid re-targeting.
+bool FitBall(const PortDread::Bcmdl& source, const std::vector<uint8_t>& retailCmdl,
+             uint32_t joint, PortDread::ReskinResult& out, std::string* error);
 
 }  // namespace PortDreadSamus

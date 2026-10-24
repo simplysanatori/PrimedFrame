@@ -129,11 +129,20 @@ ModelUuid ToModelOrder(const ModelUuid& pakOrder) {
 bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, const Bctex& nm,
                        SuitMaterial& out, std::string* error) {
   out = SuitMaterial{};
-  if (bsmat.shader_path.find("mp_samuspbr") == std::string::npos) {
+  const bool constant = bsmat.shader_path == "system/shd/mp_opaque_constant_selfilum.bshdat";
+  if (!constant && bsmat.shader_path != "system/shd/mp_samuspbr.bshdat") {
     if (error != nullptr) {
-      *error = "suit material: shader '" + bsmat.shader_path + "' is not mp_samuspbr";
+      *error = "suit material: unsupported shader '" + bsmat.shader_path + "'";
     }
     return false;
+  }
+  if (constant) {
+    const BsmatUniform* tint = bsmat.FindUniform("iTintAlbedo");
+    if (tint == nullptr || tint->type != 'i' || tint->i.size() != 1 || tint->i[0] != 0 ||
+        Uniform1(bsmat, "vConstant2", 3, 0) != 0) {
+      if (error) *error = "suit material: constant selfillum requires default tint/frostbite";
+      return false;
+    }
   }
   Image bcImg, atImg, nmImg;
   if (!Decode(bc, "base colour", bcImg, error) || !Decode(at, "attributes", atImg, error) ||
@@ -142,7 +151,7 @@ bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, con
   }
 
   // Uniform values; the defaults are the shader's neutral ones (kb: common values per material).
-  const double albedoMul = Uniform1(bsmat, "vConstant0", 3, 1.0);
+  const double albedoMul = constant ? 1.0 : Uniform1(bsmat, "vConstant0", 3, 1.0);
   const double dimmer = Uniform1(bsmat, "vConstant4", 0, 1.0);
   const double factor = Uniform1(bsmat, "fAlbedoEmissiveFactor", 0, 0.0);
   // The shader's self-illumination is
@@ -154,6 +163,10 @@ bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, con
   for (int i = 0; i < 3; ++i) {
     c[i] = Uniform1(bsmat, "vAlbedoEmissiveColor", size_t(i), 0.0) * factor * dimmer +
            Uniform1(bsmat, "vConstant3", size_t(i), 0.0) + Uniform1(bsmat, "vConstant5", size_t(i), 0.0);
+    if (constant) {
+      c[i] = factor * Uniform1(bsmat, "vAlbedoEmissiveColorMultiplier", size_t(i), 0.0) *
+             Uniform1(bsmat, "vConstant0", size_t(i), 1.0);
+    }
     out.emissiveLinear[i] = float(c[i]);
   }
   const double s = std::max({c[0], c[1], c[2]});
@@ -176,7 +189,7 @@ bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, con
   Image metl;
   metl.width = atImg.width, metl.height = atImg.height;
   metl.rgba.resize(atImg.rgba.size());
-  const uint8_t roughFloor = ToByte(0.1 * 255.0);
+  const uint8_t roughFloor = ToByte((constant ? 0.05 : 0.1) * 255.0);
   for (size_t i = 0; i + 3 < atImg.rgba.size(); i += 4) {
     metl.rgba[i + 0] = atImg.rgba[i + 3];
     metl.rgba[i + 1] = std::max(atImg.rgba[i + 1], roughFloor);
@@ -232,7 +245,8 @@ bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, con
     ican.srgb = true;
     ican.rgba.resize(bcImg.rgba.size());
     for (size_t i = 0; i + 3 < bcImg.rgba.size(); i += 4) {
-      const double a = double(bcImg.rgba[i + 3]) / 255.0;
+      const double alpha = double(bcImg.rgba[i + 3]) / 255.0;
+      const double a = constant ? std::pow(alpha, 2.2) : alpha;
       for (int k = 0; k < 3; ++k) {
         ican.rgba[i + size_t(k)] = ToByte(255.0 * SrgbEncode(a * std::clamp(c[k], 0.0, s) / s));
       }

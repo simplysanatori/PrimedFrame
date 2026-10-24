@@ -71,6 +71,8 @@ std::unordered_map<uint32_t, std::string> sRoomEffects;
 std::unordered_map<uint32_t, std::string> sHudBars;
 // The CMDLs the dread-samus mod serves (PortDreadSamus::Replaces).
 std::set<uint32_t> sDreadBodies;
+std::set<uint32_t> sDreadBalls;
+std::set<uint32_t> sDreadLowBalls;
 // The Dread-proportioned CINFs it serves (PortDreadSamus::Skeleton).
 std::set<uint32_t> sDreadSkeletons;
 // thermal.lut: the thermal visor's heat gradient (port_thermal.h).
@@ -359,6 +361,12 @@ bool HasNativeTexture(uint32_t id) { return sNativeTextures.count(id) != 0; }
 }  // namespace PortMods
 
 bool PortDreadSamus::Replaces(uint32_t bodyCmdl) { return bodyCmdl != 0 && PortMods::sDreadBodies.count(bodyCmdl) != 0; }
+bool PortDreadSamus::ReplacesBall(int suit, bool spider) {
+  return PortMods::sDreadBalls.count(BallModel(suit, spider)) != 0;
+}
+bool PortDreadSamus::ReplacesLowBall(int suit, bool spider) {
+  return PortMods::sDreadLowBalls.count(BallModel(suit, spider)) != 0;
+}
 
 uint32_t PortDreadSamus::Skeleton(uint32_t bodyCmdl) {
   const uint32_t cinf = DreadCinf(bodyCmdl);
@@ -506,6 +514,8 @@ void Initialize() {
   sEnvFx.clear();
   sRetailPlacements.clear();
   sDreadBodies.clear();
+  sDreadBalls.clear();
+  sDreadLowBalls.clear();
   sDreadSkeletons.clear();
   {
     std::lock_guard<std::mutex> lock(sEffectIdsMutex);
@@ -741,8 +751,18 @@ void Initialize() {
   // The bodies the Dread Samus import serves, for the game to leave out Prime's cannon on them.
   {
     std::string ids;
+    for (const auto& t : PortDreadSamus::kBallTargets) {
+      const auto ownership = PortDreadSamus::ResolveBallOwnership(t.suit, t.spider, [&](uint32_t type, uint32_t id) {
+        const auto it = loose.find({type, id});
+        return it != loose.end() && it->second.mod == PortDreadSamus::kModName;
+      });
+      const uint32_t model = PortDreadSamus::BallModel(t.suit, t.spider);
+      if (ownership.main) sDreadBalls.insert(model);
+      if (ownership.low) sDreadLowBalls.insert(model);
+    }
     for (const auto& [key, resource] : loose) {
       if (key.first == 0x434D444C && resource.mod == PortDreadSamus::kModName) { // 'CMDL'
+        if (!PortDreadSamus::IsBody(key.second)) continue;
         sDreadBodies.insert(key.second);
         char text[12];
         std::snprintf(text, sizeof(text), " %08X", key.second);

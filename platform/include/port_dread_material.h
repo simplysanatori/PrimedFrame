@@ -44,8 +44,10 @@ PortRemastered::ModelUuid SuitTextureId(const std::string& materialName, SuitSlo
 // holds; the converter swaps it back before asking ConvertIO::texture).
 PortRemastered::ModelUuid ToModelOrder(const PortRemastered::ModelUuid& pakOrder);
 
-// Builds the synthetic material from a parsed mp_samuspbr BSMAT and its three decoded textures.
-// Fails (false, *error) when the shader is not mp_samuspbr or a texture does not decode. Images
+// Builds from exactly system/shd/mp_samuspbr.bshdat or mp_opaque_constant_selfilum.bshdat.
+// The latter bakes alpha^2.2 emissive with roughness floor .05 and requires disabled tint/frostbite;
+// this is texture-baked fidelity, not Dread's dynamic shading (see docs/DREAD_SAMUS.md).
+// Fails (false, *error) for other shaders, unsupported state or a texture that does not decode. Images
 // of different sizes are fine: each map keeps its own. Missing uniforms take the shader's
 // defaults (vConstant0.w 1, vConstant4.r 1, everything else 0).
 bool BuildSuitMaterial(const Bsmat& bsmat, const Bctex& bc, const Bctex& at, const Bctex& nm,

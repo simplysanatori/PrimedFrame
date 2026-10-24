@@ -378,7 +378,95 @@ void TestModOrder() {
 
 // Every target's body is known to the run-time tables (port_dread_samus_mod.h): a cutscene body
 // by its skin and character, an in-game body by its suit, each with its own new skeleton.
+void TestBallFit() {
+  PortDread::Bcmdl source;
+  source.joints.push_back({});
+  PortDread::BcmdlMesh shell;
+  shell.enabled = true;
+  shell.vertices.count = 3;
+  shell.vertices.pos = {-2,-2,0, 2,2,0, 0,0,2};
+  shell.vertices.normal = {0,0,1, 0,0,1, 0,0,1};
+  shell.indices = {0,1,2};
+  PortDread::BcmdlSubmesh sub;
+  sub.skin_type = 2;
+  sub.index_count = 3;
+  shell.submeshes.push_back(sub);
+  source.meshes.push_back(shell);
+  shell.enabled = false;
+  shell.vertices.pos.assign(9, 10000);
+  source.meshes.push_back(shell); // disabled sonar cannot affect the fit
+  std::vector<uint8_t> cmdl(44,0);
+  auto set = [&](size_t at, uint32_t u) { for (int i=0;i<4;++i) cmdl[at+i]=uint8_t(u>>(24-8*i)); };
+  set(0,0xDEADBABE);
+  for (int a=0;a<3;++a) {
+    float lo=-.5f, hi=.5f;
+    uint32_t bits;
+    std::memcpy(&bits,&lo,4); set(12+4*a,bits);
+    std::memcpy(&bits,&hi,4); set(24+4*a,bits);
+  }
+  PortDread::ReskinResult fit;
+  std::string why;
+  REQUIRE_MSG(PortDreadSamus::FitBall(source,cmdl,4,fit,&why),why);
+  CHECK(fit.meshes.size()==1);
+  CHECK(std::fabs(fit.scale-.25f)<1e-6);
+  for (const auto& w : fit.meshes[0].weights) CHECK((w == std::vector<std::pair<uint32_t,float>>{{4,1.f}}));
+  CHECK(std::fabs(fit.meshes[0].pos[0]-.5f)<1e-6);
+  CHECK(std::fabs(fit.meshes[0].normal[1]-1.f)<1e-6);
+  source.meshes[0].enabled=false;
+  CHECK(!PortDreadSamus::FitBall(source,cmdl,4,fit,&why));
+  source.meshes[0].enabled=true;
+  source.meshes[1].enabled=true;
+  CHECK(!PortDreadSamus::FitBall(source,cmdl,4,fit,&why));
+  source.meshes[1].enabled=false;
+  // Bone-local shell: rotate 90 degrees about Z and translate its bind pose.
+  // The fit removes translation; directions retain the bind rotation and the
+  // proper Dread-to-Prime rotation, without flipping tangent handedness.
+  auto& rigid=source.meshes[0];
+  rigid.submeshes[0].skin_type=1;
+  rigid.submeshes[0].joint_map={0};
+  rigid.vertices.normal={1,0,0, 1,0,0, 1,0,0};
+  rigid.vertices.tangent={0,1,0,-1, 0,1,0,1, 0,1,0,-1};
+  rigid.vertices.joints.assign(12,0);
+  rigid.vertices.weights={1,0,0,0, 1,0,0,0, 1,0,0,0};
+  source.joints[0].euler[2]=1.5707963267948966f;
+  source.joints[0].pos[0]=7;
+  source.joints[0].pos[1]=-3;
+  source.joints[0].pos[2]=2;
+  REQUIRE_MSG(PortDreadSamus::FitBall(source,cmdl,4,fit,&why),why);
+  CHECK(std::fabs(fit.scale-.25f)<1e-6);
+  CHECK(std::fabs(fit.meshes[0].pos[0]+.5f)<1e-6);
+  CHECK(std::fabs(fit.meshes[0].pos[1]+.25f)<1e-6);
+  CHECK(std::fabs(fit.meshes[0].pos[2]+.5f)<1e-6);
+  for (int v=0;v<3;++v) {
+    const auto& m=fit.meshes[0];
+    CHECK(std::fabs(m.normal[3*v])<1e-6 && std::fabs(m.normal[3*v+1])<1e-6);
+    CHECK(std::fabs(m.normal[3*v+2]-1)<1e-6);
+    CHECK(std::fabs(m.tangent[4*v]-1)<1e-6);
+    CHECK(std::fabs(m.tangent[4*v+1])<1e-6 && std::fabs(m.tangent[4*v+2])<1e-6);
+    CHECK(m.tangent[4*v+3]==(v==1 ? 1.f : -1.f));
+  }
+  rigid.vertices.weights[0]=.5f;
+  rigid.vertices.weights[1]=.5f;
+  CHECK(!PortDreadSamus::FitBall(source,cmdl,4,fit,&why));
+  rigid.vertices.weights[0]=1;
+  rigid.vertices.weights[1]=0;
+  source.joints[0].scale[0]=2;
+  CHECK(!PortDreadSamus::FitBall(source,cmdl,4,fit,&why));
+}
+
 void TestTables() {
+  CHECK(std::size(PortDreadSamus::kBallTargets) == 8);
+  std::set<uint32_t> ballIds;
+  for (const auto& t : PortDreadSamus::kBallTargets) {
+    CHECK(t.suit >= 0 && t.suit < 4);
+    CHECK(PortDreadSamus::BallModel(t.suit, t.spider) == PortModelVariant::Id(t.cmdl, t.suit));
+    for (uint32_t base : {t.ancs, t.cmdl, t.low}) {
+      const uint32_t id = PortModelVariant::Id(base, t.suit);
+      CHECK(ballIds.insert(id).second);
+      CHECK(!PortDreadSamus::IsBody(id));
+    }
+  }
+  CHECK(PortDreadSamus::BallModel(4, false) == 0);
   CHECK(std::size(PortDreadSamus::kTargets) == 8);
   CHECK(PortDreadSamus::InGameBody(3) == 0x891E00FD);
   CHECK(PortDreadSamus::CutsceneBody(3) == 0x2782648E);
@@ -404,6 +492,38 @@ void TestTables() {
   CHECK(PortDreadSamus::DreadCinf(PortDreadSamus::kPhazonCutsceneAlias) ==
         PortDreadSamus::DreadCinf(PortDreadSamus::kPhazonCutsceneBody));
   CHECK(PortDreadSamus::InGameBody(4) == 0 && PortDreadSamus::CutsceneBody(4) == 0);
+}
+
+void TestBallOwnership() {
+  using namespace PortDreadSamus;
+  using Key = std::pair<uint32_t, uint32_t>;
+  for (const auto& t : kBallTargets) {
+    const Key ancs{FourCC('A','N','C','S'), PortModelVariant::Id(t.ancs, t.suit)};
+    const Key high{FourCC('C','M','D','L'), PortModelVariant::Id(t.cmdl, t.suit)};
+    const Key low{FourCC('C','M','D','L'), PortModelVariant::Id(t.low, t.suit)};
+    std::map<Key, std::string> winners;
+    const auto resolve = [&] {
+      return ResolveBallOwnership(t.suit, t.spider, [&](uint32_t type, uint32_t id) {
+        const auto it = winners.find({type, id});
+        return it != winners.end() && it->second == kModName;
+      });
+    };
+    // Disabled/missing variants take the retail fallback, not Dread's draw rules.
+    CHECK(!resolve().main && !resolve().low);
+    for (const Key& override : {ancs, high, low}) {
+      winners = {{ancs, kModName}, {high, kModName}, {low, kModName}};
+      CHECK(resolve().main && resolve().low);
+      winners[override] = "higher-priority-mod";
+      CHECK(resolve().main == (override == low));
+      CHECK(resolve().low == (override != low));
+      // The same rules apply when a resource is absent: main and low fallback independently.
+      winners.erase(override);
+      CHECK(resolve().main == (override == low));
+      CHECK(resolve().low == (override != low));
+    }
+  }
+  const auto fusion = ResolveBallOwnership(4, true, [](uint32_t, uint32_t) { return true; });
+  CHECK(!fusion.main && !fusion.low);
 }
 
 // ---- real data ----
@@ -489,6 +609,80 @@ void TestRealData() {
               out.string().c_str());
   CHECK(textures > 0);
   CHECK(result.measured);
+  CHECK(result.converted == std::size(PortDreadSamus::kTargets) + std::size(PortDreadSamus::kBallTargets));
+  for (const auto& t : PortDreadSamus::kBallTargets) {
+    for (const auto& key : std::vector<std::pair<uint32_t, const char*>>{
+             {t.ancs, "ANCS"}, {t.cmdl, "CMDL"}, {t.low, "CMDL"}}) {
+      char name[32];
+      std::snprintf(name, sizeof(name), "%08X.%s", PortModelVariant::Id(key.first, t.suit), key.second);
+      CHECK_MSG(fs::exists(out / name), std::string("missing ") + name);
+    }
+    char name[32];
+    std::snprintf(name,sizeof(name),"%08X.ANCS",PortModelVariant::Id(t.ancs,t.suit));
+    std::vector<uint8_t> patched, original, model, skin;
+    REQUIRE(readFile(out/name,patched));
+    REQUIRE(io.retail(FourCC('A','N','C','S'),t.ancs,original));
+    size_t at=14;
+    while (at<original.size() && original[at]) ++at;
+    ++at;
+    auto be = [](const std::vector<uint8_t>& b,size_t p) { return uint32_t(b[p])<<24 | uint32_t(b[p+1])<<16 | uint32_t(b[p+2])<<8 | b[p+3]; };
+    CHECK(be(patched,at)==PortModelVariant::Id(t.cmdl,t.suit));
+    const uint32_t skinId=PortModelVariant::Id(be(original,at+4),t.suit);
+    CHECK(be(patched,at+4)==skinId);
+    // CINF and animation tables must stay byte-identical.
+    REQUIRE(patched.size()==original.size());
+    for (size_t i=0;i<original.size();++i) if (i<at || i>=at+8) CHECK(original[i]==patched[i]);
+    std::snprintf(name,sizeof(name),"%08X.CMDL",PortModelVariant::Id(t.cmdl,t.suit));
+    REQUIRE(readFile(out/name,model));
+    std::snprintf(name,sizeof(name),"%08X.CSKR",skinId);
+    REQUIRE(readFile(out/name,skin));
+    PortDread::RetailSkinRef weights;
+    REQUIRE_MSG(PortDreadSamus::RetailSkinFromCmdl(model,skin,weights,&error),error);
+    for (const auto& w : weights.weights) CHECK((w==std::vector<std::pair<uint32_t,float>>{{4,1.f}}));
+  }
+  PortDreadSamus::Io failing=io;
+  size_t writes=0;
+  failing.write=[&](const std::string&,const std::vector<uint8_t>&) { ++writes; return true; };
+  const uint32_t collision=PortDreadSamus::BallModel(0,false);
+  failing.retailId=[&](uint32_t id) { return id==collision || io.retailId(id); };
+  failing.log=[](const std::string&){};
+  PortDreadSamus::Result failed;
+  CHECK(!PortDreadSamus::Import(failing,failed,error));
+  CHECK(error.find("collision")!=std::string::npos);
+  CHECK(writes==0 && failed.files.empty());
+  failing=io;
+  failing.log=[](const std::string&){};
+  failing.write=[&](const std::string&,const std::vector<uint8_t>&) { ++writes; return true; };
+  failing.dread=[&](const std::string& path,std::vector<uint8_t>& bytes,std::string& why) {
+    if (path.find("morphballhyper_bc")!=std::string::npos) { why="injected missing shell texture"; return false; }
+    return io.dread(path,bytes,why);
+  };
+  CHECK(!PortDreadSamus::Import(failing,failed,error));
+  CHECK(error.find("shell material")!=std::string::npos);
+  CHECK(writes==0 && failed.files.empty());
+  failing=io;
+  failing.log=[](const std::string&){};
+  failing.write=[&](const std::string&,const std::vector<uint8_t>&) { ++writes; return false; };
+  CHECK(!PortDreadSamus::Import(failing,failed,error));
+  CHECK(error.find("cannot write")!=std::string::npos);
+  CHECK(failed.files.empty());
+  // A cancellation raised by a successful staging write must stop the next
+  // write, including when it arrives in the very last write of the transaction.
+  for (size_t cancelAt : {size_t(1), result.files.size() / 2, result.files.size()}) {
+    failing=io;
+    failing.log=[](const std::string&){};
+    bool cancel=false;
+    writes=0;
+    failing.cancelled=[&] { return cancel; };
+    failing.write=[&](const std::string&, const std::vector<uint8_t>&) {
+      if (++writes == cancelAt) cancel=true;
+      return true;
+    };
+    CHECK(!PortDreadSamus::Import(failing,failed,error));
+    CHECK_MSG(error.find("cancelled")!=std::string::npos,error);
+    CHECK(writes==cancelAt);
+    CHECK(failed.files.size()==cancelAt);
+  }
   if (std::getenv("PORT_DREAD_SAMUS_KEEP") == nullptr) {
     fs::remove_all(out);
   }
@@ -502,6 +696,8 @@ int main() {
   TestBuildModel();
   TestModOrder();
   TestTables();
+  TestBallOwnership();
+  TestBallFit();
   TestRealData();
   return PORT_TEST_RESULT();
 }

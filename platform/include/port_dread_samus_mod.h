@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "port_model_variant.h"
 
 // What the game and the mod loader need to know of the "dread-samus" mod (port_dread_samus.h, the
 // import that makes it), without the import's headers.
@@ -16,7 +17,52 @@ inline constexpr const char* kStampName = ".dread-samus-version";
 // 3: shoulder pads skinned to the chest, not voted from Prime's collar.
 // 4: Dread proportions: meshes keep their own bind, with Dread-proportioned CINFs (D7EAD001-006).
 // 5: Phazon = Dread's Metroid Suit (samushyper), skeletons D7EAD007-008.
-inline constexpr int kVersion = 5;
+// 6: all four suit Morph Balls, normal/Spider and low-poly, with rigid animated skins.
+inline constexpr int kVersion = 6;
+
+struct BallTarget {
+  int suit;
+  const char* source;
+  bool spider;
+  uint32_t ancs, cmdl, low;
+};
+inline constexpr BallTarget kBallTargets[] = {
+    {0, "morphballpower", false, 0x9FE58F7A, 0x4E57CE08, 0x180418E0},
+    {1, "morphballgravity", false, 0x9FE58F7A, 0x4E57CE08, 0x180418E0},
+    {2, "morphballvaria", false, 0x9FE58F7A, 0x4E57CE08, 0x180418E0},
+    {3, "morphballhyper", false, 0x9FE58F7A, 0x4E57CE08, 0x180418E0},
+    {0, "morphballpower", true, 0xF37654A2, 0x223353FE, 0x0B57F9E8},
+    {1, "morphballgravity", true, 0xF37654A2, 0x223353FE, 0x0B57F9E8},
+    {2, "morphballvaria", true, 0xF37654A2, 0x223353FE, 0x0B57F9E8},
+    {3, "morphballhyper", true, 0xD7F7C8EC, 0x1922EF7C, 0x0B57F9E8},
+};
+
+inline uint32_t BallModel(int suit, bool spider) {
+  for (const auto& t : kBallTargets) {
+    if (t.suit == suit && t.spider == spider) return PortModelVariant::Id(t.cmdl, suit);
+  }
+  return 0;
+}
+// The runtime selects ANCS and low CMDL variants independently, falling back to
+// retail when absent. A Dread-owned ANCS has the importer's exact main binding.
+// Query the final winning resources, never just the enabled mod list.
+struct BallOwnership {
+  bool main = false;
+  bool low = false;
+};
+template <class Owns> BallOwnership ResolveBallOwnership(int suit, bool spider, const Owns& owns) {
+  for (const auto& t : kBallTargets) {
+    if (t.suit == suit && t.spider == spider) {
+      return {owns(0x414E4353u, PortModelVariant::Id(t.ancs, suit)) &&
+                  owns(0x434D444Cu, PortModelVariant::Id(t.cmdl, suit)),
+              owns(0x434D444Cu, PortModelVariant::Id(t.low, suit))};
+    }
+  }
+  return {};
+}
+// Main requires the winning variant ANCS AND its referenced main CMDL.
+bool ReplacesBall(int suit, bool spider);
+bool ReplacesLowBall(int suit, bool spider);
 
 // The in-game body CMDL of a CPlayerState::EPlayerSuit (0 Power, 1 Gravity, 2 Varia, 3 Phazon;
 // also BallTransitionsANCS's character index), 0 for the suits the mod leaves alone (Fusion).
@@ -101,6 +147,8 @@ inline uint32_t DreadCinf(uint32_t bodyCmdl) {
     return 0;
   }
 }
+
+inline bool IsBody(uint32_t id) { return DreadCinf(id) != 0; }
 
 // The Dread skeleton a body CMDL is skinned and posed on now: DreadCinf(bodyCmdl) when the mod serves
 // the body and that CINF (an import from before the skeletons shipped has none), 0 otherwise.

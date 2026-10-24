@@ -10,13 +10,13 @@ game ships; the mod is made on your machine from your own copies.
 The result is an ordinary mod folder, `dread-samus`, so the Mods page switches
 it off and on like any other mod. Power, Varia and Gravity take their Dread
 namesake, the Phazon Suit takes Dread's Metroid Suit (`samushyper`), and the
-Fusion Suit is not touched. Only the bodies and their suit materials come from Dread:
+Fusion Suit is not touched. The bodies, Morph Ball shells and their suit materials come from Dread:
 Prime's own animations drive them, and no Dread animation, sound or effect is
 used.
 
 ## Importing it
 
-F1 > Remastered > Import holds a `prod.keys` row, shared with the Remastered
+F1 > Mods > Built-in mods > Metroid Dread > Import holds a `prod.keys` row, shared with the Remastered
 import, and then a collapsible **Metroid Dread Samus models** section. Type the
 image's path or press Browse and pick it, then Import. The section says
 "Imported." once the mod is in the mods folder; "Not imported yet." until then.
@@ -92,6 +92,29 @@ Remastered import's PBR shader path.
 
 ## After an update
 
+Version 6 also imports Power/Varia/Gravity/Hyper Morph Balls (Hyper for Phazon),
+including normal, Spider-equipped and low-poly paths. Low-poly paths reuse the
+same Dread shell geometry rather than a separately authored LOD. Each shell is
+uniformly fitted to the corresponding retail ball's measured bounds and rigidly
+bound to its shell joint. The main ball retains Prime's ANCS, skeleton and
+animations; no ball physics or animation calls are replaced. Suit-variant IDs
+keep Fusion resources untouched. The retail Spider glass is omitted only while
+the matching Dread ball is loaded; disabled Dread sonar and spider FX are not
+imported. Prime's glow/trails, frozen shell and electrical effects remain retail.
+
+Hyper's `mp_opaque_constant_selfilum` uses a baked alpha-power emissive mask:
+`E = (40, .15, .15) * (baseAlpha / 255)^2.2`, with the material's default tint
+disabled, and an attributes roughness floor of .05 (other suits use .1).
+Textures bake material defaults into the existing port PBR representation;
+filtering/mipmaps therefore approximate nonlinear post-sampling operations.
+Dread's runtime tint, frostbite and global emissive threshold/multiplier are
+not reproduced. Lighting remains the port's lighting. Non-default Hyper tint
+or frostbite is rejected rather than guessed.
+
+Any failed target or ID collision aborts publication; the importer buffers the
+outputs and the installer publishes its staging directory only on success.
+Failed staging writes cannot replace the installed mod.
+
 The mod carries `.dread-samus-version`: the importer's own number, then the
 build's commit. When that number is older than the build's, the game says
 `dread-samus was imported by an older version; import the Dread Samus models
@@ -109,7 +132,7 @@ replaces the old mod.
   cutscenes and in the Morph Ball transition unless the third-person camera
   (Video > Display, `third_person`, off by default; see `docs/SETTINGS.md`) is
   on. That camera is experimental.
-- Only the Power, Varia, Gravity and Phazon bodies: Fusion keeps its models,
+- Only the Power, Varia, Gravity and Phazon bodies and balls: Fusion keeps its models,
   and nothing else of Dread is imported. One Tallon cutscene draws Phazon with a
   second body id (`B333E1D7`) on the same skin; the mod serves the Metroid Suit
   under it too.
