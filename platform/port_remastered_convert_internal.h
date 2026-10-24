@@ -401,6 +401,7 @@ struct RemMaterial {
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool opaqueFx = false;   // a retail fx material Remastered draws opaque (mesh class 0)
   int blendClass = -1;     // its meshes' class (ModelMesh::bits2): 0 opaque, 1 blended, 2 cutout, 3 additive; -1 none
+  bool classBlend = false; // a retail model's: it blends as its class does, not as the retail material it took
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
   bool wind = false;       // procedural wind sway (mode bit 32768): the model's SWindSet rides in shieldRows[0..8]

@@ -628,6 +628,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (const ModelMesh& mesh : model.meshes) {
     if (mesh.material < mats.size() && mats[mesh.material].blendClass < 0) {
       mats[mesh.material].blendClass = mesh.bits2;
+      mats[mesh.material].classBlend = !opt.standalone;
     }
     if (mesh.bits2 == 3 && mesh.material < mats.size()) {
       RemMaterial& m = mats[mesh.material];

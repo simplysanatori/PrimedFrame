@@ -82,7 +82,8 @@ namespace ImportStage {
 //     cavity or sheen baked into it).
 // 60: the materials report has the mesh class, the blend written and the texcoord slots.
 // 61: a retail model's materials get a texcoord slot for every Remastered set (no fold onto 0).
-inline constexpr int kConverter = 61;
+// 62: a retail model's PBR material blends as its mesh class does, not as its retail material.
+inline constexpr int kConverter = 62;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
