@@ -14,7 +14,8 @@ inline constexpr const char* kStampName = ".dread-samus-version";
 // 1: Power/Varia/Gravity, cutscene (CINF 19C53902) and in-game (A496DA02) bodies.
 // 2: suit materials carry REFL (env specular on the metal plates).
 // 3: shoulder pads skinned to the chest, not voted from Prime's collar.
-inline constexpr int kVersion = 3;
+// 4: Dread proportions: meshes keep their own bind, with Dread-proportioned CINFs (D7EAD001-006).
+inline constexpr int kVersion = 4;
 
 // The in-game body CMDL of a CPlayerState::EPlayerSuit (0 Power, 1 Gravity, 2 Varia; also
 // BallTransitionsANCS's character index), 0 for the suits the mod leaves alone (Phazon, Fusion).
