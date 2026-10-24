@@ -130,6 +130,10 @@ struct Settings {
   bool pointerAim = false; // the mouse moves a pointer; the view turns past the dead box
   int pointerAimBox = kPointerAimBoxDefault;
   int pointerAimTurn = kPointerAimTurnDefault;
+  // Lock-on free aim (Remastered): under a combat lock a pointer moves over the view and
+  // shots follow it while the lock steers the view (any direct aim, with or without
+  // pointer aim).
+  bool lockOnFreeAim = false;
   float mouseSensitivity = 0.0035f; // radians per count; shown on the Source scale
   // With mouseSensitivitySplit on, mouseSensitivityY (radians per count) drives vertical mouse
   // aim and mouseSensitivity only the horizontal.

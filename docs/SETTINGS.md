@@ -1095,6 +1095,17 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   direction rather than at accumulated mouse angles. Jump/fall auto-pitch is
   bypassed during free mouse aim. Capture/UI transitions cancel held charges and
   require mouse-button release before another mouse shot can begin.
+- Lock-on free aim (Controls > Options > Aiming, `lock_on_free_aim`, default off;
+  needs Mouse aim, Twin stick or the modern touch layout), as in Remastered: under a
+  combat lock the mouse, twin stick's right stick, gyro aim or a touch aim drag moves a
+  crosshair over the view and shots leave along the ray through it, as with pointer
+  aim, while the lock steers the view (no edge turn). Without pointer aim the
+  crosshair is there only during the lock. It starts and ends each lock at the
+  centre, where shots and homing go for the locked target as before; off the centre
+  beams, missiles and the Wavebuster head for the crosshair and do not home onto the
+  locked target. Under pointer aim with
+  gyro aim, the twin stick moves the crosshair too while locked, so either or both
+  can aim. Scan locks and grapples still aim through the centre.
 - `MP_DISABLE_AI_AUDIO=1`: start streamed AI audio muted. It can subsequently be
   enabled from the overlay. MusyX mute is independent.
 - `MP_FAST_BOOT=1`, `MP_SKIP_CUTSCENES=1`, `MP_CUTSCENE_SPEED=8`,

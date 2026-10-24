@@ -773,7 +773,8 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
   // ray through the pointer would miss what the pointer is on. Shots and the gun model aim
   // from the gun at the point the ray hits instead (or a far point when it hits nothing);
   // the model turns only so far, so it stays in view. No assist bends the shot off the
-  // pointer (a lock re-centres the pointer and aims as usual).
+  // pointer (a lock re-centres the pointer and aims as usual; under lock-on free aim, with
+  // or without pointer aim, a centred pointer still does).
   float pointerX = 0.f;
   float pointerY = 0.f;
   x490_gun->PortSetPointerAimPoint(false, CVector3f::Zero());
@@ -912,6 +913,14 @@ bool CPlayer::MouseLookIsFree(const CStateManager& mgr) const {
   return MouseControlsAllowed(mgr) && (x304_orbitState == kOS_NoOrbit || x304_orbitState == kOS_Grapple);
 }
 
+bool CPlayer::PortLockFreeAim(const CStateManager& mgr) const {
+  // Scan locks and grapples still aim through the centre.
+  return PortDebug::LockOnFreeAim() && MouseControlsAllowed(mgr) &&
+         (x304_orbitState == kOS_OrbitObject || x304_orbitState == kOS_OrbitPoint ||
+          x304_orbitState == kOS_OrbitCarcass || x304_orbitState == kOS_ForcedOrbitObject) &&
+         mgr.GetPlayerState()->GetCurrentVisor() != CPlayerState::kPV_Scan;
+}
+
 bool CPlayer::PortEmptyLockKeepsPitch(const CStateManager& mgr) const {
   return MouseControlsAllowed(mgr) && x304_orbitState == kOS_OrbitPoint;
 }
@@ -934,7 +943,8 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
     PortDebug::TurnMouseAim(carriedYaw);
   }
   if (PortDebug::UpdateMouseAim(active, !MouseLookIsFree(mgr),
-                               forward.GetX(), forward.GetY(), forward.GetZ())) {
+                               forward.GetX(), forward.GetY(), forward.GetZ(),
+                               PortLockFreeAim(mgr))) {
     SetTransform(CQuaternion::ZRotation(CRelAngle(PortDebug::AimYaw()))
                      .BuildTransform4f(GetTransform().GetTranslation()));
   }
@@ -945,7 +955,8 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
     // pitch-down under free mouse look, and CheckPostGrapple reads a zero jump
     // timer in the air as a grapple jump, which blocked the sideways dash.
     x3ec_freeLookPitchAngle = PortDebug::AimPitch();
-    x9c4_25_showCrosshairs = PortDebug::AimCrosshair() && MouseLookIsFree(mgr);
+    x9c4_25_showCrosshairs =
+        (PortDebug::AimCrosshair() && MouseLookIsFree(mgr)) || PortLockFreeAim(mgr);
   }
 }
 
@@ -1583,7 +1594,8 @@ void CPlayer::UpdateFreeLookState(const CFinalInput& input, float dt, CStateMana
     x3e4_freeLookYawAngle = 0.f;
     x3e8_horizFreeLookAngleVel = 0.f;
     x3f0_vertFreeLookAngleVel = 0.f;
-    x9c4_25_showCrosshairs = PortDebug::AimCrosshair() && MouseLookIsFree(mgr);
+    x9c4_25_showCrosshairs =
+        (PortDebug::AimCrosshair() && MouseLookIsFree(mgr)) || PortLockFreeAim(mgr);
     return;
   }
   if (x304_orbitState == kOS_ForcedOrbitObject || IsMorphBallTransitioning() ||
@@ -3392,7 +3404,8 @@ void CPlayer::DoPostCameraStuff(float dt, CStateManager& mgr) {
     if (PortDebug::MouseAim() && PortDebug::MouseGameplayActive()) x490_gun->CancelMouseInput(mgr);
     PortDebug::SetMouseGameplayActive(false);
   } else {
-    x9c4_25_showCrosshairs = PortDebug::AimCrosshair() && MouseLookIsFree(mgr);
+    x9c4_25_showCrosshairs =
+        (PortDebug::AimCrosshair() && MouseLookIsFree(mgr)) || PortLockFreeAim(mgr);
     if (PortDebug::AimInitialized()) x3ec_freeLookPitchAngle = PortDebug::AimPitch();
   }
   UpdateArmAndGunTransforms(dt, mgr);

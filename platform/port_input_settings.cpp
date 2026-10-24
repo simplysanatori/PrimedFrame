@@ -203,6 +203,8 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     if (v >= kPointerAimTurnMin && v <= kPointerAimTurnMax) {
       s.pointerAimTurn = v;
     }
+  } else if (key == "lock_on_free_aim") {
+    s.lockOnFreeAim = ParseBool(value);
   } else if (key == "crosshair_size") {
     const int v = std::atoi(value.c_str());
     if (v >= kCrosshairSizeMin && v <= kCrosshairSizeMax) {
@@ -381,6 +383,7 @@ void WriteAimSettings(std::ostream& out) {
   out << "pointer_aim=" << (s.pointerAim ? 1 : 0) << '\n';
   out << "pointer_aim_box=" << s.pointerAimBox << '\n';
   out << "pointer_aim_turn=" << s.pointerAimTurn << '\n';
+  out << "lock_on_free_aim=" << (s.lockOnFreeAim ? 1 : 0) << '\n';
 }
 
 void WriteSettings(std::ostream& out) {

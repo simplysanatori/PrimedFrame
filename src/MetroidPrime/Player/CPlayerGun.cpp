@@ -1442,7 +1442,7 @@ void CPlayerGun::PortFireStackedBeams(float dt, CStateManager& mgr, const CTrans
     beam->PortLockStackTokens();
     beam->PortFireStackedProjectile(
         x834_27_underwater, dt, CPlayerState::EChargeStage(x330_chargeState), xf, mgr,
-        static_cast< const TUniqueId& >(targetHoming ? GetTargetId(mgr) : kInvalidUniqueId),
+        static_cast< const TUniqueId& >(targetHoming ? PortHomingTargetId(mgr) : kInvalidUniqueId),
         x340_chargeBeamFactor, x340_chargeBeamFactor);
   }
 }
@@ -1498,7 +1498,11 @@ void CPlayerGun::UpdateNormalShotCycle(float dt, CStateManager& mgr) {
 #endif
   x72c_currentBeam->Fire(
       x834_27_underwater, dt, CPlayerState::EChargeStage(x330_chargeState), xf, mgr,
+#ifdef TARGET_PC
+      static_cast< const TUniqueId& >(targetHoming ? PortHomingTargetId(mgr) : kInvalidUniqueId),
+#else
       static_cast< const TUniqueId& >(targetHoming ? GetTargetId(mgr) : kInvalidUniqueId),
+#endif
       x340_chargeBeamFactor, x340_chargeBeamFactor);
 #ifdef TARGET_PC
   PortFireStackedBeams(dt, mgr, xf, targetHoming);
@@ -1548,8 +1552,16 @@ void CPlayerGun::FireSecondary(float dt, CStateManager& mgr) {
   }
 
   if (fired) {
+#ifdef TARGET_PC
+    TUniqueId targetId = PortHomingTargetId(mgr);
+#else
     TUniqueId targetId = GetTargetId(mgr);
+#endif
+    // Under a lock the aim target is the locked one, so a Wavebuster sent off it takes none.
     if (x832_26_comboFiring && targetId == kInvalidUniqueId &&
+#ifdef TARGET_PC
+        !PortShotOffLock(mgr) &&
+#endif
         x310_currentBeam == CPlayerState::kBI_Wave) {
       targetId = mgr.GetPlayer()->GetAimTargetId();
     }
@@ -2256,6 +2268,15 @@ TUniqueId CPlayerGun::GetTargetId(CStateManager& mgr) {
   }
 
   return ret;
+}
+
+bool CPlayerGun::PortShotOffLock(CStateManager& mgr) const {
+  // A centred pointer reports no aim point, and plain pointer aim has no orbit target.
+  return mPortPointerAimValid && mgr.GetPlayer()->GetOrbitTargetId() != kInvalidUniqueId;
+}
+
+TUniqueId CPlayerGun::PortHomingTargetId(CStateManager& mgr) {
+  return PortShotOffLock(mgr) ? kInvalidUniqueId : GetTargetId(mgr);
 }
 
 CPlayerGun::CGunMorph::CGunMorph(float gunTransformTime, float holoHoldTime)
@@ -3091,8 +3112,15 @@ void CPlayerGun::UpdateAuxWeapons(float dt, const CTransform4f& targetXf, CState
   if (IsWeaponStateSet(0x10)) {
     if (x310_currentBeam == CPlayerState::kBI_Wave &&
         x744_auxWeapon->HasTarget(mgr) == kInvalidUniqueId) {
+#ifdef TARGET_PC
+      // The Wavebuster re-picks its target while it fires: not the locked one while the
+      // pointer is off it.
+      TUniqueId targetId = PortHomingTargetId(mgr);
+      if (targetId == kInvalidUniqueId && !PortShotOffLock(mgr)) {
+#else
       TUniqueId targetId = GetTargetId(mgr);
       if (targetId == kInvalidUniqueId) {
+#endif
         targetId = mgr.GetPlayer()->GetAimTargetId();
       }
       x744_auxWeapon->SetNewTarget(targetId, mgr);

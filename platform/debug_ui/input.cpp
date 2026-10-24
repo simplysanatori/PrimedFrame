@@ -83,6 +83,10 @@ bool sMouseGameplayActive = false;
 // Pointer aim's pointer, and whether it steered this tick (free look).
 PortMouse::PointerAim sPointerAim;
 bool sPointerAimFree = false;
+// The last update left the pointer free under a lock (lock-on free aim).
+bool sPointerAimLocked = false;
+// A locked update this tick moved the pointer (TickAim's job for the pointer under a lock).
+bool sLockPointerRecorded = false;
 PortMouse::ButtonGate sMouseMenuGate;
 PortMouse::HeldButtons sMouseHeldButtons;
 float sMousePendingX = 0.f;
@@ -482,6 +486,7 @@ void ResetMouseAim() {
   sMouseAimState.Reset();
   sPointerAim.Center();
   sPointerAimFree = false;
+  sPointerAimLocked = false;
   sMouseGameplayActive = false;
   sMouseButtonGate.Reset();
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
@@ -543,6 +548,10 @@ void SetPointerAim(bool on) {
 }
 int PointerAimBox() { EnsureInitialized(); return sInput.pointerAimBox; }
 int PointerAimTurn() { EnsureInitialized(); return sInput.pointerAimTurn; }
+bool LockOnFreeAim() {
+  EnsureInitialized();
+  return sInput.lockOnFreeAim && DirectAim() && !sOriginalExperience;
+}
 void SetPointerAimPosition(float x, float y) {
   sPointerAim.Center();
   sPointerAim.Move(x, y);
@@ -597,11 +606,19 @@ void NoteMouseButton(bool synthetic, unsigned mask, bool down) {
 void ClearMouseButtons() { sMouseHeldButtons.Clear(); }
 unsigned MouseHeldButtons() { return sMouseHeldButtons.Held(); }
 
-bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
+bool UpdateMouseAim(bool active, bool locked, float x, float y, float z, bool pointerLock) {
   SetMouseGameplayActive(active);
   const PortMouse::AimState lastAim = sMouseAimState;
   const PortMouse::PointerAim lastPointer = sPointerAim;
-  const bool pointer = PointerAim();
+  // Lock-on free aim: the lock owns the view and a pointer moves over it, pointer aim's
+  // or, without pointer aim, one for the lock only. It starts and ends a lock at the
+  // centre, where the target is.
+  const bool lockFree = active && locked && pointerLock && LockOnFreeAim();
+  const bool pointer = PointerAim() || lockFree;
+  if (lockFree != sPointerAimLocked) {
+    sPointerAim.Center();
+    sPointerAimLocked = lockFree;
+  }
   // Reset aim: under pointer aim recentre the pointer, otherwise look level
   // (pitch 0; yaw stays). reset_aim_both does both either way.
   if (sResetAimRequested.exchange(false, std::memory_order_acq_rel)) {
@@ -615,14 +632,15 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   }
   // Under pointer aim the stick moves the pointer, unless the gyro does: then the
   // stick (and the keyboard look keys) turn the camera as they do without
-  // pointer aim.
-  const bool stickTurns = pointer && sGyroDrivesAim;
+  // pointer aim. A lock leaves the view nothing to turn, so they move the pointer too.
+  const bool stickTurns = pointer && sGyroDrivesAim && !lockFree;
   float dx = sMouseFrameX;
   float dy = sMouseFrameY;
   if (pointer) {
     // The travel moves the pointer, not the view. A lock (or anything that stops free
-    // look) re-centres it: lock-on, scan and grapple still aim through the centre.
-    if (active && !locked) {
+    // look) re-centres it: lock-on (without lock-on free aim), scan and grapple still aim
+    // through the centre.
+    if (active && (!locked || lockFree)) {
       float sx = 0.f, sy = 0.f;
       PointerAimScale(sx, sy);
       if (stickTurns) {
@@ -648,10 +666,21 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
                                   dpitch);
     sMouseAimState.Turn(dyaw, dpitch);
   }
-  sPointerAimFree = pointer && applied;
+  sPointerAimFree = pointer && (applied || lockFree);
   if (!sPointerAimFree) sPointerAim.Center();
   if (applied) {
     sAimTick.Applied(sMouseAimState, lastAim, sPointerAim, lastPointer, sPointerAimFree);
+  } else if (lockFree) {
+    // As TickAim keeps the pointer's lag from the tick's first update, but apart from it:
+    // a lock that ends between the two updates leaves the second its lag and edge turn.
+    if (sLockPointerRecorded) {
+      sPointerAim.lagX = lastPointer.lagX;
+      sPointerAim.lagY = lastPointer.lagY;
+    }
+    sLockPointerRecorded = true;
+  }
+  // The second update of a tick must not move the pointer by the same travel again.
+  if (applied || lockFree) {
     sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
     sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   }
@@ -1037,6 +1066,7 @@ void BeginFrameMouse() {
   sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
   sAimTick.BeginTick();
+  sLockPointerRecorded = false;
 }
 
 void SetSpringBallSwipe(bool enabled) { StoreSetting(sInput.springSwipe, enabled); }

@@ -148,6 +148,10 @@ int main() {
   REQUIRE_MSG(Text().find("gyro_cursor_angle=60\n") != std::string::npos &&
                   Text().find("gyro_cursor_camera=1\n") != std::string::npos,
               "gyro cursor written");
+  REQUIRE_MSG(!Get().lockOnFreeAim, "lock_on_free_aim default off");
+  ApplySetting("lock_on_free_aim", "1");
+  REQUIRE_MSG(Get().lockOnFreeAim && Text().find("lock_on_free_aim=1\n") != std::string::npos,
+              "lock_on_free_aim");
   REQUIRE_MSG(!Get().resetAimBoth, "reset_aim_both default off");
   ApplySetting("reset_aim_both", "1");
   REQUIRE_MSG(Get().resetAimBoth && Text().find("reset_aim_both=1\n") != std::string::npos,
