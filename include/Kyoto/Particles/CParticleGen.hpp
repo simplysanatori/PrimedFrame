@@ -70,6 +70,9 @@ public:
   // The owner ends the effect (Remastered's CParticleGen::ShutdownEffect, vtable +0x98): stop
   // emitting. CElementGen adds the description's SHTM (kill live particles) and SHTT (delay).
   virtual void ShutdownEffect() { SetParticleEmission(false); }
+  // Scales where new particles (or bolt end points) spawn in the system's local axes, without
+  // scaling the particles themselves: HUD effects use it to cover a view wider than 4:3.
+  virtual void PortSetSpawnSpread(const CVector3f& spread) {}
   // Remastered's DoShutdownBehavior (vtable +0x1e8), which a parent with ISDT calls on its children:
   // mode 0xff is the generator's own SHTM, acting at once (no SHTT countdown); 0 and 1 stop emitting.
   virtual void PortDoShutdownBehavior(u32 mode) {

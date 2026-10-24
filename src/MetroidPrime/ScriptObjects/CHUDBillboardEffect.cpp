@@ -109,23 +109,6 @@ void CHUDBillboardEffect::PreRender(CStateManager& mgr, const CFrustumPlanes& fr
     {
       xe8_generator->SetGlobalTranslation(camXf * xec_translation);
       xe8_generator->SetGlobalOrientation(camXf);
-#ifdef TARGET_PC
-      // Port: the effects are authored to fill a 4:3 view (GetScaleForPOV). Wider screens keep
-      // the vertical FOV and extend sideways, narrower ones extend vertically (Vert+), so stretch
-      // the effect along the extended axis to keep it covering the whole screen.
-      const float kMinAspect = 4.f / 3.f;
-      const float aspect = mgr.GetCameraManager()->GetCurrentCamera(mgr).GetAspectRatio();
-      if (aspect != xPortScaleAspect) {
-        xPortScaleAspect = aspect;
-        CVector3f scale = xf8_localScale;
-        if (aspect > kMinAspect) {
-          scale.SetX(scale.GetX() * (aspect / kMinAspect));
-        } else if (aspect > 0.f) {
-          scale.SetZ(scale.GetZ() * (kMinAspect / aspect));
-        }
-        xe8_generator->SetLocalScale(scale);
-      }
-#endif
     }
 #ifdef TARGET_PC
     // camXf is the presented camera: blending it again would trail a frame behind.
@@ -145,9 +128,32 @@ void CHUDBillboardEffect::Render(const CStateManager& mgr) const {
   }
 }
 
+#ifdef TARGET_PC
+// Port: the effects are authored to fill a 4:3 view (GetScaleForPOV). Wider screens keep the
+// vertical FOV and extend sideways, narrower ones extend vertically (Vert+), so spread where the
+// particles and bolts spawn along the extended axis. Scaling the system instead would stretch
+// every sprite and bolt with it. The visor goo manager places its splats itself.
+void CHUDBillboardEffect::PortUpdateSpawnSpread(const CStateManager& mgr) {
+  CVector3f spread(1.f, 1.f, 1.f);
+  if (xPortManagedType != 4) {
+    const float kMinAspect = 4.f / 3.f;
+    const float aspect = mgr.GetCameraManager()->GetCurrentCamera(mgr).GetAspectRatio();
+    if (aspect > kMinAspect) {
+      spread.SetX(aspect / kMinAspect);
+    } else if (aspect > 0.f) {
+      spread.SetZ(kMinAspect / aspect);
+    }
+  }
+  xe8_generator->PortSetSpawnSpread(spread);
+}
+#endif
+
 void CHUDBillboardEffect::Think(float dt, CStateManager& mgr) {
   if (GetActive()) {
     mgr.SetActorAreaId(*this, mgr.GetWorld()->GetCurrentAreaId());
+#ifdef TARGET_PC
+    PortUpdateSpawnSpread(mgr);
+#endif
     float oldGenRate = xe8_generator->GetGeneratorRate();
     xe8_generator->SetGeneratorRate(oldGenRate * CalcGenRate());
     xe8_generator->Update(dt);
@@ -238,7 +244,6 @@ void CHUDBillboardEffect::PortSetVisorGoo(CStateManager& mgr, TUniqueId uid, flo
   CStateManager::PortVisorGooState& goo = mgr.PortVisorGooManager();
   if (CHUDBillboardEffect* old = TCastToPtr< CHUDBillboardEffect >(mgr.ObjectById(goo.effect))) {
     old->xPortManagedType = -1;
-    old->xPortScaleAspect = 0.f;
   }
   goo.effect = uid;
   CHUDBillboardEffect* fx = TCastToPtr< CHUDBillboardEffect >(mgr.ObjectById(uid));

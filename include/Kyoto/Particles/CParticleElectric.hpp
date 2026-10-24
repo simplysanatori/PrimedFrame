@@ -57,6 +57,7 @@ public:
   uint PortFxAsset() const override;
   void PortFxDescribe(PortFxInfo& out) const override;
   bool PortIsRemastered() const { return xPortElc2.get() != nullptr; }
+  void PortSetSpawnSpread(const CVector3f& spread) override;
 #endif
 
   class CLineManager {
@@ -173,6 +174,7 @@ private:
   // Remastered ELC2 implementation, set when the description carries the PEL2 marker.
   std::unique_ptr< CParticleElectric2Port > xPortElc2;
   void PortElc2Step(bool emitting);
+  CVector3f xPortSpawnSpread{1.f, 1.f, 1.f};
 #endif
 
   static ushort sSeed;

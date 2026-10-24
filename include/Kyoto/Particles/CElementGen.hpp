@@ -126,6 +126,7 @@ public:
   // acts at once; PortDoShutdownBehavior(0xff) uses the description's mode.
   void ShutdownEffect() override;
   void PortDoShutdownBehavior(u32 mode) override;
+  void PortSetSpawnSpread(const CVector3f& spread) override;
   // SDTR: the countdown's remaining over its total, 1 when none is running.
   float PortShutdownTimeRemaining() const;
 #endif
@@ -553,6 +554,7 @@ private:
   // A PINR or PINT outside XFMD 4 (whose mover overrides them): the setters keep the owner's
   // orientations and local translation here, which EXTR/EXTT and the getters read.
   bool xPortIntFrame = false;
+  CVector3f xPortSpawnSpread{1.f, 1.f, 1.f};
   CTransform4f xPortExtOrientation = CTransform4f::Identity();
   CTransform4f xPortExtGlobalOrientation = CTransform4f::Identity();
   CVector3f xPortExtTranslation{0.f, 0.f, 0.f};

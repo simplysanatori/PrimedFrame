@@ -34,6 +34,7 @@ void CParticleElectric::PortElc2Step(bool emitting) {
   ctx.xf = xf8_cachedXf;
   ctx.globalScale = xe0_globalScale;
   ctx.localScale = xec_localScale;
+  ctx.spread = xPortSpawnSpread;
   ctx.modu = x1b8_moduColor;
   ctx.ipos = x178_overrideIPos ? &*x178_overrideIPos : nullptr;
   ctx.ivel = x188_overrideIVel ? &*x188_overrideIVel : nullptr;
@@ -148,6 +149,10 @@ void CParticleElectric::CalculatePoints() {
   if (x1c_elecDesc->x18_IEMT) {
     x1c_elecDesc->x18_IEMT->GetValue(x28_currentFrame, pos, vel);
   }
+#ifdef TARGET_PC
+  pos = CVector3f::ByElementMultiply(pos, xPortSpawnSpread);
+  vel = CVector3f::ByElementMultiply(vel, xPortSpawnSpread);
+#endif
   if (x178_overrideIPos) {
     pos = *x178_overrideIPos;
   }
@@ -166,6 +171,10 @@ void CParticleElectric::CalculatePoints() {
   if (x1c_elecDesc->x1c_FEMT) {
     x1c_elecDesc->x1c_FEMT->GetValue(x28_currentFrame, fpos, fvel);
   }
+#ifdef TARGET_PC
+  fpos = CVector3f::ByElementMultiply(fpos, xPortSpawnSpread);
+  fvel = CVector3f::ByElementMultiply(fvel, xPortSpawnSpread);
+#endif
   if (x198_overrideFPos) {
     fpos = *x198_overrideFPos;
   }
@@ -867,6 +876,22 @@ void CParticleElectric::SetGlobalScale(const CVector3f& scale) {
   xe0_globalScale = scale;
   x450_29_transformDirty = true;
 }
+
+#ifdef TARGET_PC
+void CParticleElectric::PortSetSpawnSpread(const CVector3f& spread) {
+  xPortSpawnSpread = spread;
+  if (x450_25_haveGPSM) {
+    for (int i = 0; i < x154_SCNT; ++i) {
+      x400_gpsmGenerators[i]->PortSetSpawnSpread(spread);
+    }
+  }
+  if (x450_26_haveEPSM) {
+    for (int i = 0; i < x154_SCNT; ++i) {
+      x410_epsmGenerators[i]->PortSetSpawnSpread(spread);
+    }
+  }
+}
+#endif
 
 void CParticleElectric::SetLocalScale(const CVector3f& scale) {
   xec_localScale = scale;
