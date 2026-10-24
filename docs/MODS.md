@@ -321,14 +321,15 @@ alone, so a script should pass it on to its children. Desktop only.
 environments and above all room geometry are work in progress: expect wrong
 or missing models, lighting that is off, crashes and heavy memory use, and a
 re-import after most updates. Bug reports about a game running with this mod
-are not handled for now; switch it off on the Remastered page (or remove
+are not handled for now; switch it off in F1 > Mods > Built-in mods (or remove
 `remastered-models` from the import's folder: `mods/` on desktop, the app's own
 storage on Android) to get the retail game back.
 
 The port can build a model mod from your own copy of Metroid Prime Remastered;
-nothing of it ships. F1 > Remastered > Import > "Metroid Prime Remastered models"
-takes the game's `.nsp` or gamecard dump (`.xci`) and your console's key file
-(`prod.keys`, not `title.keys`; `~/.switch/prod.keys` is filled in when it
+nothing of it ships. F1 > Mods > Built-in mods > Prime Remastered > Import >
+"Metroid Prime Remastered models" takes the game's `.nsp` or gamecard dump
+(`.xci`) and your console's key file (`prod.keys`, not `title.keys`;
+`~/.switch/prod.keys` is filled in when it
 exists). An `.xci`, or an `.nsp` converted from one, needs the key file's
 `key_area_key_application_XX` keys; compressed `.nsz`/`.xcz` must be
 decompressed first. The panel remembers both files once they are picked
@@ -504,7 +505,8 @@ below.
 The concept art of the image galleries comes too: the 120 full-size pictures in
 `UI_FrontEnd` (taller than 1000 pixels) are written as JPEGs into the mod's
 `gallery` folder (`gallery/NNN.jpg`, fitted within 1920x1080, quality 90; about
-0.3 MB each, 36 MB in all), and F1 > Remastered > Gallery opens them in a viewer window. The decoder
+0.3 MB each, 36 MB in all), and F1 > Mods > Built-in mods > Prime Remastered > Gallery
+opens them in a viewer window. The decoder
 is the one the game uses for THP movies, so no extra library is needed.
 `MP_REMASTERED_GALLERY=0` leaves them out.
 
@@ -539,12 +541,13 @@ at scale 2 sits 0.30 m forward of the barrel, as on native's LBEAM.
 
 ### Metroid Dread Samus models
 
-The other model import: Samus's Power, Varia, Gravity and Phazon Suit bodies from your
-own Metroid Dread `.nsp`/`.xci` and `prod.keys`, in place of Prime's, in
-cutscenes, the Morph Ball transitions and the third-person camera. It is a mod
-of its own, `dread-samus`, so it switches off on the Mods page without touching
-the Remastered models, and it shares the `prod.keys` row and the import panel
-with the Remastered import (only one of the two runs at a time). Phazon takes
+The other model import, under F1 > Mods > Built-in mods > Metroid Dread: Samus's
+Power, Varia, Gravity and Phazon Suit bodies and Morph Balls from your own Metroid Dread
+`.nsp`/`.xci` and `prod.keys`, in place of Prime's, in cutscenes, the Morph Ball
+transitions and the third-person camera. It is a mod of its own, `dread-samus`,
+so it has a switch of its own there and turns off without touching the
+Remastered models; it shares the `prod.keys` value and the import worker with
+the Remastered import (only one of the two runs at a time). Phazon takes
 Dread's Metroid Suit; Fusion keeps its models. It needs the base Dread release only. See
 [`docs/DREAD_SAMUS.md`](DREAD_SAMUS.md) for the import and its limits.
 

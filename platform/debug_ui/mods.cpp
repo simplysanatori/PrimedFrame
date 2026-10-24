@@ -36,23 +36,26 @@ std::string sKeysName;
 #endif
 } // namespace
 
-// The key file row above both imports.
-void DrawImportKeys() {
+// The key file row: both imports use the same prod.keys, and each built-in section draws its own
+// row over the one buffer. `which` keeps their ids, and their visible labels, apart: the settings
+// search counts rows by label on the page, and the other section may be closed.
+void DrawImportKeys(int which) {
+  const bool dread = which != 0;
 #if defined(__ANDROID__)
-  if (ImGui::Button("Pick the keys...##import-keys")) {
+  if (ImGui::Button(dread ? "Pick the Dread keys...##import-keys-dread" : "Pick the keys...##import-keys")) {
     OpenRemasteredDialog(1);
   }
   ImGui::SameLine();
   ImGui::TextUnformatted(sKeysName.empty() ? "prod.keys" : sKeysName.c_str());
 #else
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-  ImGui::InputTextWithHint("##import-keys", "prod.keys", sKeys, sizeof(sKeys));
+  ImGui::InputTextWithHint(dread ? "##import-keys-dread" : "##import-keys", "prod.keys", sKeys, sizeof(sKeys));
   ImGui::SameLine();
-  if (ImGui::Button("Browse...##import-keys")) {
+  if (ImGui::Button(dread ? "Browse the Dread keys...##import-keys-dread" : "Browse...##import-keys")) {
     OpenRemasteredDialog(1);
   }
 #endif
-  ItemHelp("Your console's prod.keys, used by both imports below.");
+  ItemHelp("Your console's prod.keys, used by both imports.");
 }
 
 void DrawRemasteredImport() {
@@ -312,17 +315,12 @@ void DrawDreadSamusImport() {
   }
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   ImGui::TextWrapped(
-      "Puts Samus's Power, Varia, Gravity and Phazon Suit bodies from your own Metroid Dread in place of Prime's, in "
-      "cutscenes and wherever her body is drawn. Needs the game's .nsp or .xci and your console's prod.keys. "
-      "Phazon takes Dread's Metroid Suit. It is the dread-samus mod: switch it off on the Mods page.");
-  const PortMods::Status& status = PortMods::CurrentStatus();
-  const bool installed = std::any_of(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& m) {
-    return m.name == PortDreadSamus::kModName;
-  });
-  ImGui::TextDisabled(installed ? "Imported." : "Not imported yet.");
+      "Puts Samus's Power, Varia, Gravity and Phazon Suit bodies and Morph Balls from your own Metroid Dread in place "
+      "of Prime's. Needs the game's .nsp or .xci and your console's prod.keys. "
+      "Phazon takes Dread's Metroid Suit. It is the dread-samus mod: switch it off above.");
   ImGui::BeginDisabled(state.running);
 #if defined(__ANDROID__)
-  if (ImGui::Button("Pick the .nsp/.xci...##dread-image")) {
+  if (ImGui::Button("Pick the Dread image...##dread-image")) {
     OpenRemasteredDialog(kDreadPick);
   }
   ImGui::SameLine();
@@ -334,12 +332,12 @@ void DrawDreadSamusImport() {
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
   ImGui::InputTextWithHint("##dread-image", "Metroid Dread .nsp or .xci", sImage, sizeof(sImage));
   ImGui::SameLine();
-  if (ImGui::Button("Browse...##dread-image")) {
+  if (ImGui::Button("Browse the Dread image...##dread-image")) {
     OpenRemasteredDialog(kDreadPick);
   }
 #endif
   ImGui::BeginDisabled(sImage[0] == '\0' || sDreadKeys[0] == '\0');
-  if (ImGui::Button("Import##dread")) {
+  if (ImGui::Button("Import the Dread Samus models##dread")) {
     // A start refused for a missing mods folder or file says why in the shared state; one refused
     // because the Remastered import runs leaves that import's state, which is not this one's.
 #if !defined(__ANDROID__)
@@ -440,8 +438,8 @@ void DrawImporters() {
 } // namespace
 
 void DrawMods() {
-  ImGui::SeparatorText("Mods");
   const PortMods::Status& status = PortMods::CurrentStatus();
+  ImGui::SeparatorText("Mods");
   if (sOriginalExperience) {
     ImGui::TextDisabled("Original experience is on: no mods are loaded.");
   }
@@ -451,50 +449,18 @@ void DrawMods() {
   }
   ItemHelp("Each folder in the mods folder is a mod; later names win. A file at a disc path "
            "(Metroid1.pak, Audio/...) replaces that file. Mods load at startup.");
-  // What the settings would load next time, against what this launch loaded.
-  std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
+  // What the settings would load next time, against what this launch loaded: every mod, the
+  // built-in ones included, so their switches share this line and button.
   bool changed = ModsEnabled() != status.active;
-  bool listed = false;
-  for (const PortMods::ModInfo& mod : status.mods) {
-    const auto found = std::find(disabled.begin(), disabled.end(), mod.name);
-    bool on = found == disabled.end();
-    // The Remastered import is switched on its own page.
-    if (mod.name == PortRemastered::kImportModName) {
+  {
+    const std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
+    for (const PortMods::ModInfo& mod : status.mods) {
+      const bool on = std::find(disabled.begin(), disabled.end(), mod.name) == disabled.end();
       changed = changed || (ModsEnabled() && on) != mod.enabled;
-      continue;
     }
-    listed = true;
-    ImGui::BeginDisabled(!sModsEnabled);
-    if (ImGui::Checkbox(mod.name.c_str(), &on)) {
-      if (on) {
-        disabled.erase(std::remove(disabled.begin(), disabled.end(), mod.name), disabled.end());
-      } else {
-        disabled.push_back(mod.name);
-      }
-      SetModsDisabled(PortMods::JoinDisabled(disabled));
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (mod.enabled) {
-      if (mod.textures > 0) {
-        ImGui::TextDisabled("%d file(s), %d resource(s), %d native texture(s)", mod.files, mod.resources, mod.textures);
-      } else {
-        ImGui::TextDisabled("%d file(s), %d resource(s)", mod.files, mod.resources);
-      }
-    } else {
-      ImGui::TextDisabled("not loaded");
-    }
-    if (mod.importStale) {
-      ImGui::SameLine();
-      ImGui::TextColored(ThemeWarnColor(), "re-import needed");
-    }
-    changed = changed || (ModsEnabled() && on) != mod.enabled;
-  }
-  if (!listed) {
-    ImGui::TextDisabled("No mods in the folder.");
   }
   if (PortMods::Suspended()) {
-    ImGui::TextColored(ThemeWarnColor(), "Unloaded while the Remastered import runs; they load again when it ends.");
+    ImGui::TextColored(ThemeWarnColor(), "Unloaded while an import runs; they load again when it ends.");
   } else if (changed) {
     ImGui::TextColored(ThemeWarnColor(), "Reload the mods to apply.");
   }
@@ -519,6 +485,48 @@ void DrawMods() {
   DrawModReloadMessage();
   for (const std::string& message : status.messages) {
     ImGui::TextColored(ThemeBadColor(), "%s", message.c_str());
+  }
+
+  DrawBuiltinMods();
+
+  // The mods folder's other mods: the port's own are the sections above.
+  ImGui::SeparatorText("Other mods");
+  std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
+  bool listed = false;
+  for (const PortMods::ModInfo& mod : status.mods) {
+    if (mod.name == PortRemastered::kImportModName || mod.name == PortDreadSamus::kModName) {
+      continue;
+    }
+    listed = true;
+    const auto found = std::find(disabled.begin(), disabled.end(), mod.name);
+    bool on = found == disabled.end();
+    ImGui::BeginDisabled(!sModsEnabled);
+    if (ImGui::Checkbox(mod.name.c_str(), &on)) {
+      if (on) {
+        disabled.erase(std::remove(disabled.begin(), disabled.end(), mod.name), disabled.end());
+      } else {
+        disabled.push_back(mod.name);
+      }
+      SetModsDisabled(PortMods::JoinDisabled(disabled));
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (mod.enabled) {
+      if (mod.textures > 0) {
+        ImGui::TextDisabled("%d file(s), %d resource(s), %d native texture(s)", mod.files, mod.resources, mod.textures);
+      } else {
+        ImGui::TextDisabled("%d file(s), %d resource(s)", mod.files, mod.resources);
+      }
+    } else {
+      ImGui::TextDisabled("not loaded");
+    }
+    if (mod.importStale) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "re-import needed");
+    }
+  }
+  if (!listed) {
+    ImGui::TextDisabled("No other mods.");
   }
   if (PortMods::NativeTextureCount() > 0) {
     ImGui::TextDisabled("Native textures: %zu, %zu in use", PortMods::NativeTextureCount(), PortMods::NativeTexturesBound());
