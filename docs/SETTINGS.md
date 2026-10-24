@@ -1094,7 +1094,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   aim, while the lock steers the view (no edge turn). Without pointer aim the
   crosshair is there only during the lock. It starts and ends each lock at the
   centre, where shots and homing go for the locked target as before; off the centre
-  beams and missiles head for the crosshair and do not home. Under pointer aim with
+  beams, missiles and the Wavebuster head for the crosshair and do not home onto the
+  locked target. Under pointer aim with
   gyro aim, the twin stick moves the crosshair too while locked, so either or both
   can aim. Scan locks and grapples still aim through the centre.
 - `MP_DISABLE_AI_AUDIO=1`: start streamed AI audio muted. It can subsequently be

@@ -120,11 +120,11 @@ public:
     mPortPointerAimValid = valid;
     mPortPointerAimPoint = point;
   }
-  // Port: the target a shot homes on. Under pointer aim one sent off the centre (lock-on
-  // free aim) goes where the pointer is, not back onto the locked target.
-  TUniqueId PortHomingTargetId(CStateManager& mgr) {
-    return mPortPointerAimValid ? kInvalidUniqueId : GetTargetId(mgr);
-  }
+  // Port: lock-on free aim with the pointer off the centre. Shots go where the pointer is
+  // and nothing homes them back onto the locked target.
+  bool PortShotOffLock(CStateManager& mgr) const;
+  // Port: the target a shot homes on (none for a shot sent off the lock).
+  TUniqueId PortHomingTargetId(CStateManager& mgr);
   // Port: moves a shot's start to where the muzzle is drawn when the gun is drawn at the
   // retail FOV under a wider or narrower view.
   // `aim` false moves only the start (where only the start is used: a combo's muzzle effect).
