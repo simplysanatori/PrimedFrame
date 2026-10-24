@@ -518,7 +518,21 @@ struct Converter::State {
       }
       // otherwise the stub already holds every texel (an sRGB one is always drawn from its
       // .dds: the stub holds 8-bit linear, which is coarse in the darks)
-      if (srgbTex || std::max(w, h) > cap) {
+      // A BC6H colour map (a sky) keeps its range: its .dds is its own blocks, or half floats,
+      // never the clamped bytes. BC6H has no alpha, so a map whose alpha comes from another
+      // map ("mask") keeps the 8-bit path.
+      bool hdrWritten = false;
+      if (img.hdr && io.hdrDds && colourTex && !(alpha == "mask" && !src->mask.empty())) {
+        std::vector<uint8_t> dds;
+        std::string hdrError;
+        if (io.hdrDds(src->id, opt.nativeMax, dds, hdrError) && !dds.empty()) {
+          Write(name + ".dds", dds);
+          hdrWritten = true;
+        } else {
+          Log("texture " + IdToString(src->id) + ": HDR .dds: " + hdrError + "; writing 8-bit");
+        }
+      }
+      if (!hdrWritten && (srgbTex || std::max(w, h) > cap)) {
         const DdsFormat format = k == kNormal ? NormalDdsFormat() : ColourDdsFormat();
         const bool punch = alpha == "punch";
         if (w == img.width && h == img.height) {

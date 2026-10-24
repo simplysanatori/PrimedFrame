@@ -99,7 +99,9 @@ inline constexpr int kConverter = 74;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
-inline constexpr int kTextures = 4;
+// 5: a BC6H colour map (the skies) is written as BC6H (RGBA16F without BC), its 8-bit
+//    form decoded by value instead of by the halves' high bytes.
+inline constexpr int kTextures = 5;
 // 17: the inventory and cinematic guns draw the animated beam glow (kConverter 58).
 // 16: placements bake as one only when float-identical; any difference places per object.
 // 15: a per-instance retail model converts once, untransformed; retailplacements.bin places

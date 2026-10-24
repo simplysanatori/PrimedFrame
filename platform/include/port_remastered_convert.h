@@ -105,6 +105,11 @@ struct ConvertIO {
   // The top mip of a Remastered texture as RGBA8. The id is in a pak's byte
   // order (what IdToString prints), not the order a model stores it in.
   std::function<bool(const ModelUuid& id, Image& out, std::string& error)> texture;
+  // Optional: a plain 2D BC6H (HDR) Remastered texture as a whole .dds with its range kept:
+  // its own blocks where the import writes BC, RGBA16F where it writes ASTC; the top level's
+  // longest edge at most maxEdge (0: the source's own). The converter asks it for a colour map
+  // whose Image came back with `hdr` set. False when there is none (the 8-bit .dds stays).
+  std::function<bool(const ModelUuid& id, int maxEdge, std::vector<uint8_t>& dds, std::string& error)> hdrDds;
   // Optional: the top mip of every face of a Remastered cube map as linear RGBA floats,
   // 6 faces of edge * edge texels (DecodeTxtrCubeLinear). Without it no material gets a
   // reflection cube of its own.

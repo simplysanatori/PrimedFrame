@@ -739,6 +739,51 @@ int ImportMovies(const Remastered& remastered, const fs::path& folder, const Mov
   return written;
 }
 
+// A plain 2D BC6H texture as the .dds the converter writes for it (ConvertIO::hdrDds): under BC
+// its blocks as they are, from the first mip within maxEdge; without BC (ASTC phones) RGBA16F,
+// at most 2048 on its longest edge, each level decoded from the source's own mip and any the
+// file lacks halved from the last. Linear either way, as BC6H is.
+bool EncodeHdrDds(const TxtrMipsBc6h& tex, int maxEdge, TextureFormat format, std::vector<uint8_t>& dds,
+                  std::string& error) {
+  uint32_t limit = maxEdge > 0 ? uint32_t(maxEdge) : 0xFFFFFFFFu;
+  if (format != TextureFormat::BC) {
+    limit = std::min(limit, 2048u);
+  }
+  size_t start = 0;
+  while (start + 1 < tex.mips.size() && std::max(tex.width >> start, tex.height >> start) > limit) {
+    ++start;
+  }
+  const uint32_t w = std::max(tex.width >> start, 1u), h = std::max(tex.height >> start, 1u);
+  if (w % 4 != 0 || h % 4 != 0) {
+    error = std::to_string(w) + "x" + std::to_string(h) + " is not whole blocks";
+    return false;
+  }
+  if (format == TextureFormat::BC) {
+    const std::vector<std::vector<uint8_t>> mips(tex.mips.begin() + std::ptrdiff_t(start), tex.mips.end());
+    dds = EncodeDdsBc6h(w, h, tex.isSigned, mips);
+  } else {
+    std::vector<std::vector<uint16_t>> mips;
+    for (uint32_t m = 0;; ++m) {
+      const uint32_t mw = std::max(w >> m, 1u), mh = std::max(h >> m, 1u);
+      if (start + m < tex.mips.size()) {
+        mips.emplace_back(size_t(mw) * mh * 4);
+        DecodeBc6hImage(tex.mips[start + m].data(), mw, mh, tex.isSigned, mips.back().data());
+      } else {
+        mips.push_back(HalveRgba16f(mips.back(), std::max(w >> (m - 1), 1u), std::max(h >> (m - 1), 1u)));
+      }
+      if (mw == 1 && mh == 1) {
+        break;
+      }
+    }
+    dds = EncodeDdsRgba16f(w, h, mips);
+  }
+  if (dds.empty()) {
+    error = "the mips do not match the texture's size";
+    return false;
+  }
+  return true;
+}
+
 // Each worker holds a whole model, its decoded buffers and a few RGBA
 // textures at once, so the count is bounded by memory as much as by cores.
 int DefaultThreads() {
@@ -1647,8 +1692,17 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         decoded.height = int(image.height);
         decoded.rgba = std::move(image.rgba);
         decoded.srgb = image.srgb;
+        decoded.hdr = image.format == kTxtrFormatBc6hUfloat || image.format == kTxtrFormatBc6hSfloat;
         return true;
       });
+    };
+    io.hdrDds = [&](const ModelUuid& id, int maxEdge, std::vector<uint8_t>& dds, std::string& hdrError) {
+      std::vector<uint8_t> raw;
+      TxtrMipsBc6h tex;
+      if (!remastered.ReadTexture(id, raw, hdrError) || !ReadTxtrMipsBc6h(raw.data(), raw.size(), tex, hdrError)) {
+        return false;
+      }
+      return EncodeHdrDds(tex, maxEdge, WantedTextureFormat(), dds, hdrError);
     };
     io.volume = [&](const ModelUuid& id, Image& out, std::string& volumeError) {
       std::vector<uint8_t> raw, slices;
