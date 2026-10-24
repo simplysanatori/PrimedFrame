@@ -555,7 +555,7 @@ static ExposureAverage sAverage;
 
 void ResetExposure() { sAverage.Reset(); }
 
-void UpdateFrame(bool roomGeoDrawing) {
+void UpdateFrame() {
   if (!sBrdfSent) {
     SendBrdfLut();
   }
@@ -659,10 +659,8 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.progress = tr.progress;
     f.moving = tr.moving;
   }
-  // Measuring settles only where the picture follows the exposure: room geometry, lit by
-  // the room's own light. The retail world keeps its level whatever the exposure, and
-  // measuring it would push the exposure to an end of the hint's range.
-  f.measuring = hint && roomGeoDrawing && area.hasGeo && AutoExposure() && Enabled() && RoomExposed();
+  // UpdateTonemapping 0xaffb18 measures every frame in a room with a hint, whatever is drawn.
+  f.measuring = hint && AutoExposure() && Enabled() && RoomExposed();
   if (hasRadiance && serial != sAverage.serial) {
     sAverage.serial = serial;
     if (f.measuring) {

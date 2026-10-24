@@ -914,12 +914,11 @@ void SetViewArea(uint32_t mrea);
 // (CPostFXManager::UpdateTonemapping). The tonemap moves linearly to the camera room's
 // over a second; with an auto exposure hint the exposure is the tonemap's EV until the
 // first measurement of the frame's average radiance (GXPortFrameRadiance), then eases
-// through the ExposureAverage's Gaussian. It is measured only when `roomGeoDrawing` (only
-// then does the picture follow the exposure, so measuring it can settle); a frame that is
-// not uses the tonemap's EV and leaves the Gaussian where it is. The tonemap jumps when the
+// through the ExposureAverage's Gaussian, measured every frame the room has a hint, as
+// Remastered does whatever geometry is drawn. The tonemap jumps when the
 // camera's previous room is gone (a world load or a teleport); the Gaussian does not. Also
 // hands one cube or volume the worker has finished to the GPU.
-void UpdateFrame(bool roomGeoDrawing);
+void UpdateFrame();
 // How long the player's power bomb has been going off, or a negative value for none; the next
 // UpdateFrame tints the baked light with it (PowerBombBakedLight) unless
 // MP_REMASTERED_BOMB_TINT=0.

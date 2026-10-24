@@ -41,7 +41,6 @@ Loaded ReadRoomFile(const std::string& path) {
 
 // Starts the area's load; Finish completes it on the render thread.
 void Load(uint32_t mrea, Area& area) {
-  area.hasGeo = !PortMods::RoomGeoPath(mrea).empty();
   const std::string path = PortMods::RoomEnvPath(mrea);
   if (path.empty()) {
     return;

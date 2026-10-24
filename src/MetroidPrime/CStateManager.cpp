@@ -3181,10 +3181,6 @@ void CStateManager::PortCaptureProbeFace() const {
   PortRoomGeo::SetLoadedAreas(mreas, mreaCount);
   PortRoomLiquid::SetLoadedAreas(mreas, mreaCount);
   {
-    // The frame's exposure eases on; it is measured from the picture only while room
-    // geometry, which follows it, is on screen.
-    int geoAreas, instances, models, loaded, drawn;
-    PortRoomGeo::Stats(geoAreas, instances, models, loaded, drawn);
     // Remastered tints the baked light orange in a power bomb's flash.
     const CPowerBomb* bomb = NULL;
     if (x84c_player != nullptr && x84c_player->GetPlayerGun() != nullptr &&
@@ -3192,7 +3188,7 @@ void CStateManager::PortCaptureProbeFace() const {
       bomb = static_cast< const CPowerBomb* >(GetObjectById(x84c_player->GetPlayerGun()->GetPowerBombId()));
     }
     PortRoomEnv::SetPowerBombTime(bomb != NULL ? bomb->GetCurTime() : -1.f);
-    PortRoomEnv::UpdateFrame(PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && drawn > 0);
+    PortRoomEnv::UpdateFrame();
   }
   {
     // The room's reflection probes blend around the camera, as Remastered's do.

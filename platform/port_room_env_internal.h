@@ -90,7 +90,6 @@ struct Area {
   uint32_t lightmap = 0; // GXCreatePBRLightmap's id; 0 until the worker has made it, or none
   float exposure = 0.f; // what takes the room's radiance to the display's range; 0: unknown
   float tone[3][4] = {}; // its tone curve
-  bool hasGeo = false;   // the mod replaces its geometry
   ExposureHints hints;   // the fluid-mode exposure hints' state
   bool hintSnap = false; // a fluid hint registered this frame: the exposure snaps
   uint64_t layers = ~uint64_t(0); // its active script layers (SetAreaLayers)
