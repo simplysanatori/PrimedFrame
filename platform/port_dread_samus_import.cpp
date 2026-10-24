@@ -152,6 +152,7 @@ void RunDread(std::string nspPath, std::string keysPath, std::string romfsDir, f
   const std::string stamp = std::to_string(PortDreadSamus::kVersion) + "\n" + std::string(MP_BUILD_REVISION) + "\n";
   if (!WriteFile(staging / PortDreadSamus::kStampName, std::vector<uint8_t>(stamp.begin(), stamp.end())) ||
       !WriteFile(staging / kDreadDone, {})) {
+    fs::remove_all(staging, ec);
     fail("Cannot write " + Utf8(staging));
     return;
   }

@@ -89,6 +89,25 @@ static const TLockedToken< CCharLayoutInfo >& PortPoseLayout(const CCharacterInf
   if (cinf == 0) {
     return layoutData;
   }
+  // The import patches each Dread skeleton from the retail one, so they hold the same segments. A
+  // body paired with another CINF (another mod, another ANCS reusing it) would index segments the
+  // posed skeleton lacks: keep the retail pose then.
+  const CCharLayoutInfo& anim = **layoutData;
+  const CCharLayoutInfo& pose = **modelData->GetLayoutInfo();
+  const CSegIdList& segs = anim.GetBodyPartSegIds();
+  bool matches = segs.size() == pose.GetBodyPartSegIds().size();
+  for (int i = 0; matches && i < segs.size(); ++i) {
+    matches = pose.ContainsSegment(segs[i]);
+  }
+  if (!matches) {
+    static bool sMismatchLogged = false;
+    if (!sMismatchLogged) {
+      sMismatchLogged = true;
+      PortLog::Write("dread-samus: skeleton %08X does not match body %08X's animations; posing it on the retail one\n",
+                     cinf, charInfo.GetModelId());
+    }
+    return layoutData;
+  }
   static bool sLogged = false;
   if (!sLogged) {
     sLogged = true;
