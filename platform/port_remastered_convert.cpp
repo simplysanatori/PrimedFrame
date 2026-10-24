@@ -1394,11 +1394,14 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
             ? (!frostShell && rem.maskSquared ? "mask2" : "mask")
         : rem.blended ? "blend"
                       : "";
-    // Blended retail effects keep their TEV, bar the materials drawn by a shader of their own,
-    // an unlit glow tinted by its vertices, and a mesh Remastered draws opaque or cut
-    // (class 0 or 2, kb topic/mesh-blend-class.md): the missile pickup's top, 274D21BE.
+    // Blended retail effects draw as their Remastered shader; only those whose shader has no port kind
+    // yet (kShaderFxNoKind) keep their TEV, bar the materials drawn by a shader of their own, an unlit
+    // glow tinted by its vertices, and a mesh Remastered draws opaque or cut (class 0 or 2, kb
+    // topic/mesh-blend-class.md): the missile pickup's top, 274D21BE.
     const bool pbrGate = opt.standalone || (rem.unlit && rem.tinted) || matcapShell || shield || inventory || lambertFx ||
-                         rem.blendClass == 0 || rem.blendClass == 2 || !IsFx(pm);
+                         rem.blendClass == 0 || rem.blendClass == 2 ||
+                         !(IsFx(pm) && std::find(std::begin(kShaderFxNoKind), std::end(kShaderFxNoKind), rem.shader) !=
+                                           std::end(kShaderFxNoKind));
     const bool usePbr = opt.pbr && rt[kBase].has && pbrGate && Get("pbr:base", rt, baseAlpha, opt).has_value();
     // The base map keeps its whole alpha, and the shader cuts it as Remastered's does.
     rem.cutExact = usePbr && exactCut;
@@ -1537,7 +1540,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::string tevReason =
         !opt.pbr ? "pbr off"
         : !rt[kBase].has ? "no base map"
-        : !pbrGate ? "retail fx material keeps its TEV"
+        : !pbrGate ? "fx shader without a port kind keeps its TEV"
                                                    : "the base map did not resolve";
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
