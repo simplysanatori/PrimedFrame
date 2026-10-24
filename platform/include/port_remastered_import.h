@@ -94,7 +94,8 @@ namespace ImportStage {
 // 71: 8c7a939f draws as kind 25 (its maths), 1fbafbca as kind 42 (25 plus ICAN x ICNC).
 // 72: 084a8db5 draws as kind 43 (HoloGlass less TCH1/TCH2/DIFC).
 // 73: 0c0b6119 draws as kind 31 (fb2bc671's maths, DIFC for ICNC).
-inline constexpr int kConverter = 73;
+// 74: every retail fx material draws through its Remastered shader (kShaderFxNoKind gone).
+inline constexpr int kConverter = 74;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
