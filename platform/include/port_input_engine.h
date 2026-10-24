@@ -218,6 +218,10 @@ struct Binding {
   float scale = 1.f;
   bool invert = false;
   uint16_t contexts = kCtxAll;
+  // Context bits that turn it off, even with a held layer matching `contexts`.
+  // Set only by the passes that build the polled profile (never saved), so taking
+  // a binding out of one context leaves its rank alone.
+  uint16_t blocked = 0;
 
   bool operator==(const Binding&) const = default;
   bool IsChord() const { return count > 1; }
@@ -287,7 +291,9 @@ private:
   static constexpr int kConsumedAll = -2;
 
   void Rebuild();
-  bool InContext(const Binding& b, uint16_t contexts) const { return (b.contexts & contexts) != 0; }
+  bool InContext(const Binding& b, uint16_t contexts) const {
+    return (b.contexts & contexts) != 0 && (b.blocked & contexts) == 0;
+  }
   static bool Passthrough(const Binding& b);
   bool MembersFree(int bi) const;
   void Consume(int bi);

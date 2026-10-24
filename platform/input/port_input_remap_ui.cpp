@@ -727,7 +727,7 @@ void DrawAdvancedEditor(const Binding& parsed, bool inputsOk) {
     ImGui::Checkbox("Invert", &sDraft.invert);
   }
 
-  if (PortInput::BallGameAction(sDraft.action) != Action::None) {
+  if (PortInput::FindBallRow(sDraft.action) != nullptr) {
     ImGui::TextDisabled("Works only in Morph Ball, where its inputs do nothing else.");
     return;
   }
@@ -988,13 +988,10 @@ const char* GameHint(Action a) {
   case Action::MenuDown:
   case Action::MenuLeft:
   case Action::MenuRight: return "Navigate";
-  case Action::BallBomb: return "A when unset";
-  case Action::BallBoost: return "B when unset";
-  case Action::BallUnmorph: return "X when unset";
-  case Action::BallPowerBomb: return "Y when unset";
-  case Action::BallSpider: return "R when unset";
-  default: return nullptr;
+  default: break;
   }
+  const PortInput::BallRow* ball = PortInput::FindBallRow(a);
+  return ball != nullptr ? ball->hint : nullptr;
 }
 
 // A binding's non-default settings, in words ("" when it has none).

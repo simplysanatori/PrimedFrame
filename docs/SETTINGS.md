@@ -383,8 +383,12 @@
   The Morph Ball rows (issue #167: Bomb, Power Bomb, Boost Ball, Spider Ball, Unmorph;
   `ball_bomb`, `ball_power_bomb`, `ball_boost`, `ball_spider`, `ball_unmorph` in
   controls.toml) press A, Y, B, R and X only in Morph Ball. They start unbound, so the ball
-  uses the game buttons until one is set; an input bound to one does only that in the ball
-  (its other bindings still apply outside it), and the prompts there follow it.
+  uses the game buttons until one is set. A key, mouse button or controller input bound to
+  one does only that in the ball, held layers included (the same mouse button under any of
+  its codes, an axis at any threshold); outside the ball its other bindings work as before,
+  and the prompts in the ball follow it. A combo on a row replaces the same combo; its
+  buttons alone keep what they do, as with any combo. A row given layers in controls.toml
+  works in the ball while one is held. Touch buttons can't take them; touch is unchanged.
   "Point and click menus" (on by default; `pointer_menus=`, `MP_POINTER_MENUS`) lets
   the mouse and touch work the game's own menus (front end, pause screen, save stations,
   upgrade messages) and the map. A hover selects (a tap on touch), a click confirms (a
