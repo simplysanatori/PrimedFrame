@@ -2269,6 +2269,22 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                           base);
   }
+  // Kind 40, Remastered's 664ee5ca (the zoomer's blinn2, permutation 002 assumed; kb material/664ee5ca.md): kind 19's
+  // matcap with no light and no exposure,
+  //   rgb = DIFT x DIFC + REFS(0.5 + 0.5 n.xy) x REFV + ICNC + ICMC   alpha = DIFT.a^2 x DIFC.a
+  // Map 4 is REFS, map 5 REFV (the assignment inferred from the matcap coordinate, kb). Row 6 = ICNC + ICMC, row 7 = DIFC.
+  if (config.pbrKind == 40 && mapStage[4] != -1 && mapStage[5] != -1) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 39.5 && pbr_kind < 40.5) {{
+        let pbr_zs = max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0));
+        let pbr_zv = max(sampled{1}.rgb, vec3f(0.0));
+        pbr_lo = vec3f(0.0);
+        pbr_glow = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_shield[7].rgb + pbr_zs * pbr_zv + ubuf.pbr_shield[6].rgb;
+        pbr_alpha = clamp({2}.a * {2}.a * ubuf.pbr_shield[7].w, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""",
+                          underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
+  }
   // Kind 28, Remastered's 088e025e (Model_IceSpreader, permutation 002_0). Shield rows: 0 = CCH0 (z normal strength,
   // w frost parallax), 1 = CCH1 (x frost gain, y rim gain, z rim power), 2 = CCH2 rgb (cube tint) and CCH5.x in w
   // (cube gain), 3 = CCH3 rgb (rim colour). Map 3 is the frost TCH0. L is the baked probe's mean (BLPD) times BLCM:

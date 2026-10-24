@@ -138,6 +138,9 @@ constexpr uint32_t kShaderUnlitCubeNormal = 0xBDA080C0;
 // af330de4 (the zoomer's blinn1/blinn90; kb material/af330de4.md): kind 16's unlit DIFT x DIFC + ICNC + ICMC with
 // the vertex colour on the colour and the alpha (kind 39).
 constexpr uint32_t kShaderUnlitVertex = 0xAF330DE4;
+// 664ee5ca (the zoomer's blinn2; kb material/664ee5ca.md): kind 19's matcap without the light, DIFT x DIFC + REFS x
+// REFV + ICNC + ICMC (kind 40).
+constexpr uint32_t kShaderUnlitMatcap = 0x664EE5CA;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -335,6 +338,7 @@ const char* KindName(int kind) {
   case 37: return "inventory-add";
   case 38: return "unlit-cube";
   case 39: return "unlit-vertex";
+  case 40: return "unlit-matcap";
   default: return "kind?";
   }
 }
@@ -496,8 +500,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       break;
     case FourCC('R', 'E', 'F', 'S'):
     case FourCC('R', 'E', 'F', 'V'):
-      // 98F0556D's sphere map and reflectivity map: the second layer's base and MR (kind 19).
-      if (texture && (shader == kShaderGunFx || IsEyeGloss(shader))) {
+      // 98F0556D's sphere map and reflectivity map: the second layer's base and MR (kind 19). 664ee5ca's (kind 40)
+      // the same; which of its two textures is REFS is inferred from the matcap coordinate (kb), not verified.
+      if (texture && (shader == kShaderGunFx || IsEyeGloss(shader) || shader == kShaderUnlitMatcap)) {
         const bool sphere = d.usage == FourCC('R', 'E', 'F', 'S');
         MapRef& m = sphere ? out.layer[kBase] : out.layer[kMr];
         set(sphere ? kBase : kMr, d.texture, &m);
@@ -1302,6 +1307,20 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.shieldRows[28 + i] = c.difc[i];
     }
   }
+  if (shader == kShaderUnlitMatcap && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
+    // Unlit (perm 002 assumed): DIFT x DIFC + REFS(view-space normal x 0.5 + 0.5) x REFV + ICNC + ICMC, alpha
+    // DIFT.a^2 x DIFC.a, no exposure (kind 40). One uv set. Rows as kind 19: 6 = ICNC + ICMC, 7 = DIFC.
+    out.kind = 40;
+    out.layer[kMr].coord = out.layer[kBase].coord = 0;
+    out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
+    const ShaderColors c = ReadShaderColors(mat);
+    for (int i = 0; i < 3; ++i) {
+      out.shieldRows[24 + i] = c.icnc[i] + c.icmc[i];
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = c.difc[i];
+    }
+  }
   if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has && cch[0] && cch[1] && cch[2] && cch[3]) {
     // Ice (088e025e, kind 28): TCH0 is the frost, shifted by a parallax along the view and drawn
     // over the lit surface with a rim. Rows: CCH0 (normal strength z, parallax scale w), CCH1
@@ -1458,6 +1477,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind == 40) {
+    // As kind 19 (maps 4 and 5 are REFS and REFV, the base DIFT alone), but unlit in the shader and with its class's blend.
+    out.layered = true;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
+  }
   if (out.kind == 13) {
     // Lit by the standard path and alpha blended; the shader makes its own albedo and rim.
     out.layered = out.blended = true;
@@ -1512,7 +1540,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
                                              "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha", "phazon-pool", "phazon-veins",
-                                             "inventory-glass", "inventory-add", "unlit-cube", "unlit-vertex"};
+                                             "inventory-glass", "inventory-add", "unlit-cube", "unlit-vertex", "unlit-matcap"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
