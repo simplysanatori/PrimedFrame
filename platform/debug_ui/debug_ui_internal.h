@@ -415,6 +415,7 @@ void DrawMenuHintToast();
 void DrawDiscReadFailedAlert();
 
 // mods.cpp
+void DrawImportKeys();
 void DrawRemasteredImport();
 void DrawDreadSamusImport();
 void DrawMods();

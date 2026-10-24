@@ -248,6 +248,7 @@ void DrawRemasteredTab() {
   ImGui::SeparatorText("Remastered models");
   DrawRemasteredModToggle();
   ImGui::SeparatorText("Import");
+  DrawImportKeys();
   DrawRemasteredImport();
   DrawDreadSamusImport();
 
