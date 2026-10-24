@@ -855,6 +855,11 @@ constexpr MatchedEffect kMatchedEffects[] = {
     // (port_remastered_room_effects.cpp).
     {"47b4f5e0-5a5d-4a9b-a1fb-62486ec76c5a", 0x2ECE9B8C},  // bigspittle
     {"47b4f5e0-5a5d-4a9b-a1fb-62486ec76c5a", 0x68907841},  // spittle
+    {"#visual-inferred", 0},  // method of the entries below
+    // FlickerBat root burst (EVNT 31BF4B18, frames 6-60): inferred from the blue circular
+    // effect, a model shell replacing retail's radial sprite. Checked on the bat in the port;
+    // no Remastered runtime reference or CHPR mapping establishes this pairing.
+    {"3b29b0b3-0c3d-42b6-9159-f4863f6c3ed9", 0x0B9E48EB},  // 1E14B003 FlickerBat root
 };
 
 // Retail PARTs whose Remastered effect is a stub because Remastered draws them
