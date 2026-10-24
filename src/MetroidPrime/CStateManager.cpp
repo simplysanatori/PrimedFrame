@@ -74,6 +74,7 @@
 #include "MetroidPrime/ScriptObjects/CSnakeWeedSwarm.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpawnPoint.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpecialFunction.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptMidi.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptStreamedMusic.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptTrigger.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptWater.hpp"
@@ -246,7 +247,7 @@ CEntity* PortTempleObject(CStateManager& mgr, uint id) {
 // and stops it only if the destination room has no music at all.
 bool sPortWarpMusicPending = false;
 
-// The active streamed music `ent` plays from `state` (any state when
+// The active streamed music or MIDI `ent` plays from `state` (any state when
 // `anyState`), or null.
 CEntity* PortPlayedMusic(CStateManager& mgr, const CEntity& ent, EScriptObjectState state,
                          bool anyState) {
@@ -260,6 +261,9 @@ CEntity* PortPlayedMusic(CStateManager& mgr, const CEntity& ent, EScriptObjectSt
       CScriptStreamedMusic* const music = dynamic_cast< CScriptStreamedMusic* >(ent);
       if (music != nullptr && music->GetActive() && music->IsLoopingMusic())
         return music;
+      CScriptMidi* const midi = dynamic_cast< CScriptMidi* >(ent);
+      if (midi != nullptr && midi->GetActive())
+        return midi;
     }
   }
   return nullptr;
@@ -334,6 +338,9 @@ void PortStartStateLoadMusic(CStateManager& mgr) {
   if (!PortStartAreaMusic(mgr) && !sPortStateLoadSameWorld)
     CStreamAudioManager::StopAll();
 }
+
+// The room restore played the saved music itself.
+void PortEndStateLoadMusic() { sPortStateLoadMusic = false; }
 
 namespace {
 

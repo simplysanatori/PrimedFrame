@@ -52,6 +52,7 @@ namespace fs = std::filesystem;
 // area's once Samus is placed.
 void PortKeepMusicForStateLoad(bool sameWorld);
 void PortStartStateLoadMusic(CStateManager& mgr);
+void PortEndStateLoadMusic();
 
 namespace PortSaveState {
 namespace {
@@ -94,6 +95,9 @@ bool sRoomPending = false;
 // resident at the save are still streaming in; each takes its state when it finishes.
 // Ends when all have, when Samus leaves the saved room, or after kRoomLateFrames.
 bool sRoomLate = false;
+// The room state names the music that was playing: the room restore plays it, and
+// the area-music guess (PortStartStateLoadMusic) only runs if none of it could be.
+bool sRoomMusic = false;
 int sRoomFrames = 0;
 std::vector< int32_t > sRoomDone;
 RoomApplyStats sRoomStats;
@@ -314,6 +318,7 @@ void QuitToPending(CStateManager& mgr) {
   sPlacePending = false;
   sRoomPending = false;
   sRoomLate = false;
+  sRoomMusic = false;
 
   // As the debug world warp: stop the outgoing world's loads, retire its PAKs
   // and quit to CMainFlow, which starts the next game (InstallPending).
@@ -548,6 +553,13 @@ void TickRoomState(CStateManager& mgr) {
                  sRoomStats.skipped, sRoomStats.replayed, sRoomStats.fields,
                  late ? ", neighbour areas still streaming" : "");
   sRoomPending = false;
+  if (sRoomMusic) {
+    sRoomMusic = false;
+    if (sRoomStats.music > 0)
+      PortEndStateLoadMusic();
+    else
+      PortStartStateLoadMusic(mgr);
+  }
   if (late) {
     // The armed spawn layers stay: those areas spawn with the bits they had at the save.
     sRoomLate = true;
@@ -799,7 +811,9 @@ bool Tick(CStateManager& mgr) {
       WriteMarker();
       SetMessage("Resumed");
     }
-    PortStartStateLoadMusic(mgr);
+    sRoomMusic = sRoomPending && RoomStateHasMusic(sPendingHeader.roomState);
+    if (!sRoomMusic)
+      PortStartStateLoadMusic(mgr);
   }
   TickRoomState(mgr);
   if (sInstallPending) {
@@ -845,6 +859,7 @@ void SetInFrontEnd(bool inFrontEnd) {
     // armed for it belong to a game that was left.
     sRoomPending = false;
     sRoomLate = false;
+    sRoomMusic = false;
     DisarmSpawnLayers();
     std::lock_guard< std::mutex > lock(sSnapMutex);
     sSnap.valid = false;

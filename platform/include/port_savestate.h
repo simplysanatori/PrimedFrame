@@ -200,6 +200,7 @@ struct RoomApplyStats {
   int replayed = 0;   // journalled script messages sent again
   int generated = 0;  // script generator copies made again
   int fields = 0;     // enemy fields set from kTagFields blocks
+  int music = 0;      // music objects playing again from kTagMusic blocks
   // Saved areas not loaded yet that the last ApplyRoomState call asked the world to
   // stream in (or found streaming): they get their state when they finish, no longer
   // held against the restore's end. Set by each call, not summed.
@@ -243,6 +244,8 @@ bool IsScriptGeneratedCopy(const CStateManager& mgr, CEntity& ent);
 // Whether a generated copy of this class is saved and made again on load: enemies,
 // pickups and debris. Others (maze walls, sounds) are left to their generators.
 bool SavesGeneratedCopy(CEntity& ent);
+// Whether the room state says which music was playing (saves before kTagMusic do not).
+bool RoomStateHasMusic(const RoomState& room);
 bool ScriptTimerState(CEntity& ent, float& time, bool& timing);
 bool ScriptCounterState(CEntity& ent, int& current);
 int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32_t >& done,
