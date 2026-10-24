@@ -656,7 +656,24 @@ TEST(SceneHdrVfx, HdrSourcesWriteExposedLinear) {
     const std::string body = hdr.substr(tail, tone - tail);
     EXPECT_NE(body.find("var lin = max(rgb, vec3f(0.0));"), std::string::npos);
     EXPECT_NE(body.find("if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { lin = lin * u.tone0.w; }"), std::string::npos);
-    EXPECT_NE(body.find("if ((BLEND == 0u || BLEND == 3u || (FEAT & 134217728u) != 0u) && (FEAT & 1048576u) == 0u && (FEAT & 4194304u) == 0u) {"), std::string::npos);
+    // The fog condition is wrapped over two lines in the generated WGSL; collapse whitespace to match it,
+    // and pin every FEAT predicate: fogged (1 << 27) still fogs, while NoFog (1 << 20), the retail
+    // unfogged bit (1 << 22) and the Remastered no-fog bits 29 (BarrierShield/BarrierGlow) and 30 exclude it.
+    auto squeezed = [](const std::string& s) {
+      std::string out;
+      bool space = false;
+      for (const char c : s) {
+        if (c == ' ' || c == '\n' || c == '\t' || c == '\r') {
+          space = true;
+          continue;
+        }
+        if (space && !out.empty()) out += ' ';
+        space = false;
+        out += c;
+      }
+      return out;
+    };
+    EXPECT_NE(squeezed(body).find("if ((BLEND == 0u || BLEND == 3u || (FEAT & 134217728u) != 0u) && (FEAT & 1048576u) == 0u && (FEAT & 4194304u) == 0u && (FEAT & 536870912u) == 0u && (FEAT & 1073741824u) == 0u) {"), std::string::npos);
     EXPECT_NE(body.find("hdr_exposed(u.fogColor.rgb, u.tone0, u.tone1, u.tone2)"), std::string::npos);
     EXPECT_NE(body.find("return vec4f(lin, alpha);"), std::string::npos);
     EXPECT_EQ(body.find("tone("), std::string::npos);

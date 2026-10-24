@@ -10,6 +10,7 @@
 #include "MetroidPrime/CObjectList.hpp"
 #include "MetroidPrime/CPhysicsActor.hpp"
 #include "MetroidPrime/CScriptLayerManager.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptSpecialFunction.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
 #include "MetroidPrime/Cameras/CCinematicCamera.hpp"
@@ -674,6 +675,10 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
       }
     }
   }
+  // Add-on effects and barrier progress are not serialized. This also clears a completed
+  // group's suppression when restoring an earlier point in an already resident area.
+  if (CScriptSpecialFunction* special = TCastToPtr< CScriptSpecialFunction >(&ent))
+    special->PortInvalidateBarrierForRestore(mgr);
   // Omega Pirate keeps its health in a collision actor and needs its intro's Reset later.
   if (COmegaPirate* omega = dynamic_cast< COmegaPirate* >(&ent))
     omega->PortRestoredFromSave(mgr);

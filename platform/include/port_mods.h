@@ -238,6 +238,11 @@ std::string RoomGeoPath(uint32_t mrea);
 std::string RoomLiquidPath(uint32_t mrea);
 // The same for its Remastered effect actors (port_room_effects.h).
 std::string RoomEffectsPath(uint32_t mrea);
+// Winning loose-resource provenance. Empty for disc/whole-PAK resources; main thread only.
+// Native DDS ownership takes precedence for a TXTR. Used for atomic room-effect groups.
+std::string ResourceProvider(uint32_t type, uint32_t id);
+std::string RoomEffectsProvider(uint32_t mrea);
+uint64_t ResourceGeneration();
 // Every roomgeo/lods.bin the mods supply (port_room_geo.h), in mod order: a later one's
 // entry for a model stands in for an earlier one's.
 std::vector<std::string> RoomLodPaths();

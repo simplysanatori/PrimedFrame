@@ -1,6 +1,7 @@
 #include "port_room_effects.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -95,6 +96,150 @@ void ReadVariables(const std::vector<uint8_t>& d, size_t& at, uint32_t n, std::v
     ReadLE32(d, at, bits);
     v.integer = int32_t(bits);
   }
+}
+
+// A parsed layer object as a barrier's checks see it.
+struct LayerObject {
+  uint32_t id = 0;
+  uint32_t part = 0xFFFFFFFF;
+  bool active = true;
+};
+
+// An editor id without its layer bits (the room's and the object's are the same for every id
+// a room's script holds, so two ids that differ only there name one object).
+uint32_t NormalizedId(uint32_t eid) { return eid & 0x03FFFFFF; }
+uint32_t LayerBits(uint32_t eid) { return eid >> 26; }
+uint32_t AreaBits(uint32_t eid) { return (eid >> 16) & 0x3FF; }
+
+// The barrier checks, all of them about the file alone: which room it is, whether the retail
+// objects it names exist and whether their PARTs are installed is the area's business, not the
+// codec's. Called with `objects` the layer objects in file order.
+bool ValidateBarriers(const File& file, const std::vector<LayerObject>& objects, std::string& error) {
+  if (file.barriers.size() > kMaxBarrierGroups) {
+    error = "too many barrier groups";
+    return false;
+  }
+  if (file.barriers.empty()) {
+    return true;
+  }
+  // A barrier names its effects by their whole editor id, so no two layer objects may share
+  // one (their layer bits included, the ids are already required to be add-ons).
+  for (size_t i = 0; i < objects.size(); ++i) {
+    for (size_t j = i + 1; j < objects.size(); ++j) {
+      if (NormalizedId(objects[i].id) == NormalizedId(objects[j].id)) {
+        error = "two layer objects share an editor id";
+        return false;
+      }
+    }
+  }
+  const BarrierGroup& group = file.barriers[0];
+  if (!std::isfinite(group.duration) || !(group.duration > 0.f) || group.duration > kMaxBarrierDuration) {
+    error = "barrier duration outside (0, 60]";
+    return false;
+  }
+  // The controller, then each ring's platform, then that ring's refraction and glow effects.
+  constexpr uint32_t kRetail = 1 + kBarrierRings;       // the controller and the five platforms
+  constexpr uint32_t kMembers = 1 + kBarrierRings * 3;  // and the ten effects the rings show
+  uint32_t members[kMembers];
+  members[0] = group.controller;
+  for (uint32_t r = 0; r < kBarrierRings; ++r) {
+    members[1 + r] = group.rings[r].platform;
+    members[kRetail + 2 * r] = group.rings[r].refraction;
+    members[kRetail + 2 * r + 1] = group.rings[r].glow;
+  }
+  // The controller and the platforms are the room's own retail objects, each a different one.
+  for (uint32_t i = 0; i < kRetail; ++i) {
+    if (IsAddOnId(members[i])) {
+      error = "barrier controller or platform is an add-on";
+      return false;
+    }
+    if (members[i] == 0) {
+      error = "barrier controller or platform is unset";
+      return false;
+    }
+    for (uint32_t j = i + 1; j < kRetail; ++j) {
+      if (NormalizedId(members[i]) == NormalizedId(members[j])) {
+        error = "barrier controller and platforms are not distinct";
+        return false;
+      }
+    }
+  }
+  // All of them are in the controller's room and on its layer, and none is an object the file
+  // leaves out or rewrites.
+  for (uint32_t i = 0; i < kMembers; ++i) {
+    if (LayerBits(members[i]) != LayerBits(group.controller) ||
+        AreaBits(members[i]) != AreaBits(group.controller)) {
+      error = "barrier member is on another layer or area than its controller";
+      return false;
+    }
+    for (uint32_t id : file.skips) {
+      if (NormalizedId(id) == NormalizedId(members[i])) {
+        error = "barrier member is one the file skips";
+        return false;
+      }
+    }
+    for (const Override& over : file.overrides) {
+      if (NormalizedId(over.id) == NormalizedId(members[i])) {
+        error = "barrier member is one the file overrides";
+        return false;
+      }
+    }
+  }
+  // Each ring shows two of the file's own effects: exactly one layer object, one no other ring
+  // shows, added inactive and with a PART to show.
+  for (uint32_t i = kRetail; i < kMembers; ++i) {
+    for (uint32_t j = kRetail; j < i; ++j) {
+      if (members[i] == members[j]) {
+        error = "two barrier rings show the same effect";
+        return false;
+      }
+    }
+    const LayerObject* found = nullptr;
+    uint32_t matches = 0;
+    for (const LayerObject& object : objects) {
+      if (object.id == members[i]) {
+        found = &object;
+        ++matches;
+      }
+    }
+    if (matches != 1) {
+      error = "a barrier effect is not one of the file's objects";
+      return false;
+    }
+    if (found->active) {
+      error = "a barrier effect starts active";
+      return false;
+    }
+    if (found->part == 0 || found->part == 0xFFFFFFFF) {
+      error = "a barrier effect has no PART";
+      return false;
+    }
+  }
+  // Fifteen guids: every one set, and no two the same.
+  constexpr uint32_t kGuids = kBarrierRings * 3;
+  const std::array<uint8_t, 16>* guids[kGuids];
+  for (uint32_t r = 0; r < kBarrierRings; ++r) {
+    guids[3 * r] = &group.rings[r].breakupRefraction;
+    guids[3 * r + 1] = &group.rings[r].motion;
+    guids[3 * r + 2] = &group.rings[r].breakupGlow;
+  }
+  for (uint32_t i = 0; i < kGuids; ++i) {
+    bool set = false;
+    for (uint8_t byte : *guids[i]) {
+      set = set || byte != 0;
+    }
+    if (!set) {
+      error = "a barrier guid is zero";
+      return false;
+    }
+    for (uint32_t j = 0; j < i; ++j) {
+      if (*guids[i] == *guids[j]) {
+        error = "two barrier guids are the same";
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -230,11 +375,28 @@ std::vector<uint8_t> Write(const File& file) {
     PutLE32(out, over.part);
     putVariables(over.vars);
   }
+  PutLE32(out, uint32_t(file.barriers.size()));
+  for (const BarrierGroup& group : file.barriers) {
+    PutLE32(out, group.controller);
+    PutLEFloat(out, group.duration);
+    for (const BarrierRing& ring : group.rings) {
+      PutLE32(out, ring.platform);
+      PutLE32(out, ring.refraction);
+      PutLE32(out, ring.glow);
+      for (const std::array<uint8_t, 16>* guid : {&ring.breakupRefraction, &ring.motion, &ring.breakupGlow}) {
+        out.insert(out.end(), guid->begin(), guid->end());
+      }
+    }
+  }
   return out;
 }
 
 bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
   out = {};
+  // Everything lands in `file`, which `out` only takes once the whole file has parsed (a
+  // barrier is a set of cross references, so half of one is worth less than nothing).
+  File file;
+  std::vector<LayerObject> objects;
   size_t at = 0;
   uint32_t magic = 0, version = 0, skips = 0, layers = 0;
   if (!ReadLE32(data, at, magic) || magic != kFileMagic) {
@@ -252,9 +414,9 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
   for (uint32_t i = 0; i < skips; ++i) {
     uint32_t id;
     ReadLE32(data, at, id);
-    out.skips.push_back(id);
+    file.skips.push_back(id);
   }
-  if (!ReadLE32(data, at, out.connected) || !ReadLE32(data, at, layers) || layers > 64) {
+  if (!ReadLE32(data, at, file.connected) || !ReadLE32(data, at, layers) || layers > 64) {
     error = "truncated header";
     return false;
   }
@@ -281,6 +443,7 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
         error = "layer " + std::to_string(layer.layer) + ": object " + std::to_string(i) + " has an id outside the range";
         return false;
       }
+      objects.push_back({e.id, e.part, e.active});
       o += used;
     }
     if (o != layer.objects.size()) {
@@ -297,7 +460,7 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
       ReadVariables(data, at, n, layer.vars[i]);
     }
     total += layer.count;
-    out.layers.push_back(std::move(layer));
+    file.layers.push_back(std::move(layer));
   }
   if (total > kMaxAddOns) {
     error = "too many objects";
@@ -318,13 +481,57 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
         return false;
       }
       ReadVariables(data, at, n, over.vars);
-      out.overrides.push_back(std::move(over));
+      file.overrides.push_back(std::move(over));
+    }
+  }
+  if (version >= 4) {
+    uint32_t groups = 0;
+    if (!ReadLE32(data, at, groups)) {
+      error = "truncated barrier list";
+      return false;
+    }
+    if (groups > kMaxBarrierGroups) {
+      error = "too many barrier groups";
+      return false;
+    }
+    if (groups > (data.size() - at) / kBarrierGroupBytes) {
+      error = "truncated barriers";
+      return false;
+    }
+    for (uint32_t g = 0; g < groups; ++g) {
+      BarrierGroup group;
+      uint32_t bits = 0;
+      if (!ReadLE32(data, at, group.controller) || !ReadLE32(data, at, bits)) {
+        error = "truncated barrier " + std::to_string(g);
+        return false;
+      }
+      std::memcpy(&group.duration, &bits, 4);
+      for (BarrierRing& ring : group.rings) {
+        if (!ReadLE32(data, at, ring.platform) || !ReadLE32(data, at, ring.refraction) ||
+            !ReadLE32(data, at, ring.glow)) {
+          error = "truncated barrier " + std::to_string(g);
+          return false;
+        }
+        for (std::array<uint8_t, 16>* guid : {&ring.breakupRefraction, &ring.motion, &ring.breakupGlow}) {
+          if (at > data.size() || data.size() - at < 16) {
+            error = "truncated barrier " + std::to_string(g);
+            return false;
+          }
+          std::memcpy(guid->data(), data.data() + at, 16);
+          at += 16;
+        }
+      }
+      file.barriers.push_back(group);
     }
   }
   if (at != data.size()) {
     error = "bytes after the layers";
     return false;
   }
+  if (!ValidateBarriers(file, objects, error)) {
+    return false;
+  }
+  out = std::move(file);
   return true;
 }
 

@@ -3214,8 +3214,10 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptEffect >()
       {"x140_destroyDelayTimer", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CScriptEffect::x140_destroyDelayTimer), PES_ADDR(CScriptEffect, x140_destroyDelayTimer), nullptr, nullptr},
       {"xPortNestedLights", "CPortNestedLights", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CScriptEffect::xPortNestedLights), PES_ADDR(CScriptEffect, xPortNestedLights), nullptr, nullptr},
       {"xPortExternalVars", "std::vector<SPortExternalVar>", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CScriptEffect::xPortExternalVars), PES_ADDR(CScriptEffect, xPortExternalVars), nullptr, nullptr},
+      {"xPortBarrierController", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CScriptEffect::xPortBarrierController), PES_ADDR(CScriptEffect, xPortBarrierController), nullptr, nullptr},
+      {"xPortBarrierPlatform", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CScriptEffect::xPortBarrierPlatform), PES_ADDR(CScriptEffect, xPortBarrierPlatform), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CScriptEffect", "CActor", fields, 31, 0xB2E0B56435AA1C2Aull};
+  static const PortSchemaClass desc = {"CScriptEffect", "CActor", fields, 33, 0x322690447EEF178Full};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptGenerator >() {
@@ -3447,8 +3449,9 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptPlatform >
       {"xPortPreThinkXf", "CTransform4f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CScriptPlatform::xPortPreThinkXf), PES_ADDR(CScriptPlatform, xPortPreThinkXf), nullptr, nullptr},
       {"xPortPreThinkEnd", "CTransform4f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CScriptPlatform::xPortPreThinkEnd), PES_ADDR(CScriptPlatform, xPortPreThinkEnd), nullptr, nullptr},
       {"xPortPoseTick", "unsigned int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CScriptPlatform::xPortPoseTick), PES_ADDR(CScriptPlatform, xPortPoseTick), PES_GETI(CScriptPlatform, xPortPoseTick), PES_SETI(CScriptPlatform, xPortPoseTick)},
+      {"xPortBarrierController", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CScriptPlatform::xPortBarrierController), PES_ADDR(CScriptPlatform, xPortBarrierController), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CScriptPlatform", "CPhysicsActor", fields, 32, 0xF0033B1239BB7EAFull};
+  static const PortSchemaClass desc = {"CScriptPlatform", "CPhysicsActor", fields, 33, 0x8827D588638DE133ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptPlayerActor >() {
@@ -3654,8 +3657,9 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptSpecialFun
       {"x1e5_25_playerInArea", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CScriptSpecialFunction, x1e5_25_playerInArea), PES_SETI(CScriptSpecialFunction, x1e5_25_playerInArea)},
       {"x1e5_26_displayBillboard", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CScriptSpecialFunction, x1e5_26_displayBillboard), PES_SETI(CScriptSpecialFunction, x1e5_26_displayBillboard)},
       {"x1e8_", "rstl::optional_object<CToken>", PortSchemaKind::container, 0, kPortSchemaPrivate, sizeof(CScriptSpecialFunction::x1e8_), PES_ADDR(CScriptSpecialFunction, x1e8_), nullptr, nullptr},
+      {"xPortBarrier", "PortQueenBarrier::State", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CScriptSpecialFunction::xPortBarrier), PES_ADDR(CScriptSpecialFunction, xPortBarrier), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CScriptSpecialFunction", "CActor", fields, 40, 0x7FF95B99AE8CD96Dull};
+  static const PortSchemaClass desc = {"CScriptSpecialFunction", "CActor", fields, 41, 0x8E082F77E42A877Eull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptSpiderBallAttractionSurface >() {
@@ -4658,4 +4662,4 @@ const PortSchemaClass* const* PortEntitySchema::Classes(int& count) {
 }
 
 const int PortEntitySchema::kClassCount = 159;
-const int PortEntitySchema::kFieldCount = 3384;
+const int PortEntitySchema::kFieldCount = 3388;

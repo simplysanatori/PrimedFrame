@@ -792,6 +792,86 @@ static void AddIceCollision(const CPortVfxData& vfx, const CTransform4f& model, 
   }
 }
 
+// VFX_BarrierShield's vertices into `world`: its VS (f197ec38's refraction perm, the MFC0 one) folds to
+// a plain model-view transform of the mesh — that perm has no vertex displacement — so the position is
+// the model's and the view normal is the model's inverse transpose times the mesh normal: a non-uniform
+// particle scale must not slide the normal, whose fresnel is a dot of unit vectors in the fragment. The
+// mesh's own vertex colour (VMSH v2 words 12..15) rides in Vertex::mesh, apart from the instance colour
+// in Vertex::color: the alpha gain and the breakup amplitude read one, only the instance colour scales
+// the result. The tangent is unused by this recipe.
+static void AddBarrierShield(const CPortVfxData& vfx, const CTransform4f& model, const CElementGen::CParticle& p,
+                             const Tm (&tm)[3], const float (&color)[4],
+                             std::vector< aurora::gfx::vfx::Vertex >& world) {
+  const CTransform4f view(CGraphics::GetViewMatrix());
+  const CVector3f cols[3] = {model.Rotate(CVector3f(1.f, 0.f, 0.f)), model.Rotate(CVector3f(0.f, 1.f, 0.f)),
+                             model.Rotate(CVector3f(0.f, 0.f, 1.f))};
+  Mat3 m3;
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      m3.m[r][c] = r == 0 ? cols[c].GetX() : r == 1 ? cols[c].GetY() : cols[c].GetZ();
+    }
+  }
+  // Cofactors alone reverse normals for negative determinants. Keep the true inverse transpose;
+  // degenerate transforms have no defined normal, so feed zero rather than infinities.
+  const Mat3 invT = std::fabs(m3.Det()) > 1e-12f ? m3.InverseTranspose() : Mat3{};
+  for (u32 i = 0; i < vfx.meshVerts; ++i) {
+    const float* m = &vfx.meshV[size_t(i) * 16];
+    const CVector3f pos = model * CVector3f(m[0], m[1], m[2]);
+    const CVector3f nl = view.TransposeRotate(invT * CVector3f(m[3], m[4], m[5]));
+    aurora::gfx::vfx::Vertex& v = world[i];
+    v.pos[0] = pos.GetX();
+    v.pos[1] = pos.GetY();
+    v.pos[2] = pos.GetZ();
+    for (int st = 0; st < 3; ++st) {
+      const Tm& t = tm[st];
+      const float dx = (m[6] - 0.5f) * t.c;
+      const float dy = (m[7] - 0.5f) * t.d;
+      v.uv[st][0] = t.a + 0.5f + t.cosE * dx - t.sinE * dy;
+      v.uv[st][1] = t.b + 0.5f + t.sinE * dx + t.cosE * dy;
+      v.uv[st][2] = t.f;
+    }
+    for (int k = 0; k < 4; ++k) {
+      v.color[k] = color[k];
+      for (int j = 0; j < 4; ++j) {
+        v.extra[k][j] = p.xPortVpmt[k][j];
+      }
+      v.mesh[k] = m[12 + k];
+    }
+    // Same convention as the sprites' vec: (x, z, y) of the camera-local normal.
+    v.vec[0] = nl.GetX();
+    v.vec[1] = nl.GetZ();
+    v.vec[2] = nl.GetY();
+  }
+}
+
+// VFX_BarrierGlow's vertices into `world`: BarrierShield's feed (the mesh's own colour in Vertex::mesh
+// apart from the instance colour, the undisplaced normal through the inverse transpose) plus the
+// b1eb2b67 VS's displacement, applied in the Remastered model coordinates before the instance
+// transform: along the normal by amp = .065 (1 + 3 mc.r) max(sin(20 phase), -.33) with
+// phase = time - 10 mc.b (mc is the mesh's own vertex colour: the VS reads it, not the instance's), and
+// by .035 max(sin(20 (phase + 114)), -.33) on Remastered +Y. The port's model data is R2G, so that +Y is
+// the port's model Z. The normal itself is not displaced, and the displaced position feeds both the
+// projected position and the view position. The literal values are the folded VS's (b1eb-vs.txt,
+// pool0xe00: -.33 and .065), not a guessed +-1 clamp.
+static void AddBarrierGlow(const CPortVfxData& vfx, const CTransform4f& model, const CElementGen::CParticle& p,
+                           const Tm (&tm)[3], const float (&color)[4],
+                           std::vector< aurora::gfx::vfx::Vertex >& world) {
+  AddBarrierShield(vfx, model, p, tm, color, world);
+  const float time = CGraphics::GetSimTime();
+  for (u32 i = 0; i < vfx.meshVerts; ++i) {
+    // m[12..15] is the mesh's own colour (VMSH v2): its r lifts the amplitude, its b shifts the phase.
+    const float* m = &vfx.meshV[size_t(i) * vfx.meshStride];
+    const float phase = time - 10.f * m[14];
+    const float amp = 0.0649999976f * (1.f + 3.f * m[12]) * std::max(std::sin(20.f * phase), -0.33f);
+    const float liftY = 0.0350000001f * std::max(std::sin(20.f * (phase + 114.f)), -0.33f);
+    const CVector3f pos = model * CVector3f(m[0] + m[3] * amp, m[1] + m[4] * amp, m[2] + m[5] * amp + liftY);
+    aurora::gfx::vfx::Vertex& v = world[i];
+    v.pos[0] = pos.GetX();
+    v.pos[1] = pos.GetY();
+    v.pos[2] = pos.GetZ();
+  }
+}
+
 void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
                             const CElementGen::CParticle& p, int partFrame,
                             const CColor& modulate) {
@@ -831,12 +911,18 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
   world.resize(nv);
   const bool collision = (vfx.mat.features & aurora::gfx::vfx::IceChargeCollision) != 0;
   const bool ice = collision || (vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) != 0;
+  const bool barrier = (vfx.mat.features & aurora::gfx::vfx::BarrierShield) != 0;
+  const bool glow = (vfx.mat.features & aurora::gfx::vfx::BarrierGlow) != 0;
   if (collision) {
     AddIceCollision(vfx, model, p, tm, color, world);
   } else if (ice) {
     AddIce(vfx, model, p, tm, color, world);
+  } else if (barrier) {
+    AddBarrierShield(vfx, model, p, tm, color, world);
+  } else if (glow) {
+    AddBarrierGlow(vfx, model, p, tm, color, world);
   }
-  for (u32 i = 0; !ice && i < nv; ++i) {
+  for (u32 i = 0; !ice && !barrier && !glow && i < nv; ++i) {
     const float* m = &vfx.meshV[size_t(i) * vfx.meshStride];
     const CVector3f pos = model * CVector3f(m[0], m[1], m[2]);
     const CVector3f nw = Normalised(model.Rotate(CVector3f(m[3], m[4], m[5])), CVector3f(0.f, 0.f, 1.f));
@@ -967,11 +1053,17 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
     desc.normalSlot = static_cast< int8_t >(vfx.normalSlot);
     desc.envSlot = static_cast< int8_t >(vfx.envSlot);
     desc.time = CGraphics::GetSimTime();
+  } else if ((features & (aurora::gfx::vfx::BarrierShield | aurora::gfx::vfx::BarrierGlow)) != 0) {
+    // BarrierShield: the pattern's four scroll reads and the sawtooth motion are driven by the modular
+    // simulation time (the shader's c3[0]); the recipe reads no NMAP or env map. BarrierGlow: the same
+    // time, for the sawtooth phase and the third pattern read's v.
+    desc.time = CGraphics::GetSimTime();
   }
   // VPRM's CCHn rows, with the VSMT overrides, at this frame: IceCharge* and VisorRunOff's 5 rows.
   if ((features & (aurora::gfx::vfx::IceChargeBeam | aurora::gfx::vfx::IceChargeCollision |
                    aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit |
-                   aurora::gfx::vfx::VisorRain)) != 0) {
+                   aurora::gfx::vfx::VisorRain | aurora::gfx::vfx::BarrierShield |
+                   aurora::gfx::vfx::BarrierGlow)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
   // VFX_IceChargeCollision_Lit's lighting: the clustered gather (block and mask) and the baked probe.
