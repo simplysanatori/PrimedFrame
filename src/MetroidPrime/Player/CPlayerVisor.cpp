@@ -407,8 +407,15 @@ static bool PortScanWindowPointer(float& x, float& y) {
 }
 
 // Same area as retail's window, held while the pointer is locked so the window keeps its shape.
-float CPlayerVisor::PortWindowShapeX() { return PortDebug::PointerAim() ? 0.7f : 1.f; }
-float CPlayerVisor::PortWindowShapeY() { return PortDebug::PointerAim() ? 1.4f : 1.f; }
+// Only the idle (search) window takes it: as the window grows to its scan size it returns to
+// retail's, which sits above the scan text box. 0 = idle size, 1 = scan size (UpdateScanWindow).
+static float sPortScanSizeBlend = 0.f;
+float CPlayerVisor::PortWindowShapeX() {
+  return PortDebug::PointerAim() ? 0.7f + 0.3f * sPortScanSizeBlend : 1.f;
+}
+float CPlayerVisor::PortWindowShapeY() {
+  return PortDebug::PointerAim() ? 1.4f - 0.4f * sPortScanSizeBlend : 1.f;
+}
 
 // The zoomed copy (sharp scan window), keyed apart from the spare buffer; valid for the frame
 // that made it, until DrawScanEffect takes it.
@@ -758,6 +765,18 @@ void CPlayerVisor::UpdateScanWindow(float dt, const CStateManager& mgr) {
     }
     x48_interpWindowDims = CVector2f::Lerp(x50_nextWindowDims, x40_prevWindowDims, t);
   }
+#ifdef TARGET_PC
+  const CVector2f toScan = x0_scanWindowSizes[kSWS_Scan] - x0_scanWindowSizes[kSWS_Idle];
+  const float scanDist = CVector2f::Dot(toScan, toScan);
+  sPortScanSizeBlend =
+      scanDist > 0.f
+          ? CMath::Clamp(0.f,
+                         CVector2f::Dot(x48_interpWindowDims - x0_scanWindowSizes[kSWS_Idle],
+                                        toScan) /
+                             scanDist,
+                         1.f)
+          : 0.f;
+#endif
 }
 
 void CPlayerVisor::UpdateScanObjectIndicators(const CStateManager& mgr, float dt) {
