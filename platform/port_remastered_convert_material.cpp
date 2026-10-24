@@ -126,7 +126,11 @@ constexpr uint32_t kShaderEyeGloss = 0x974CA6DD;
 // 7cf91c66 (variasuit Eyeball_Exterior) is the same lighting and matcap. Its glow is DMGI(CCH2.y) x ICMC + ICNC (c4[0].y x
 // c5[1] + c4[1]; c5[0] is DIFC), which is zero in all 11 materials whatever DMGI is: nothing to drive (kb material/7cf91c66.md).
 constexpr uint32_t kShaderEyeGloss2 = 0x7CF91C66;
-constexpr bool IsEyeGloss(uint32_t shader) { return shader == kShaderEyeGloss || shader == kShaderEyeGloss2; }
+// f16bfffc (Thermal/X-ray VisorGlow) is the same matcap lighting plus an ICAN term (kb material/f16bfffc.md).
+constexpr uint32_t kShaderEyeGloss3 = 0xF16BFFFC;
+constexpr bool IsEyeGloss(uint32_t shader) {
+  return shader == kShaderEyeGloss || shader == kShaderEyeGloss2 || shader == kShaderEyeGloss3;
+}
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -177,6 +181,10 @@ constexpr ShaderTwin kShaderTwins[] = {
     {0xC36C5166, kShaderIceSpreader}, {0xB55635D2, 0xA978D507}, {0xEF94ACCF, kShaderLava},
     // 1ac34e37 (Core_Phazon_Mat) is 07acff46's skinned copy, as the others.
     {0x1AC34E37, kShaderPhazonPool},
+    // The fx shaders of kb material/{96009286,a5bd3ed7,ed8ab6e7,937a8c35}.md routed to the kind they match (a5bd3ed7 and
+    // ed8ab6e7 differ in AUVI only; 937a8c35 has no MTRL: inferred).
+    {0x96009286, kShaderRefractGlassB}, {0xA5BD3ED7, kShaderPickUp}, {0xED8AB6E7, kShaderPickUp},
+    {0x937A8C35, kShaderBoundaryShield},
 };
 uint32_t ShaderFamily(uint32_t shader) {
   for (const ShaderTwin& t : kShaderTwins)
@@ -207,7 +215,11 @@ size_t LightmapSourceCoordinate(uint32_t family) {
 constexpr uint32_t kShaderXraySkinned2 = 0xDFC2A7DC;
 constexpr bool IsXraySkinned(uint32_t shader) { return shader == kShaderXraySkinned || shader == kShaderXraySkinned2; }
 constexpr uint32_t kShaderXrayMap = 0x65E90E82;
-constexpr bool IsXrayGhost(uint32_t shader) { return shader == kShaderXrayStatic || IsXraySkinned(shader); }
+// e84190e0 (kb material/e84190e0.md) is the same X-ray fresnel/depth-fade material as fb2bc671.
+constexpr uint32_t kShaderXrayStatic2 = 0xE84190E0;
+constexpr bool IsXrayGhost(uint32_t shader) {
+  return shader == kShaderXrayStatic || shader == kShaderXrayStatic2 || IsXraySkinned(shader);
+}
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
 // alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
@@ -1016,7 +1028,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         }
       }
     }
-    out.shieldRows[15] = IsXraySkinned(shader) && out.maps[kEmissive].has ? 1.0 : 0.0;
+    // The skinned shader and e84190e0 (ICAN x ICOF x fresnel when MUXI = CCH1.w) read ICAN; fb2bc671 does not.
+    out.shieldRows[15] = (IsXraySkinned(shader) || shader == kShaderXrayStatic2) && out.maps[kEmissive].has ? 1.0 : 0.0;
   } else if ((shader == kShaderRefractGlass || shader == kShaderRefractGlassB) && out.maps[kBase].has &&
              out.maps[kNormal].has && cch[0]) {
     out.kind = shader == kShaderRefractGlassB ? 30 : 23;

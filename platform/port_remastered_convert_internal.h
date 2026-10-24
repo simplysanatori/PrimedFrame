@@ -546,7 +546,11 @@ constexpr uint32_t kShaderVertexAlpha = 0x495899E7;
 constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
 // The unlit "Surface" shaders (byte-identical code): BCLR x AO x (1 - metal), no exposure factor
 // (mode bit 131072: the runtime exposes them with the frame's, as the tonemap does).
-constexpr uint32_t kShaderSurfaceUnlit[] = {0x67135A0B, 0x6FC4D540};
+// 7159ecc8, 6f1f0438 (CAdd), 2d32d109 (sky) and 1350d65d are the same formula (kb material/7159ecc8.md etc.).
+constexpr uint32_t kShaderSurfaceUnlit[] = {0x67135A0B, 0x6FC4D540, 0x7159ECC8, 0x6F1F0438, 0x2D32D109, 0x1350D65D};
+// Blended fx shaders with no port kind yet (kb material/<id>.md, port_kind NEW): a retail model's material keeps its TEV.
+constexpr uint32_t kShaderFxNoKind[] = {0x5854E91B, 0xBDA080C0, 0x0C0B6119, 0x084A8DB5, 0x1FBAFBCA,
+                                        0x8C7A939F, 0x664EE5CA, 0xAF330DE4, 0x67053FFE};
 
 size_t LightmapSourceCoordinate(uint32_t family);
 const char* KindName(int kind);
