@@ -23,7 +23,8 @@ public:
     CTransform4f xf = CTransform4f::Identity(); // global * local transform
     CVector3f globalScale{1.f, 1.f, 1.f};
     CVector3f localScale{1.f, 1.f, 1.f};
-    CVector3f spread{1.f, 1.f, 1.f}; // PortSetSpawnSpread, applied to the emitted end points
+    // PortSetSpawnSpread in the bolt points' space, applied to the emitted end points only.
+    CTransform4f spread = CTransform4f::Identity();
     CColor modu = CColor::White();
     const CVector3f* ipos = nullptr; // overrides (SetOverrideIPos etc.)
     const CVector3f* ivel = nullptr;

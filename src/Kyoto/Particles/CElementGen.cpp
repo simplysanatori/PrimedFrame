@@ -632,11 +632,21 @@ void CElementGen::SetLocalScale(const CVector3f& scale) {
 }
 
 #ifdef TARGET_PC
-void CElementGen::PortSetSpawnSpread(const CVector3f& spread) {
-  xPortSpawnSpread = spread;
-  for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
-    (*it)->PortSetSpawnSpread(spread);
+// The children take it from the update loop, before their own update: those placed at the system
+// translation spread their spawns around it like this system's.
+void CElementGen::PortSetSpawnSpread(const CVector3f& spread) { xPortSpawnSpread = spread; }
+
+// `rel` is a new particle's offset from the system origin. With the emitter followed (XFMD 3) the
+// offset is already turned by the global orientation, so spread it in the unturned axes.
+CVector3f CElementGen::PortSpreadSpawn(const CVector3f& rel) const {
+  if (xPortSpawnSpread == CVector3f(1.f, 1.f, 1.f)) {
+    return rel;
   }
+  if (PortFollowsEmitter() && !PortHasMover()) {
+    return x22c_globalOrientation.Rotate(CVector3f::ByElementMultiply(
+        x22c_globalOrientation.TransposeRotate(rel), xPortSpawnSpread));
+  }
+  return CVector3f::ByElementMultiply(rel, xPortSpawnSpread);
 }
 #endif
 
@@ -1289,23 +1299,29 @@ void CElementGen::CreateNewParticles(int count) {
     if (CEmitterElement* emtr = x28_loadedGenDesc->x2c_EMTR) {
       emtr->GetValue(x74_curFrame, particle.x4_pos, particle.x1c_vel);
 #ifdef TARGET_PC
-      particle.x4_pos = CVector3f::ByElementMultiply(particle.x4_pos, xPortSpawnSpread);
-      particle.x1c_vel = CVector3f::ByElementMultiply(particle.x1c_vel, xPortSpawnSpread);
       if (PortFollowsEmitter()) {
         // Also turned by the global orientation, which PortFollowEmitter follows.
         const CTransform4f frame = PortEmitterFrame();
-        particle.x4_pos = frame * particle.x4_pos + xf4_POFS;
+        particle.x4_pos =
+            frame.GetTranslation() + PortSpreadSpawn(frame.Rotate(particle.x4_pos) + xf4_POFS);
         if (!x28_loadedGenDesc->xPortNoIvse) {
           particle.x1c_vel = frame.Rotate(particle.x1c_vel);
         }
       } else
 #endif
       {
+#ifdef TARGET_PC
+        particle.x4_pos =
+            PortSpreadSpawn(x1d8_orientation.Rotate(particle.x4_pos) + xf4_POFS) +
+            ((x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) *
+             xdc_translation);
+#else
         particle.x4_pos =
             x1d8_orientation.Rotate(particle.x4_pos) +
             ((x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) *
              xdc_translation) +
             xf4_POFS;
+#endif
         // IVSE 0 (PIVS): the velocity is not turned by the system orientation
         if (!x28_loadedGenDesc->xPortNoIvse) {
           particle.x1c_vel = x1d8_orientation.Rotate(particle.x1c_vel);
@@ -1405,9 +1421,6 @@ void CElementGen::PortAddChild(CParticleGen* child) {
   child->SetGlobalOrientation(x22c_globalOrientation);
   child->SetGlobalScale(x100_globalScale);
   child->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-  child->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
   child->SetTranslation(xdc_translation);
   child->SetOrientation(x1d8_orientation);
   child->SetParticleEmission(x88_particleEmission);
@@ -1915,9 +1928,6 @@ void CElementGen::PortSpawnChildSystems() {
     swoosh->SetGlobalTranslation(xe8_globalTranslation);
     swoosh->SetGlobalScale(x100_globalScale);
     swoosh->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-    swoosh->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
     swoosh->SetTranslation(xdc_translation + x2b0_SSPO);
     swoosh->SetOrientation(x1d8_orientation);
     swoosh->SetParticleEmission(x88_particleEmission);
@@ -1932,9 +1942,6 @@ void CElementGen::PortSpawnChildSystems() {
     swoosh->SetGlobalTranslation(xe8_globalTranslation);
     swoosh->SetGlobalScale(x100_globalScale);
     swoosh->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-    swoosh->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
     swoosh->SetTranslation(xdc_translation + x2b0_SSPO);
     swoosh->SetOrientation(x1d8_orientation);
     swoosh->SetParticleEmission(x88_particleEmission);
@@ -1946,9 +1953,6 @@ void CElementGen::PortSpawnChildSystems() {
     electric->SetGlobalTranslation(xe8_globalTranslation);
     electric->SetGlobalScale(x100_globalScale);
     electric->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-    electric->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
     electric->SetTranslation(xdc_translation + x2c0_SEPO);
     electric->SetOrientation(x1d8_orientation);
     electric->SetParticleEmission(x88_particleEmission);
@@ -1987,9 +1991,6 @@ CElementGen* CElementGen::ConstructChildParticleSystem(TToken< CGenDescription >
   child->SetGlobalOrientation(x22c_globalOrientation);
   child->SetGlobalScale(x100_globalScale);
   child->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-  child->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
   child->SetTranslation(xdc_translation);
   child->SetOrientation(x1d8_orientation);
   child->SetParticleEmission(x88_particleEmission);
@@ -2082,9 +2083,6 @@ void CElementGen::UpdateChildParticleSystems(double dt) {
     swoosh->SetGlobalTranslation(xe8_globalTranslation);
     swoosh->SetGlobalScale(x100_globalScale);
     swoosh->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-    swoosh->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
     swoosh->SetTranslation(xdc_translation + x2b0_SSPO);
     swoosh->SetOrientation(x1d8_orientation);
     const bool emission = x88_particleEmission;
@@ -2104,9 +2102,6 @@ void CElementGen::UpdateChildParticleSystems(double dt) {
       swoosh->SetGlobalTranslation(xe8_globalTranslation);
       swoosh->SetGlobalScale(x100_globalScale);
       swoosh->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-      swoosh->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
       swoosh->SetTranslation(xdc_translation + x2b0_SSPO);
       swoosh->SetOrientation(x1d8_orientation);
       swoosh->SetParticleEmission(x88_particleEmission);
@@ -2122,9 +2117,6 @@ void CElementGen::UpdateChildParticleSystems(double dt) {
     electric->SetGlobalTranslation(xe8_globalTranslation);
     electric->SetGlobalScale(x100_globalScale);
     electric->SetLocalScale(x16c_localScale);
-#ifdef TARGET_PC
-    electric->PortSetSpawnSpread(xPortSpawnSpread);
-#endif
     electric->SetTranslation(xdc_translation + x2c0_SEPO);
     electric->SetOrientation(x1d8_orientation);
     electric->SetParticleEmission(x88_particleEmission);
@@ -2139,6 +2131,9 @@ update_children:
   AUTO(it, x290_activePartChildren.begin());
   while (it != x290_activePartChildren.end()) {
     CParticleGen* child = *it;
+#ifdef TARGET_PC
+    child->PortSetSpawnSpread(xPortSpawnSpread);
+#endif
     child->Update(dt);
 #ifdef TARGET_PC
     PortKssmChild* placed = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(child);

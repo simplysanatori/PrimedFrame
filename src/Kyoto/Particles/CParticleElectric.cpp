@@ -34,7 +34,7 @@ void CParticleElectric::PortElc2Step(bool emitting) {
   ctx.xf = xf8_cachedXf;
   ctx.globalScale = xe0_globalScale;
   ctx.localScale = xec_localScale;
-  ctx.spread = xPortSpawnSpread;
+  ctx.spread = PortSpreadXf();
   ctx.modu = x1b8_moduColor;
   ctx.ipos = x178_overrideIPos ? &*x178_overrideIPos : nullptr;
   ctx.ivel = x188_overrideIVel ? &*x188_overrideIVel : nullptr;
@@ -150,8 +150,7 @@ void CParticleElectric::CalculatePoints() {
     x1c_elecDesc->x18_IEMT->GetValue(x28_currentFrame, pos, vel);
   }
 #ifdef TARGET_PC
-  pos = CVector3f::ByElementMultiply(pos, xPortSpawnSpread);
-  vel = CVector3f::ByElementMultiply(vel, xPortSpawnSpread);
+  pos = PortSpreadSpawn(pos);
 #endif
   if (x178_overrideIPos) {
     pos = *x178_overrideIPos;
@@ -172,8 +171,7 @@ void CParticleElectric::CalculatePoints() {
     x1c_elecDesc->x1c_FEMT->GetValue(x28_currentFrame, fpos, fvel);
   }
 #ifdef TARGET_PC
-  fpos = CVector3f::ByElementMultiply(fpos, xPortSpawnSpread);
-  fvel = CVector3f::ByElementMultiply(fvel, xPortSpawnSpread);
+  fpos = PortSpreadSpawn(fpos);
 #endif
   if (x198_overrideFPos) {
     fpos = *x198_overrideFPos;
@@ -878,18 +876,25 @@ void CParticleElectric::SetGlobalScale(const CVector3f& scale) {
 }
 
 #ifdef TARGET_PC
-void CParticleElectric::PortSetSpawnSpread(const CVector3f& spread) {
-  xPortSpawnSpread = spread;
-  if (x450_25_haveGPSM) {
-    for (int i = 0; i < x154_SCNT; ++i) {
-      x400_gpsmGenerators[i]->PortSetSpawnSpread(spread);
-    }
+// Only the bolt end points spread: the GPSM/EPSM generators sit on those points already, and the
+// tangents keep the authored bend.
+void CParticleElectric::PortSetSpawnSpread(const CVector3f& spread) { xPortSpawnSpread = spread; }
+
+// The spread in the bolt points' space: they are turned by the local orientation into the system's
+// axes, which the spread is along.
+CTransform4f CParticleElectric::PortSpreadXf() const {
+  if (xPortSpawnSpread == CVector3f(1.f, 1.f, 1.f)) {
+    return CTransform4f::Identity();
   }
-  if (x450_26_haveEPSM) {
-    for (int i = 0; i < x154_SCNT; ++i) {
-      x410_epsmGenerators[i]->PortSetSpawnSpread(spread);
-    }
+  const CTransform4f rot = x44_orientation.GetRotation();
+  return rot.GetQuickInverse() * CTransform4f::Scale(xPortSpawnSpread) * rot;
+}
+
+CVector3f CParticleElectric::PortSpreadSpawn(const CVector3f& pos) const {
+  if (xPortSpawnSpread == CVector3f(1.f, 1.f, 1.f)) {
+    return pos;
   }
+  return PortSpreadXf() * pos;
 }
 #endif
 

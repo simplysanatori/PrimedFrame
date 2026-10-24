@@ -555,6 +555,7 @@ private:
   // orientations and local translation here, which EXTR/EXTT and the getters read.
   bool xPortIntFrame = false;
   CVector3f xPortSpawnSpread{1.f, 1.f, 1.f};
+  CVector3f PortSpreadSpawn(const CVector3f& rel) const;
   CTransform4f xPortExtOrientation = CTransform4f::Identity();
   CTransform4f xPortExtGlobalOrientation = CTransform4f::Identity();
   CVector3f xPortExtTranslation{0.f, 0.f, 0.f};

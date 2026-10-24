@@ -242,6 +242,8 @@ const bool CParticleSwoosh::Update(double dt) {
         if (x1c_desc->xPortRotateOffset) {
           x15c_swooshes[x158_curParticle].mOffset = x44_orientation * x15c_swooshes[x158_curParticle].mOffset;
         }
+        x15c_swooshes[x158_curParticle].mOffset =
+            CVector3f::ByElementMultiply(x15c_swooshes[x158_curParticle].mOffset, xPortSpawnSpread);
 #endif
       }
       x15c_swooshes[x158_curParticle].mUseOffset = x15c_swooshes[x158_curParticle].mOffset;
@@ -522,6 +524,12 @@ void CParticleSwoosh::SetGlobalOrientation(const CTransform4f& orientation) {
 }
 
 void CParticleSwoosh::SetLocalScale(const CVector3f& scale) { x14c_localScale = scale; }
+
+#ifdef TARGET_PC
+// A point is born at the system translation plus POFS, both in the system's axes; spreading them
+// moves where the trail starts without widening its ribbon.
+void CParticleSwoosh::PortSetSpawnSpread(const CVector3f& spread) { xPortSpawnSpread = spread; }
+#endif
 
 int CParticleSwoosh::GetParticleCount() const { return x1ac_particleCount; }
 
@@ -1711,7 +1719,13 @@ void CParticleSwoosh::UpdateSwooshTranslation(const CVector3f& translation) {
     return;
   }
 #endif
+#ifdef TARGET_PC
+  // The scale is diagonal, so spreading before or after it is the same.
+  x15c_swooshes[x158_curParticle].mTranslation =
+      x11c_invScaleXf * CVector3f::ByElementMultiply(translation, xPortSpawnSpread);
+#else
   x15c_swooshes[x158_curParticle].mTranslation = x11c_invScaleXf * translation;
+#endif
 }
 
 void CParticleSwoosh::SetGlobalScale(const CVector3f& scale) {

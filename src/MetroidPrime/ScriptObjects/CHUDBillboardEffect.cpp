@@ -144,6 +144,14 @@ void CHUDBillboardEffect::PortUpdateSpawnSpread(const CStateManager& mgr) {
       spread.SetZ(kMinAspect / aspect);
     }
   }
+  PortApplySpawnSpread(spread);
+}
+
+void CHUDBillboardEffect::PortApplySpawnSpread(const CVector3f& spread) {
+  if (spread == xPortSpawnSpread) {
+    return;
+  }
+  xPortSpawnSpread = spread;
   xe8_generator->PortSetSpawnSpread(spread);
 }
 #endif
@@ -253,6 +261,8 @@ void CHUDBillboardEffect::PortSetVisorGoo(CStateManager& mgr, TUniqueId uid, flo
     return;
   }
   fx->xPortManagedType = 4;
+  // Before the update below: the goo manager computes the splat placement itself.
+  fx->PortApplySpawnSpread(CVector3f(1.f, 1.f, 1.f));
   fx->xe8_generator->Update(dt);
   goo.sizeHandle = kPortNoVar;
   if (fx->x104_26_isElementGen) {

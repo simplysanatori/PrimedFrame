@@ -194,10 +194,8 @@ void CParticleElectric2Port::CreateBolt(int frame, const Ctx& ctx) {
   if (mDesc->x1c_FEMT != nullptr) {
     mDesc->x1c_FEMT->GetValue(frame, end, endDir);
   }
-  start = CVector3f::ByElementMultiply(start, ctx.spread);
-  startDir = CVector3f::ByElementMultiply(startDir, ctx.spread);
-  end = CVector3f::ByElementMultiply(end, ctx.spread);
-  endDir = CVector3f::ByElementMultiply(endDir, ctx.spread);
+  start = ctx.spread * start;
+  end = ctx.spread * end;
   if (ctx.ipos != nullptr) {
     start = *ctx.ipos;
   }

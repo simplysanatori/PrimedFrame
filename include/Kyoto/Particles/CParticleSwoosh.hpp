@@ -96,6 +96,7 @@ public:
 #ifdef TARGET_PC
   void ShutdownEffect() override;
   void PortDoShutdownBehavior(u32 mode) override;
+  void PortSetSpawnSpread(const CVector3f& spread) override;
   uint PortFxAsset() const override;
   bool PortIsRemastered() const;
   void PortFxDescribe(PortFxInfo& out) const override;
@@ -193,6 +194,7 @@ private:
 
 #ifdef TARGET_PC
   CPortVarMemory xPortVars; // PVRT variables, initialised from the description's defaults
+  CVector3f xPortSpawnSpread{1.f, 1.f, 1.f}; // PortSetSpawnSpread
   // Presentation smoothing (particle_interpolation): what the last two ticks
   // drew, recorded at draw time, since grapple and Wave Beam swooshes are
   // written directly by their owners rather than stepped by Update.

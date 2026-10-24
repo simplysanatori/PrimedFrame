@@ -175,6 +175,8 @@ private:
   std::unique_ptr< CParticleElectric2Port > xPortElc2;
   void PortElc2Step(bool emitting);
   CVector3f xPortSpawnSpread{1.f, 1.f, 1.f};
+  CTransform4f PortSpreadXf() const;
+  CVector3f PortSpreadSpawn(const CVector3f& pos) const;
 #endif
 
   static ushort sSeed;
