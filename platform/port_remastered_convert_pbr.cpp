@@ -209,8 +209,9 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   for (int i = 0; i < nmaps; ++i) {
     P32(b, texIdx[i]);
   }
-  // The vertex descriptor is retail's: it fixes how many texcoord attributes,
-  // and so how many indices per vertex, the display list carries.
+  // The vertex descriptor is retail's with a texcoord slot for every Remastered set: it
+  // fixes how many texcoord attributes, and so how many indices per vertex, the display
+  // list carries.
   P32(b, vtx);
   // The material's cache id: CCubeMaterial::SetCurrent skips the vertex layout
   // and TEV when it matches the previous draw's, so it must differ from retail's.

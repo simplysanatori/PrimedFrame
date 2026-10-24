@@ -81,7 +81,8 @@ namespace ImportStage {
 // 59: a retail TEV material's diffuse slot takes the Remastered base map as authored (no AO,
 //     cavity or sheen baked into it).
 // 60: the materials report has the mesh class, the blend written and the texcoord slots.
-inline constexpr int kConverter = 60;
+// 61: a retail model's materials get a texcoord slot for every Remastered set (no fold onto 0).
+inline constexpr int kConverter = 61;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get and
 // Cube. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.

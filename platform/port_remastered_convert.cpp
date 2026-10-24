@@ -1116,12 +1116,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     maxuv = std::max(maxuv, b.uv.size() - 1);
     skinned = skinned && b.skinned;
   }
-  if (opt.standalone) {
-    // A texcoord slot for every set, so each map keeps the one it was made on.
-    for (RetailMaterial& m : retail.mats) {
-      for (size_t k = 0; k <= std::min<size_t>(maxuv, 7); ++k) {
-        m.vtx |= 3u << (8 + 2 * k);
-      }
+  // A texcoord slot for every set, so each map keeps the one it was made on, as Remastered
+  // samples it: a retail material's own slots stay, and the sets it lacks are added. Bits
+  // 8..23 are the eight texcoord slots, two bits each, and 3 is the encoding retail uses.
+  for (RetailMaterial& m : retail.mats) {
+    for (size_t k = 0; k <= std::min<size_t>(maxuv, 7); ++k) {
+      m.vtx |= 3u << (8 + 2 * k);
     }
   }
   // Vertex tangents (the NBT normal section, CMDL flag 0x8) only when every buffer has them.
@@ -1408,35 +1408,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       rem.height = 0.0;
     }
     const MapRef* rt = rem.maps;
-    // A retail descriptor with no texcoord slot at all cannot feed a material
-    // that samples texcoord 0, so one is declared: bits 8..23 are the eight
-    // texcoord slots, two bits each, and 3 is the encoding retail uses.
+    // Every set has its slot already (above), the beam glow's noise and the frost shell's
+    // glow map (ICAN, texcoord 1) among them.
     uint32_t vtx = pm.vtx;
     size_t ntexattr = 0;
     for (int k = 0; k < 8; ++k) {
       ntexattr += ((vtx >> (8 + 2 * k)) & 3) ? 1 : 0;
-    }
-    if (ntexattr == 0) {
-      vtx |= 3u << 8;
-      ntexattr = 1;
-    }
-    // The beam glow's noise is on a texcoord of its own, which a retail gun lacks.
-    if (gunGlow) {
-      const size_t want = std::min<size_t>(std::min<size_t>(rem.layer[kBase].coord, maxuv) + 1, 8);
-      for (; ntexattr < want; ++ntexattr) {
-        vtx |= 3u << (8 + 2 * ntexattr);
-      }
-    }
-    // The frost shell's glow map (ICAN) is on texcoord 1.
-    if (frostShell) {
-      size_t coord = rem.layer[kBase].coord;
-      for (int k = 0; k < kMaps; ++k) {
-        coord = std::max<size_t>(coord, rem.maps[k].has ? rem.maps[k].coord : 0);
-      }
-      const size_t want = std::min<size_t>(std::min<size_t>(coord, maxuv) + 1, 8);
-      for (; ntexattr < want; ++ntexattr) {
-        vtx |= 3u << (8 + 2 * ntexattr);
-      }
     }
     // Bits 4 and 5 are colour 0. Only a material that reads it declares it.
     const bool colored = useColor && (opt.standalone ? rem.tinted || rem.vcolor : glow || gunGlow || matcapShell || shield);
@@ -1476,10 +1453,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         }
         tids[k] = *Get(std::string("pbr:") + kMapName[m], both + (k - m), m == kBase ? baseAlpha : "", opt);
       }
-      // Each map keeps the texcoord set it was authored on. The descriptor
-      // fixes how many texcoord attributes exist, and a coord past it cannot be
-      // sampled at all, so it is folded onto the base's; and if the base's own
-      // is past it too, onto 0, which the descriptor always has.
+      // Each map keeps the texcoord set it was authored on: the descriptor has a
+      // slot for every set up to the eighth. Only a coord past that is folded,
+      // onto the base's, or onto 0 if the base's is past it too.
       size_t bset = std::min<size_t>(rt[kBase].coord, maxuv);
       bset = bset < ntexattr ? bset : 0;
       uint32_t coords[kMacroMaps];
