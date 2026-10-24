@@ -484,7 +484,7 @@ void DrawVideoQuality() {
   // a drag would otherwise do every frame.
   static float sPendingScale = 0.f;
   static float sPendingMin = 0.f;
-  const auto lines = [](float scale) { return static_cast< int >(std::lround(scale * 480.f)); };
+  static int sPendingTarget = -1;
   if (dynMode == 0) {
     bool autoScale = sRenderScale <= 0.f;
     if (ImGui::Checkbox("Auto render scale (native)", &autoScale)) {
@@ -496,13 +496,12 @@ void DrawVideoQuality() {
   if (dynMode != 1 && sRenderScale > 0.f) {
     float scale = sPendingScale > 0.f ? sPendingScale : sRenderScale;
     char label[32];
-    std::snprintf(label, sizeof(label), "%.2fx (%dp)", scale, lines(scale));
+    std::snprintf(label, sizeof(label), "%.2fx (%dp)", scale, DrawnLines(scale));
     if (ImGui::SliderFloat(dynMode == 2 ? "Maximum resolution scale" : "Resolution scale", &scale, 1.f, 4.f, label)) {
       sPendingScale = scale;
     }
     if (sPendingScale > 0.f && !ImGui::IsItemActive()) {
       SetRenderScale(sPendingScale);
-      sDynamicResMin = std::min(sDynamicResMin, sPendingScale);
       MarkDirty();
       sPendingScale = 0.f;
     }
@@ -510,14 +509,13 @@ void DrawVideoQuality() {
                           "higher values use more GPU memory. Above 2x it supersamples, and each step\n"
                           "costs much more GPU time.");
   } else if (sRenderScale <= 0.f) {
-    const float native = BaseRenderScale();
-    ImGui::TextDisabled("Window resolution: %.2fx (%dp)", native, lines(native));
+    ImGui::TextDisabled("Window resolution: %.2fx (%dp)", BaseRenderScale(), DrawnLines(0.f));
   }
   if (dynMode != 0) {
     float lowest = sPendingMin > 0.f ? sPendingMin : sDynamicResMin;
     const float top = std::max(DynamicResTop(), PortDebug::kDynamicResMinLowest);
     char label[32];
-    std::snprintf(label, sizeof(label), "%.2fx (%dp)", lowest, lines(lowest));
+    std::snprintf(label, sizeof(label), "%.2fx (%dp)", lowest, DrawnLines(lowest));
     if (ImGui::SliderFloat("Minimum resolution scale", &lowest, PortDebug::kDynamicResMinLowest, top, label,
                            ImGuiSliderFlags_AlwaysClamp)) {
       sPendingMin = lowest;
@@ -534,17 +532,30 @@ void DrawVideoQuality() {
     // The left end is "Display" (saved as 0).
     constexpr int kTargetMin = 30;
     constexpr int kTargetMax = kFpsCapMax;
-    int target = sDynamicResTarget > 0 ? std::clamp(sDynamicResTarget, kTargetMin, kTargetMax) : kTargetMin - 1;
+    const int saved = sPendingTarget >= 0 ? sPendingTarget : sDynamicResTarget;
+    int target = saved > 0 ? std::clamp(saved, kTargetMin, kTargetMax) : kTargetMin - 1;
     if (ImGui::SliderInt("Frame rate target", &target, kTargetMin - 1, kTargetMax,
                          target < kTargetMin ? "Display" : "%d fps", ImGuiSliderFlags_AlwaysClamp)) {
-      sDynamicResTarget = target < kTargetMin ? 0 : target;
+      sPendingTarget = target < kTargetMin ? 0 : target;
+    }
+    // Applied when let go, like the scales: a change starts the controller over.
+    if (sPendingTarget >= 0 && !ImGui::IsItemActive()) {
+      sDynamicResTarget = sPendingTarget;
+      sPendingTarget = -1;
       ResetDynamicRes();
       MarkDirty();
     }
     ImGui::SetItemTooltip("Display (all the way left): the screen's refresh rate. Never above the frame\n"
-                          "rate cap: with the 60 FPS cap on it aims for 60.");
+                          "rate cap: with the 60 FPS cap on it aims for 60. Ctrl+click to type a value.");
+    if (DynamicResTop() <= sDynamicResMin) {
+      ImGui::PushTextWrapPos(0.f);
+      ImGui::TextColored(ThemeWarnColor(), "Not lowering: the minimum is not below the top scale (%.2fx). "
+                         "Lower the minimum%s.", DynamicResTop(), dynMode == 1 ? " or enlarge the window" : "");
+      ImGui::PopTextWrapPos();
+    }
     const float drawing = sDynScale > 0.f ? sDynScale : DynamicResTop();
-    ImGui::Text("Drawing at %.2fx (%dp), target %.0f fps", drawing, lines(drawing), DynamicResTargetFps());
+    ImGui::Text("Drawing at %.2fx (%dp), target %.0f fps", drawing,
+                DrawnLines(sDynScale > 0.f ? sDynScale : sRenderScale), DynamicResTargetFps());
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     const char* reason = PortDynamicRes::ReasonText(sDynController.LastReason());
     if (sDynController.GpuTimesDropped()) {

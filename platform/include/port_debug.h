@@ -158,14 +158,16 @@ void SetFullscreen(bool enabled);
 // 0 = auto (native, driven by the display scale), otherwise a fixed multiplier.
 float RenderScale();
 void SetRenderScale(float scale);
-// Photo mode captures: the configured scale (1 when auto), and a temporary override
+// Photo mode captures: the configured scale (auto: the scale the window's own size
+// is, as a multiple of what 1x draws), and a temporary override
 // (0 = none) that also holds dynamic resolution still.
 float BaseRenderScale();
 void SetCaptureRenderScale(float scale);
+// The lowest scale dynamic resolution may be set to drop to.
+constexpr float kDynamicResMinLowest = 0.25f;
 // Dynamic resolution: draws the EFB between DynamicResMin and RenderScale to
 // hold DynamicResTarget fps (0 = the frame cap). False when off. With auto render
 // scale the top is the window's own scale.
-constexpr float kDynamicResMinLowest = 0.25f;
 bool DynamicRes();
 int DynamicResTarget();
 float DynamicResMin();

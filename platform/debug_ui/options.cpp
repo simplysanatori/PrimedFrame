@@ -45,6 +45,10 @@
 #include <sstream>
 #include <string>
 
+namespace aurora {
+bool frame_buffer_size_for_scale(float scale, uint32_t* width, uint32_t* height) noexcept;
+} // namespace aurora
+
 namespace PortDebug {
 
 // State only this part uses.
@@ -372,13 +376,28 @@ float BaseRenderScale() {
   if (sRenderScale > 0.f) {
     return sRenderScale;
   }
-  // Auto draws at the window's pixel size; as a multiple of the 480-line base.
-  int width = 0, height = 0;
+  // Auto draws at the window's pixel size, fitted to the game's aspect when that is
+  // narrower than the window's (16:9 in a 4:3 window); as a multiple of what 1x draws,
+  // the render mode's EFB height (480 lines NTSC, 528 PAL).
+  uint32_t width = 0, native = 0, base = 0;
+  if (aurora::frame_buffer_size_for_scale(0.f, &width, &native) &&
+      aurora::frame_buffer_size_for_scale(1.f, &width, &base) && native > 0 && base > 0) {
+    return static_cast< float >(native) / static_cast< float >(base);
+  }
+  int w = 0, h = 0;
   SDL_Window* window = MainWindow();
-  if (window != nullptr && SDL_GetWindowSizeInPixels(window, &width, &height) && height > 0) {
-    return static_cast< float >(height) / 480.f;
+  if (window != nullptr && SDL_GetWindowSizeInPixels(window, &w, &h) && h > 0) {
+    return static_cast< float >(h) / 480.f;
   }
   return 1.f;
+}
+
+int DrawnLines(float scale) {
+  uint32_t width = 0, height = 0;
+  if (aurora::frame_buffer_size_for_scale(scale, &width, &height)) {
+    return static_cast< int >(height);
+  }
+  return static_cast< int >(std::lround(scale * 480.f));
 }
 
 void SetCaptureRenderScale(float scale) {
