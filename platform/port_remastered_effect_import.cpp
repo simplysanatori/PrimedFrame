@@ -835,6 +835,22 @@ constexpr MatchedEffect kMatchedEffects[] = {
     // keeps the disc's.
     {"c3a53327-731d-4870-8f1e-fdc755bccf13", 0x2D16014C},  // 07BEED38 breastPlate_LCTR
     {"d701c231-cf56-4451-b177-107724371c42", 0xFD17C2C9},  // 07BEED38 breastPlate_LCTR
+    {"#loose-chpr", 0},  // method of the entries below
+    // No ROOM, CHPR-set or script reference reaches these, or the counts are not
+    // 1:1 (kb topic/unpaired-retail-particles.md). The missile pickup: CHPR a9b8e446 has one
+    // GENP for retail's two PARTs, so C6D1DD10 (Skeleton_Root) takes it; 8438F539
+    // (Missile_Launcher_SDK) stays retail. The energy tank pickup: CHPR f37bcbc7
+    // has two GENPs, e460a1ad (sparks + light) and cd809719 (the same light only),
+    // for one PART.
+    // Left out: 47b4f5e0-5a5d-4a9b-a1fb-62486ec76c5a -> 2ECE9B8C and 68907841 (lava
+    // spit, one GENP for both retail PARTs). It reads per-actor external vars that
+    // only Remastered room-effect actors get (port_room_effects.cpp), so on a retail
+    // Effect object it runs on its PVAR defaults and shows no spurt.
+    // Left out: 45ba782d-5656-40dd-a115-9f20cac3955e -> BC978532 (PART_EnvRainSplash).
+    // Paired, the visor drops draw as grey noise squares (its VMAT shader 0ec41df0
+    // has no recipe), worse than retail's drops.
+    {"c0aefd83-1327-4ae6-a4bc-9b2593393244", 0xC6D1DD10},  // A9B8E446 missile pickup
+    {"e460a1ad-6142-413d-b04c-7adb655b0410", 0xECD68B2F},  // F37BCBC7 energy tank pickup
 };
 
 // Retail PARTs whose Remastered effect is a stub because Remastered draws them

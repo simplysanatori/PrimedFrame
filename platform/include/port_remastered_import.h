@@ -152,7 +152,8 @@ inline constexpr int kModels = 18;     // the table's models, their looks and th
 // 95: BLIT 1 (a lit sprite takes the room's baked probe) is the port-only PBLT 1.
 // 97: a sprite/swoosh/ELC2 VMAT takes its MATI's EBlendMode over the PBDM/SBDM/EBDM row (Fogged pins the row's fog).
 // 98: a PART keeps its visor effect override data (PVSC/PVMC/PVTC/PVBS/PVDT).
-inline constexpr int kEffects = 99;    // port_remastered_effect_import and the particle converters
+// 100: missile and energy tank pickups paired (#loose-chpr, kMatchedEffects).
+inline constexpr int kEffects = 100;   // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
