@@ -152,7 +152,7 @@ void CHUDBillboardEffect::PortApplySpawnSpread(const CVector3f& spread) {
     return;
   }
   xPortSpawnSpread = spread;
-  xe8_generator->PortSetSpawnSpread(spread);
+  xe8_generator->PortSetSpawnSpread(spread, xe8_generator->GetTranslation());
 }
 #endif
 

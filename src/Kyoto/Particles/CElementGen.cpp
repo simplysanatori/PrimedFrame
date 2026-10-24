@@ -632,9 +632,11 @@ void CElementGen::SetLocalScale(const CVector3f& scale) {
 }
 
 #ifdef TARGET_PC
-// The children take it from the update loop, before their own update: those placed at the system
-// translation spread their spawns around it like this system's.
-void CElementGen::PortSetSpawnSpread(const CVector3f& spread) { xPortSpawnSpread = spread; }
+// The children take it from the update loop, before their own update, around this system's
+// translation. A particle system sits on its parent's translation, so it needs no origin.
+void CElementGen::PortSetSpawnSpread(const CVector3f& spread, const CVector3f&) {
+  xPortSpawnSpread = spread;
+}
 
 // `rel` is a new particle's offset from the system origin. With the emitter followed (XFMD 3) the
 // offset is already turned by the global orientation, so spread it in the unturned axes.
@@ -2132,7 +2134,7 @@ update_children:
   while (it != x290_activePartChildren.end()) {
     CParticleGen* child = *it;
 #ifdef TARGET_PC
-    child->PortSetSpawnSpread(xPortSpawnSpread);
+    child->PortSetSpawnSpread(xPortSpawnSpread, xdc_translation);
 #endif
     child->Update(dt);
 #ifdef TARGET_PC

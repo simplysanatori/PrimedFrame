@@ -126,7 +126,7 @@ public:
   // acts at once; PortDoShutdownBehavior(0xff) uses the description's mode.
   void ShutdownEffect() override;
   void PortDoShutdownBehavior(u32 mode) override;
-  void PortSetSpawnSpread(const CVector3f& spread) override;
+  void PortSetSpawnSpread(const CVector3f& spread, const CVector3f& origin) override;
   // SDTR: the countdown's remaining over its total, 1 when none is running.
   float PortShutdownTimeRemaining() const;
 #endif
