@@ -224,6 +224,8 @@ std::vector<std::string> GalleryPaths();
 std::string HudBarsPath(uint32_t frame);
 // The thermal.lut a mod supplies (the thermal visor's heat gradient, 256x4 RGBA8); empty when none.
 std::string ThermalLutPath();
+// The envfx.bin a mod supplies (Remastered's EnvironmentFX textures, port_envfx_assets.h); empty when none.
+std::string EnvFxPath();
 // The retailplacements.bin a mod supplies (port_retail_placement.h); empty when none.
 std::string RetailPlacementPath();
 // The id a retail asset (a WPSC) reads for an effect in its field ('APS2'...), when a mod's
