@@ -1555,7 +1555,9 @@ CVector3f CCompoundTargetReticle::CalculateOrbitZoneReticlePosition(const CState
   float dist = 224.f / halfExtY;
   dist /= CMath::SlowTangentR(cam.GetRenderFov() * 0.5f * (1.f / 360.f) * (2.f * M_PIF));
 
-  CTransform4f camXf = PortReticleCameraXf(mgr);
+  // The simulation camera's frame, not the third-person view: Draw and PortPresentGroup map
+  // this point to the presented view (View * Sim^-1), which is where the shoulder offset goes.
+  CTransform4f camXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
   CVector3f fwd = camXf.GetForward();
 
   if (lag) {

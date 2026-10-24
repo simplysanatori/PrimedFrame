@@ -117,8 +117,12 @@ const CMatrix4f& CGameCamera::GetPerspectiveMatrix() const {
 CVector3f CGameCamera::ConvertToScreenSpace(const CVector3f& vec) const {
 #ifdef TARGET_PC
   // Third person draws the world from behind the shoulder, so the lock-on boxes, the target
-  // search and the reticles project from there (only the first-person camera is current then).
-  CVector3f rotated = PortThirdPerson::TickView(GetTransform()).TransposeMultiply(vec);
+  // search and the reticles project from there. Only the first-person camera takes the offset:
+  // any other camera projected meanwhile (cinematic, ball) is drawn from its own transform.
+  const bool firstPerson =
+      TCastToConstPtr< CFirstPersonCamera >(const_cast< CGameCamera* >(this)) != nullptr;
+  CVector3f rotated = (firstPerson ? PortThirdPerson::TickView(GetTransform()) : GetTransform())
+                          .TransposeMultiply(vec);
 #else
   CVector3f rotated = GetTransform().TransposeMultiply(vec);
 #endif
