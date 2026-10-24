@@ -172,11 +172,11 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
 // shader scales the diffuse by the opacity, and the rim and reflection are added unscaled.
 // The boundary shield (kind 14) and cracked glass (kind 8, class 1 with the scene in rgb) are plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
 // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
-// 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
+// 4BC890C1 (a lit Lambert) is opaque, as Remastered's mesh class 0 draws it.
 // The pause visor's glass (kind 36) is SrcAlpha / InvSrcAlpha (mesh class 1), its lit layer (kind 37)
 // SrcAlpha / One (mesh class 3).
 void PbrBlend(const RemMaterial& rem, const RetailMaterial& pm, uint32_t& src, uint32_t& dst) {
-  const bool lambertFx = rem.family == kShaderLambertFx || rem.opaqueFx;
+  const bool lambertFx = rem.family == kShaderLambertFx;
   // Otherwise as its mesh class: a retail model's material from the class table, a standalone
   // one from the synthetic retail material its class picked (premultiplied glass among them).
   uint32_t classSrc = pm.blendSrc;
@@ -209,8 +209,15 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   const bool emissiveKonst = rem.maps[kEmissive].has && !rem.maps[kEmissive].raw &&
                              !rem.maps[kEmissive].detail;
   const uint32_t emissiveSel = colorUnlit ? 0x0Du : 0x0Cu;  // GX_TEV_KCSEL_K1 / K0
-  const uint32_t flags = (pm.flags & 0xFFFF & ~uint32_t(0x8 | 0x40 | 0x100 | 0x400 | 0x800 | 0x2000)) |
-                         0xF0000 | kPbrFlag | (colorUnlit || emissiveKonst ? 0x8u : 0u);
+  // A retail model's material sorts and writes depth as its mesh class does: classes 1 and 3
+  // are Remastered's sorted pass, depth test only; 0 and 2 the unsorted one, depth written
+  // (kb topic/mesh-blend-class.md).
+  uint32_t passFlags = pm.flags & (0x10 | 0x80);
+  if (rem.classBlend && rem.blendClass >= 0) {
+    passFlags = rem.blendClass == 1 || rem.blendClass == 3 ? 0x10u : 0x80u;
+  }
+  const uint32_t flags = (pm.flags & 0xFFFF & ~uint32_t(0x8 | 0x10 | 0x40 | 0x80 | 0x100 | 0x400 | 0x800 | 0x2000)) |
+                         passFlags | 0xF0000 | kPbrFlag | (colorUnlit || emissiveKonst ? 0x8u : 0u);
   P32(b, flags);
   P32(b, uint32_t(nmaps));
   for (int i = 0; i < nmaps; ++i) {

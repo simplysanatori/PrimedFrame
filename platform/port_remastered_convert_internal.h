@@ -399,7 +399,6 @@ struct RemMaterial {
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
-  bool opaqueFx = false;   // a retail fx material Remastered draws opaque (mesh class 0)
   int blendClass = -1;     // its meshes' class (ModelMesh::bits2): 0 opaque, 1 blended, 2 cutout, 3 additive; -1 none
   bool classBlend = false; // a retail model's: it blends as its class does, not as the retail material it took
   bool tinted = false;     // its vertices carry a colour

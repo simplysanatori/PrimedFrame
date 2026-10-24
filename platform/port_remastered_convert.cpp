@@ -1180,9 +1180,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // on a room's own; the descriptor the converter writes is its own. The alpha is an
   // opacity only on a blended surface (on an opaque one it weighs the material's
   // layers), so a vertex no blended surface uses is opaque.
-  auto ownGlow = [&](const RemMaterial& m, const RetailMaterial& pm) {
-    return !opt.standalone && m.unlit && m.tinted && IsFx(pm);
-  };
   std::vector<uint8_t> C;
   bool useColor = false;
   for (const Prim& p : prims) {
@@ -1196,8 +1193,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     }
     std::vector<bool> keepAlpha(n, false);
     for (const Prim& p : prims) {
-      if (((mats[p.mat].blended || mats[p.mat].layered) && mats[p.mat].tinted) || mats[p.mat].vcolor ||
-          ownGlow(mats[p.mat], retail.mats[p.rmat])) {
+      if (((mats[p.mat].blended || mats[p.mat].layered) && mats[p.mat].tinted) || mats[p.mat].vcolor) {
         for (uint32_t i : p.I) {
           keepAlpha[i] = true;
         }
@@ -1340,7 +1336,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       rem.lightScale[0] = std::abs(rem.lits);
       rem.lightScale[1] = 0.0;
     }
-    const bool glow = ownGlow(rem, pm) && useColor;
     // Remastered's missile lock-on highlight is a runtime effect: its map is
     // solid red, so baked in it turns grey shards red.
     if (Lower(rem.name).find("missilelock") != std::string::npos) {
@@ -1354,10 +1349,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Without the colours (the inventory and cinematic guns) the shader reads (0,0,0,1)
     // in their place: Remastered has no colourless variant (kb topic/gun-beam-glow-no-vtxcolor.md).
     const bool gunGlow = rem.kind == 9;
-    // A plain lit cutout (flag 0x20): Remastered draws it in the opaque, depth-writing class 2, cut by
-    // the shader at alpha^2 < 0.25, whatever the retail model blended (kb topic/mesh-blend-class.md).
-    // Judged before the kinds below are reset: a cutout with a shader of its own is not this.
-    const bool plainCut = rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered && !rem.macro;
     // So is the Ice Beam cannon's frost shell, which needs no vertex colours: drawn as a
     // plain surface it would freeze the gun for good.
     const bool frostShell = rem.kind == 12;
@@ -1374,13 +1365,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const bool inventory = rem.kind == 36 || rem.kind == 37;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
-    // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
-    // which Remastered draws opaque whatever retail's blend (the missile pickup's top,
-    // 274D21BE; kb topic/mesh-blend-class.md).
-    const bool lambertFx = rem.family == kShaderLambertFx || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 ||
-                           (!opt.standalone && !(rem.flags & (kTransparentFlag | kCutoutFlag)));
-    const bool cutoutFx = !opt.standalone && plainCut && !glow && IsFx(pm);
-    rem.opaqueFx = !opt.standalone && IsFx(pm) && (!(rem.flags & (kTransparentFlag | kCutoutFlag)) || cutoutFx);
+    const bool lambertFx = rem.family == kShaderLambertFx || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2;
     if (rem.kind == 19 || rem.kind == 25) {
       // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
       rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;
@@ -1395,17 +1380,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     rem.macro = rem.macro && opt.standalone;
     rem.layered = rem.layered && (gunGlow || frostShell || matcapShell || shield || phazonGun || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
     rem.macroLayered = rem.macroLayered && rem.layered && opt.standalone;
-    // Nor do the alpha and shading modes belong on one: what they say is about the
-    // Remastered surface, and a retail model keeps the retail material's
-    // (bar a glow of its own, whose colour and fade are all in it).
-    // The glow mask is the exception: a glow map is often a few solid blocks the
-    // base map's alpha cuts down to lamps (the save station's arms went yellow
-    // all over), and the opacity stays the retail draw's either way.
-    if (!opt.standalone) {
-      rem.unlit = glow;
-      rem.mask = rem.mask && rem.maps[kEmissive].has;
-      rem.height = 0.0;
-    }
     const MapRef* rt = rem.maps;
     // Every set has its slot already (above), the beam glow's noise and the frost shell's
     // glow map (ICAN, texcoord 1) among them.
@@ -1421,17 +1395,26 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       vtx |= 3u << 4;
     }
     dlColor.push_back(colored);
-    // PBR needs a base map and an opaque retail material: blended effects keep
-    // their TEV.
-    // Only a room's own material asks for a cutout: a retail material's alpha
-    // test says nothing about what the Remastered map's alpha holds.
+    // A retail model's material blends as its mesh class (PbrBlend), so its alpha and shading
+    // are the Remastered material's, as on a room's own.
     // A plain lit cutout (no vertex colour) is Remastered's 1-bit alpha shader: full alpha,
     // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
-    const bool exactCut = (opt.standalone || cutoutFx) && rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered;
+    // The glow masks (and the frost shell's, the Vfx shaders', the pickups' and the pause
+    // visor's alpha) are the shaders' own, squared where USE_DIFFUSE_AS_INCAN_MASK squares it.
+    const bool exactCut = rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
-        glow ? "blend" : cutoutFx ? "cut" : !opt.standalone ? (inventory ? "mask" : frostShell || rem.mask || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
-    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || inventory || lambertFx || cutoutFx || !IsFx(pm)) &&
-                        Get("pbr:base", rt, baseAlpha, opt).has_value();
+        rem.cutout ? (exactCut ? "cut" : "punch")
+        : rem.mask || rem.layered || rem.height > 0.0 || frostShell || inventory || rem.shader == kShaderVfxBase ||
+                rem.shader == kShaderVfxBase2 || (rem.kind >= 16 && rem.kind <= 18)
+            ? (!frostShell && rem.maskSquared ? "mask2" : "mask")
+        : rem.blended ? "blend"
+                      : "";
+    // Blended retail effects keep their TEV, bar the materials drawn by a shader of their own,
+    // an unlit glow tinted by its vertices, and a mesh Remastered draws opaque or cut
+    // (class 0 or 2, kb topic/mesh-blend-class.md): the missile pickup's top, 274D21BE.
+    const bool pbrGate = opt.standalone || (rem.unlit && rem.tinted) || matcapShell || shield || inventory || lambertFx ||
+                         rem.blendClass == 0 || rem.blendClass == 2 || !IsFx(pm);
+    const bool usePbr = opt.pbr && rt[kBase].has && pbrGate && Get("pbr:base", rt, baseAlpha, opt).has_value();
     // The base map keeps its whole alpha, and the shader cuts it as Remastered's does.
     rem.cutExact = usePbr && exactCut;
     if (usePbr) {
@@ -1569,7 +1552,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::string tevReason =
         !opt.pbr ? "pbr off"
         : !rt[kBase].has ? "no base map"
-        : !(opt.standalone || glow || matcapShell || shield || inventory || lambertFx || cutoutFx || !IsFx(pm)) ? "retail fx material keeps its TEV"
+        : !pbrGate ? "retail fx material keeps its TEV"
                                                    : "the base map did not resolve";
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
