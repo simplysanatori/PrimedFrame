@@ -127,6 +127,10 @@ To remove it, run `~/Games/PrimedFrame/app/tools/uninstall.sh`. It removes the S
 
 If you use [Frametanium](https://github.com/Cogential/frametanium), add `simplysanatori/PrimedFrame` there. It downloads the release, runs its `install.sh` and updates it when I publish a new version. Put your Metroid Prime (USA) disc image in `~/Documents/Roms/gc` before the first install and the installer finds it, or write its path as the only line of `~/.local/share/PrimedFrame/rom`. Later installs keep the path.
 
+## Install with FrameDrop
+
+[FrameDrop](https://framedropvr.com) can install this too: [Install with FrameDrop](https://framedropvr.com/install?manifest=https%3A%2F%2Fgithub.com%2Fsimplysanatori%2FPrimedFrame%2Freleases%2Flatest%2Fdownload%2Fprimedframe.framedrop.json). The release has a `primedframe-<version>-framedrop-linux-arm64.zip` and a `primedframe.framedrop.json` for it. FrameDrop unpacks the zip on the Frame and adds its own library entry, which runs the `run.sh` in the zip. The first time it runs, and again after an update, `run.sh` runs `install.sh` with the Steam shortcut step turned off, so you get FrameDrop's entry and no second one from the installer, and then starts PrimedFrame through its launch wrapper. The installer finds your Metroid Prime disc image in `~/Documents/Roms/gc`, or you can write its path into `~/.local/share/PrimedFrame/rom` before the first start.
+
 ## Running it on the Frame
 
 Start SteamVR (put the headset on), open the Steam library and launch **PrimedFrame**. The entry has the VR flag, so SteamVR starts it as a VR app. There is no desktop window: the game starts straight into the headset, on the title screen, after a few seconds of black while SteamVR hands it the display.
