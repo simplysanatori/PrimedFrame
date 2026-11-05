@@ -2,13 +2,13 @@
 
 PrimedFrame is a fork of Nobbie248's [PrimedGun](https://github.com/Nobbie248/PrimedGun), the Dolphin based build that plays Metroid Prime in VR through OpenXR. PrimedFrame builds it as a native Linux Arm64 NoGUI program (`dolphin-nogui`, renamed `primedframe` on install) that runs in the Valve Steam Frame's own SteamVR. This document is for version 1.0.0.
 
-Install, settings, troubleshooting and how to report problems are in the [README](../README.md). This one says how the build and the wrapper work and what I learned about SteamVR on the Frame. The developer notes with the build flags, the headless test setup and the statistics line are in [frame/DEV.md](../frame/DEV.md).
+Install is in the [README](../README.md). Settings, troubleshooting and how to report problems are in the [user guide](USER_GUIDE.md). The internals moved out of the README are in [AGENTS.md](../AGENTS.md). This one says how the build and the wrapper work and what I learned about SteamVR on the Frame. The developer notes with the build flags, the headless test setup and the statistics line are in [frame/DEV.md](../frame/DEV.md).
 
 Not affiliated with Valve, Nintendo, the Dolphin team or the PrimedGun author.
 
 ## AI disclosure
 
-I did not write this code by hand. The build, the wrapper, the scripts and these notes were written with Anthropic's Claude (Fable 5.1, Opus 5.5 and Sonnet 5.5, through Claude Code), running on my Steam Frame. I chose what to attempt, reviewed the code and the logic of the changes and the scripts as they were written, and tested each build in the headset. PrimedGun's own README says Codex was used to assist its development.
+I started this port and used Anthropic's Claude (Fable 5.1, Opus 5.5 and Sonnet 5.5, through Claude Code, running on my Steam Frame) to speed up development. I wrote, reviewed and fixed code by hand all the way through, kept the AI's work checked and reined in, and aimed to keep the port as lightweight as possible. I tested each build in the headset. PrimedGun's own README says Codex was used to assist its development.
 
 ## Status
 
