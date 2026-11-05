@@ -123,6 +123,10 @@ To bring over an existing save, copy your memory card and save states into `~/.l
 
 To remove it, run `~/Games/PrimedFrame/app/tools/uninstall.sh`. It removes the Steam entry and the program; your data folder stays unless you add `--purge`.
 
+## Install with Frametanium
+
+If you use [Frametanium](https://github.com/Cogential/frametanium), add `simplysanatori/PrimedFrame` there. It downloads the release, runs its `install.sh` and updates it when I publish a new version. Put your Metroid Prime (USA) disc image in `~/Documents/Roms/gc` before the first install and the installer finds it, or write its path as the only line of `~/.local/share/PrimedFrame/rom`. Later installs keep the path.
+
 ## Running it on the Frame
 
 Start SteamVR (put the headset on), open the Steam library and launch **PrimedFrame**. The entry has the VR flag, so SteamVR starts it as a VR app. There is no desktop window: the game starts straight into the headset, on the title screen, after a few seconds of black while SteamVR hands it the display.
