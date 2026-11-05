@@ -303,6 +303,6 @@ Dolphin, PrimedGun and my changes are free software under the GNU General Public
 
 I wanted PrimedGun on my Frame without a container, so I took Nobbie's code and had it built natively for SteamVR. The container setup worked, but big rooms ran at 20 to 30 frames a second and the right eye ghosted. The work after the native build was pacing written for how SteamVR actually behaves, and finding that the Frame's GPU driver was doing the stereo drawing once per tile. It started as a project for my own headset. It ended up good enough to share.
 
-I made this with partial assistance from Claude. PrimedGun's README says Codex was used to assist its development, so the code underneath is AI assisted too. Neither Nobbie nor the Dolphin team has reviewed this port. If that is not for you, no worries. Read the code before trusting it.
+I made this with partial assistance from Claude. PrimedGun's README says Codex was used to assist its development, so the code underneath is AI assisted too.
 
 Developer notes and what was learned about SteamVR on the Frame are in [frame/DEV.md](frame/DEV.md), [frame/PACING.md](frame/PACING.md) and the [technical notes](docs/TECHNICAL_NOTES.md).
