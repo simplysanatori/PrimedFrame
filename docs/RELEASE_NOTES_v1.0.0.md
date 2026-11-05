@@ -40,7 +40,7 @@ Metroid Prime in VR, running natively on the Valve Steam Frame. PrimedFrame is a
 
 ## Install
 
-Unpack the tarball on the Frame and run its `install.sh --rom <your disc image>`. The [README](https://github.com/simplysanatori/PrimedFrame/blob/native/README.md) has the full steps, the settings and the troubleshooting.
+Unpack the tarball on the Frame and run its `install.sh --rom <your disc image>`. The [README](https://github.com/simplysanatori/PrimedFrame/blob/native/README.md) has the install steps. The [user guide](https://github.com/simplysanatori/PrimedFrame/blob/native/docs/USER_GUIDE.md) has the full steps, the settings and the troubleshooting.
 
 ## Known
 
@@ -56,4 +56,4 @@ Open an issue with what you did, what you expected and what happened, and the ar
 
 ## Credits
 
-Nobbie and [PrimedGun](https://github.com/Nobbie248/PrimedGun), iChris4 and Dolphin ReduX, Carl Kenner and the Dolphin VR contributors, josethevrtech and PrimedSteam, the Dolphin team, and Valve. The README has the links and the full list.
+Nobbie and [PrimedGun](https://github.com/Nobbie248/PrimedGun), iChris4 and Dolphin ReduX, Carl Kenner and the Dolphin VR contributors, josethevrtech and PrimedSteam, the Dolphin team, and Valve. The [user guide](https://github.com/simplysanatori/PrimedFrame/blob/native/docs/USER_GUIDE.md) has the links and the full list.
