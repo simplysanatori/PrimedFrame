@@ -271,7 +271,7 @@ PrimedFrame exists because of the people who made PrimedGun and the VR builds of
 
 The credits below name everyone else.
 
-If you would like more Steam Frame ports, you can also [buy me a coffee](https://ko-fi.com/sana748653). That link is only for my Steam Frame work. It pays for the Claude API credits these ports are built with, spent as carefully as I can.
+If you would like more Steam Frame ports, you can also [buy me a coffee](https://ko-fi.com/sana748653). That link is only for my Steam Frame work.
 
 ## Credits
 
