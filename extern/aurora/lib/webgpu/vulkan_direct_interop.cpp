@@ -165,28 +165,64 @@ wgpu::TextureFormat to_wgpu_format(int64_t format) noexcept {
   }
 }
 
-// Draws an eye into a swapchain image: a triangle covering the target, each pixel loaded from the
-// eye. On the Quest's Adreno a transfer copy into the runtime's images took about 2.6 ms a frame
-// for both eyes, the draw about 0.4 ms.
+// Draws eyes into a swapchain image: a triangle covering each target's region, each pixel loaded
+// from its eye. On the Quest's Adreno a transfer copy into the runtime's images took about 2.6 ms a
+// frame for both eyes, the draw about 0.4 ms. Several regions of one image (both eyes packed side by
+// side, PF2_STEREO_PACKED) are drawn in one pass, which clears the image once.
+struct BlitRegion {
+  const stereo::EyeImage* source = nullptr;
+  uint32_t x = 0;
+  uint32_t width = 0;
+  uint32_t height = 0;
+  // The target's index (its parameter buffer, and the eye a stamp names), and its stamp (0: none).
+  uint32_t slot = 0;
+  uint64_t stamp = 0;
+};
+
 class Blitter final {
 public:
-  bool Encode(wgpu::CommandEncoder& encoder, const stereo::EyeImage& source, const wgpu::TextureView& target,
-              wgpu::TextureFormat format, uint32_t width, uint32_t height) noexcept {
-    if (source.view == nullptr || !*source.view || !Initialize()) {
+  static constexpr uint32_t kSlots = AURORA_STEREO_EYE_COUNT + 1;
+
+  bool Encode(wgpu::CommandEncoder& encoder, const BlitRegion* regions, uint32_t count,
+              const wgpu::TextureView& target, wgpu::TextureFormat format) noexcept {
+    if (count == 0 || !Initialize()) {
       return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+      const auto* source = regions[i].source;
+      if (source == nullptr || source->view == nullptr || !*source->view || regions[i].slot >= kSlots) {
+        return false;
+      }
     }
     const wgpu::RenderPipeline& pipeline = PipelineFor(format);
     if (!pipeline) {
       return false;
     }
-    const wgpu::BindGroupEntry entry{.binding = 0, .textureView = *source.view};
-    const wgpu::BindGroupDescriptor bindGroupDescriptor{
-        .label = "OpenXR eye blit",
-        .layout = m_layout,
-        .entryCount = 1,
-        .entries = &entry,
-    };
-    const wgpu::BindGroup bindGroup = webgpu::g_device.CreateBindGroup(&bindGroupDescriptor);
+    std::array<wgpu::BindGroup, kSlots> bindGroups{};
+    for (uint32_t i = 0; i < count; ++i) {
+      const BlitRegion& region = regions[i];
+      // The region's origin in the image, and the stamp: (x, y, stamp low, stamp high, eye, stamp on).
+      const std::array<uint32_t, 8> params{region.x,
+                                           0u,
+                                           static_cast<uint32_t>(region.stamp & 0xffffffffu),
+                                           static_cast<uint32_t>(region.stamp >> 32),
+                                           region.slot,
+                                           region.stamp != 0 ? 1u : 0u,
+                                           0u,
+                                           0u};
+      webgpu::g_queue.WriteBuffer(m_params[region.slot], 0, params.data(), sizeof(params));
+      const std::array<wgpu::BindGroupEntry, 2> entries{
+          wgpu::BindGroupEntry{.binding = 0, .textureView = *region.source->view},
+          wgpu::BindGroupEntry{.binding = 1, .buffer = m_params[region.slot], .offset = 0, .size = kParamsSize},
+      };
+      const wgpu::BindGroupDescriptor bindGroupDescriptor{
+          .label = "OpenXR eye blit",
+          .layout = m_layout,
+          .entryCount = entries.size(),
+          .entries = entries.data(),
+      };
+      bindGroups[i] = webgpu::g_device.CreateBindGroup(&bindGroupDescriptor);
+    }
     const wgpu::RenderPassColorAttachment attachment{
         .view = target,
         .loadOp = wgpu::LoadOp::Clear,
@@ -199,22 +235,37 @@ public:
         .colorAttachments = &attachment,
     };
     const auto pass = encoder.BeginRenderPass(&passDescriptor);
-    pass.SetViewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f);
-    pass.SetScissorRect(0, 0, width, height);
     pass.SetPipeline(pipeline);
-    pass.SetBindGroup(0, bindGroup);
-    pass.Draw(3);
+    for (uint32_t i = 0; i < count; ++i) {
+      const BlitRegion& region = regions[i];
+      pass.SetViewport(static_cast<float>(region.x), 0.0f, static_cast<float>(region.width),
+                       static_cast<float>(region.height), 0.0f, 1.0f);
+      pass.SetScissorRect(region.x, 0, region.width, region.height);
+      pass.SetBindGroup(0, bindGroups[i]);
+      pass.Draw(3);
+    }
     pass.End();
     return true;
   }
 
 private:
+  static constexpr uint64_t kParamsSize = 32;
+
   bool Initialize() noexcept {
     if (m_layout) {
       return true;
     }
     static constexpr char kShader[] = R"(
+struct Params {
+    origin: vec2u,
+    stamp_lo: u32,
+    stamp_hi: u32,
+    eye_index: u32,
+    stamp_on: u32,
+}
+
 @group(0) @binding(0) var eye: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> params: Params;
 
 @vertex
 fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
@@ -222,15 +273,46 @@ fn vs_main(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
     return vec4f(uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
 }
 
+// PF2_FRAME_STAMP (tests): rows 0 and 1 the 64-bit stamp and its complement, row 2 the eye, its
+// complement and the marker 1010; the rest of the 64x15 block black.
+fn stamp_bit(p: vec2u) -> f32 {
+    var bit = 0u;
+    if (p.y <= 1u) {
+        let word = select(params.stamp_hi, params.stamp_lo, p.x < 32u);
+        bit = (word >> (p.x & 31u)) & 1u;
+        if (p.y == 1u) {
+            bit = 1u - bit;
+        }
+    } else if (p.y == 2u) {
+        if (p.x == 0u) {
+            bit = params.eye_index & 1u;
+        } else if (p.x == 1u) {
+            bit = 1u - (params.eye_index & 1u);
+        } else if (p.x == 2u || p.x == 4u) {
+            bit = 1u;
+        }
+    }
+    return f32(bit);
+}
+
+fn eye_texel(position: vec4f) -> vec4f {
+    let p = vec2u(position.xy) - params.origin;
+    if (params.stamp_on != 0u && p.x < 64u && p.y < 15u) {
+        let v = stamp_bit(p);
+        return vec4f(v, v, v, 1.0);
+    }
+    return textureLoad(eye, vec2i(p), 0);
+}
+
 @fragment
 fn fs_raw(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    return textureLoad(eye, vec2i(position.xy), 0);
+    return eye_texel(position);
 }
 
 // The eyes hold gamma-encoded bytes and an sRGB attachment encodes what it is given: decode first.
 @fragment
 fn fs_srgb(@builtin(position) position: vec4f) -> @location(0) vec4f {
-    let color = textureLoad(eye, vec2i(position.xy), 0);
+    let color = eye_texel(position);
     let low = color.rgb / 12.92;
     let high = pow((color.rgb + 0.055) / 1.055, vec3f(2.4));
     return vec4f(select(high, low, color.rgb <= vec3f(0.04045)), color.a);
@@ -240,19 +322,26 @@ fn fs_srgb(@builtin(position) position: vec4f) -> @location(0) vec4f {
     wgsl.code = kShader;
     const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &wgsl, .label = "OpenXR eye blit"};
     m_module = webgpu::g_device.CreateShaderModule(&moduleDescriptor);
-    const wgpu::BindGroupLayoutEntry entry{
-        .binding = 0,
-        .visibility = wgpu::ShaderStage::Fragment,
-        .texture =
-            {
-                .sampleType = wgpu::TextureSampleType::UnfilterableFloat,
-                .viewDimension = wgpu::TextureViewDimension::e2D,
-            },
+    const std::array<wgpu::BindGroupLayoutEntry, 2> entries{
+        wgpu::BindGroupLayoutEntry{
+            .binding = 0,
+            .visibility = wgpu::ShaderStage::Fragment,
+            .texture =
+                {
+                    .sampleType = wgpu::TextureSampleType::UnfilterableFloat,
+                    .viewDimension = wgpu::TextureViewDimension::e2D,
+                },
+        },
+        wgpu::BindGroupLayoutEntry{
+            .binding = 1,
+            .visibility = wgpu::ShaderStage::Fragment,
+            .buffer = {.type = wgpu::BufferBindingType::Uniform, .minBindingSize = kParamsSize},
+        },
     };
     const wgpu::BindGroupLayoutDescriptor layoutDescriptor{
         .label = "OpenXR eye blit",
-        .entryCount = 1,
-        .entries = &entry,
+        .entryCount = entries.size(),
+        .entries = entries.data(),
     };
     m_layout = webgpu::g_device.CreateBindGroupLayout(&layoutDescriptor);
     const wgpu::PipelineLayoutDescriptor pipelineLayoutDescriptor{
@@ -261,7 +350,16 @@ fn fs_srgb(@builtin(position) position: vec4f) -> @location(0) vec4f {
         .bindGroupLayouts = &m_layout,
     };
     m_pipelineLayout = webgpu::g_device.CreatePipelineLayout(&pipelineLayoutDescriptor);
-    return m_module && m_layout && m_pipelineLayout;
+    for (auto& buffer : m_params) {
+      const wgpu::BufferDescriptor descriptor{
+          .label = "OpenXR eye blit parameters",
+          .usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+          .size = kParamsSize,
+      };
+      buffer = webgpu::g_device.CreateBuffer(&descriptor);
+    }
+    return m_module && m_layout && m_pipelineLayout &&
+           std::all_of(m_params.begin(), m_params.end(), [](const wgpu::Buffer& buffer) { return bool(buffer); });
   }
 
   const wgpu::RenderPipeline& PipelineFor(wgpu::TextureFormat format) noexcept {
@@ -294,6 +392,7 @@ fn fs_srgb(@builtin(position) position: vec4f) -> @location(0) vec4f {
   wgpu::ShaderModule m_module;
   wgpu::BindGroupLayout m_layout;
   wgpu::PipelineLayout m_pipelineLayout;
+  std::array<wgpu::Buffer, kSlots> m_params;
   std::vector<std::pair<wgpu::TextureFormat, wgpu::RenderPipeline>> m_pipelines;
 };
 
@@ -315,6 +414,11 @@ struct Wrap {
 // The eyes, then the settings panel's layer image after them.
 constexpr uint32_t kMaxImages = AURORA_STEREO_EYE_COUNT + 1;
 
+// The width of the whole image a target is a region of.
+uint32_t ImageWidth(const AuroraVulkanDirectTarget& target) noexcept {
+  return target.imageWidth != 0 ? target.imageWidth : target.width;
+}
+
 class Bridge final {
 public:
   Bridge(AuroraVulkanDirectSubmittedCallback callback, void* userdata) noexcept
@@ -326,7 +430,9 @@ public:
       return false;
     }
     const auto valid = [](const AuroraVulkanDirectTarget& target) {
-      return target.image != 0 && target.width != 0 && target.height != 0;
+      return target.image != 0 && target.width != 0 && target.height != 0 &&
+             (target.imageWidth == 0 ? target.x == 0
+                                     : static_cast<uint64_t>(target.x) + target.width <= target.imageWidth);
     };
     for (uint32_t i = 0; i < count; ++i) {
       if (!valid(targets[i])) {
@@ -424,9 +530,10 @@ public:
         return Decline("an eye's format cannot be copied into its swapchain image");
       }
       const wgpu::TextureFormat format = to_wgpu_format(target.vkFormat);
+      const uint32_t imageWidth = ImageWidth(target);
       auto it = std::find_if(m_wraps.begin(), m_wraps.end(),
                              [&](const Wrap& wrap) { return wrap.image == target.image; });
-      if (it != m_wraps.end() && (it->width != target.width || it->height != target.height || it->format != format)) {
+      if (it != m_wraps.end() && (it->width != imageWidth || it->height != target.height || it->format != format)) {
         // The runtime reuses VkImage handles across swapchain recreation: wrap the image again.
         m_wraps.erase(it);
         it = m_wraps.end();
@@ -435,13 +542,13 @@ public:
         wgpu::TextureDescriptor descriptor{};
         descriptor.label = "OpenXR swapchain image";
         descriptor.usage = wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::RenderAttachment;
-        descriptor.size = {target.width, target.height, 1};
+        descriptor.size = {imageWidth, target.height, 1};
         descriptor.format = format;
         void* wrapped = dawn().wrap(webgpu::g_device.Get(), &descriptor, target.image);
         if (wrapped == nullptr) {
           return Decline("Dawn could not wrap a swapchain image");
         }
-        Wrap wrap{target.image, target.width, target.height, format,
+        Wrap wrap{target.image, imageWidth, target.height, format,
                   wgpu::Texture::Acquire(static_cast<WGPUTexture>(wrapped)), {}};
         wrap.view = wrap.texture.CreateView();
         m_wraps.push_back(std::move(wrap));
@@ -450,32 +557,56 @@ public:
       m_active[i] = it->texture;
       m_activeViews[i] = it->view;
     }
-    for (uint32_t i = 0; i < m_images; ++i) {
-      const auto& source = sources[i];
-      // An eye rendered smaller than its image (the immersive window's) fills the top-left part
-      // the layer shows; one rendered larger while the resolution changes gives what fits.
-      const uint32_t width = std::min(source.size.width, m_targets[i].width);
-      const uint32_t height = std::min(source.size.height, m_targets[i].height);
-      if (m_blitter.Encode(encoder, source, m_activeViews[i], to_wgpu_format(m_targets[i].vkFormat), width,
-                           height)) {
+    // Targets sharing an image (both eyes packed side by side) are drawn in one pass, in target order.
+    std::array<bool, kMaxImages> drawn{};
+    for (uint32_t first = 0; first < m_images; ++first) {
+      if (drawn[first]) {
+        continue;
+      }
+      std::array<BlitRegion, kMaxImages> regions{};
+      std::array<uint32_t, kMaxImages> members{};
+      uint32_t regionCount = 0;
+      for (uint32_t i = first; i < m_images; ++i) {
+        if (drawn[i] || m_targets[i].image != m_targets[first].image) {
+          continue;
+        }
+        drawn[i] = true;
+        // An eye rendered smaller than its region (the immersive window's) fills the top-left part
+        // the layer shows; one rendered larger while the resolution changes gives what fits.
+        regions[regionCount] = BlitRegion{
+            .source = &sources[i],
+            .x = m_targets[i].x,
+            .width = std::min(sources[i].size.width, m_targets[i].width),
+            .height = std::min(sources[i].size.height, m_targets[i].height),
+            .slot = i,
+            .stamp = m_targets[i].stamp,
+        };
+        members[regionCount++] = i;
+      }
+      if (m_blitter.Encode(encoder, regions.data(), regionCount, m_activeViews[first],
+                           to_wgpu_format(m_targets[first].vkFormat))) {
         continue;
       }
       // The blit could not be set up: copy instead.
-      const wgpu::TexelCopyTextureInfo from{
-          .texture = *source.texture,
-          .mipLevel = 0,
-          // Multiview eye targets hold both eyes as layers of one texture.
-          .origin = {0, 0, source.layer},
-          .aspect = wgpu::TextureAspect::All,
-      };
-      const wgpu::TexelCopyTextureInfo to{
-          .texture = m_active[i],
-          .mipLevel = 0,
-          .origin = {},
-          .aspect = wgpu::TextureAspect::All,
-      };
-      const wgpu::Extent3D extent{width, height, 1};
-      encoder.CopyTextureToTexture(&from, &to, &extent);
+      for (uint32_t r = 0; r < regionCount; ++r) {
+        const uint32_t i = members[r];
+        const auto& source = sources[i];
+        const wgpu::TexelCopyTextureInfo from{
+            .texture = *source.texture,
+            .mipLevel = 0,
+            // Multiview eye targets hold both eyes as layers of one texture.
+            .origin = {0, 0, source.layer},
+            .aspect = wgpu::TextureAspect::All,
+        };
+        const wgpu::TexelCopyTextureInfo to{
+            .texture = m_active[i],
+            .mipLevel = 0,
+            .origin = {m_targets[i].x, 0, 0},
+            .aspect = wgpu::TextureAspect::All,
+        };
+        const wgpu::Extent3D extent{regions[r].width, regions[r].height, 1};
+        encoder.CopyTextureToTexture(&from, &to, &extent);
+      }
     }
     m_encoded = true;
     return true;
@@ -486,13 +617,18 @@ public:
     if (m_token == 0 || !m_encoded || m_token != frame.frameToken) {
       return;
     }
+    // Each image once: two targets may share one (packed eyes).
     std::array<void*, kMaxImages> textures{};
+    uint32_t textureCount = 0;
     for (uint32_t i = 0; i < m_images; ++i) {
-      textures[i] = m_active[i].Get();
+      void* texture = m_active[i].Get();
+      if (std::find(textures.begin(), textures.begin() + textureCount, texture) == textures.begin() + textureCount) {
+        textures[textureCount++] = texture;
+      }
     }
     // The colour-attachment layout OpenXR expects at xrReleaseSwapchainImage, on Dawn's queue,
     // flushed before the XR thread may release.
-    const bool success = dawn().release(webgpu::g_device.Get(), textures.data(), m_images) != 0;
+    const bool success = dawn().release(webgpu::g_device.Get(), textures.data(), textureCount) != 0;
     const uint64_t token = m_token;
     m_token = 0;
     m_encoded = false;
