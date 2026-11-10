@@ -22,6 +22,8 @@
 #include "port_tracker.h"
 #include "vr/openxr_integration.h"
 #include "vr/openxr_settings_panel.h"
+#include "vr/pf2_switches.h"
+#include <cctype>
 
 #include "MetroidPrime/CGameArea.hpp"
 #include "MetroidPrime/CMemoryCard.hpp"
@@ -283,13 +285,40 @@ struct Menu {
     VrMenu::View readouts;
     double readouts_at = 0.0;
     // Resume questions take priority over compilation progress while the menu is closed.
-    enum class Toast { None, Compile, Resume };
+    // PF2_LABEL (vr/pf2_switches.h) goes first, for kLabelSeconds from the session's first frames.
+    enum class Toast { None, Compile, Resume, Label };
     Toast toast = Toast::None;
     uint32_t toast_key = 0;
+    double label_until = -1.0;
 };
 
+constexpr double kLabelSeconds = 3.0;
+
 const char* ToastName(Menu::Toast toast) noexcept {
-    return toast == Menu::Toast::Resume ? "resume question" : "shader compilation toast";
+    return toast == Menu::Toast::Resume ? "resume question"
+           : toast == Menu::Toast::Label ? "PF2_LABEL toast"
+                                         : "shader compilation toast";
+}
+
+// The A/B launch's name (PF2_LABEL), in the toast's frame, upper case (the panel font's).
+VrMenu::Pixels BuildLabelToastPixels(const std::string& label) {
+    VrMenu::Pixels pixels(static_cast<size_t>(VrMenu::kWidth) * VrMenu::kImageHeight, 0u);
+    const int width = VrMenu::kWidth;
+    const int height = VrMenu::kImageHeight;
+    VrMenu::FillRect(pixels, width, height, 0, 0, VrMenu::kWidth, VrMenu::kToastHeight, 0xD0100804u);
+    VrMenu::FillRect(pixels, width, height, 0, 0, VrMenu::kWidth, 8, 0xE0FFB030u);
+    VrMenu::FillRect(pixels, width, height, 0, VrMenu::kToastHeight - 8, VrMenu::kWidth, 8, 0xE0FFB030u);
+    std::string text = label;
+    for (char& ch : text) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    int scale = 6;
+    while (scale > 2 && VrMenu::TextWidth(text.c_str(), scale) > VrMenu::kWidth - 64) {
+        --scale;
+    }
+    VrMenu::DrawString(pixels, width, height, text.c_str(), (VrMenu::kWidth - VrMenu::TextWidth(text.c_str(), scale)) / 2,
+                       (VrMenu::kToastHeight - 7 * scale) / 2, scale, 0xFFFFF0C8u);
+    return pixels;
 }
 
 // The panel layer while the menu is closed (the menu has it while it is open): the boot's
@@ -316,7 +345,15 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
             saved = when;
         }
     }
+    const std::string& label = pf2::Get().label;
+    const double now = NowSeconds();
+    if (!label.empty() && menu.label_until < 0.0 && OpenXRIsRunning()) {
+        menu.label_until = now + kLabelSeconds;
+        PORTVR_LOG() << "PF2_LABEL: " << label << std::endl;
+    }
+    const bool labelling = !label.empty() && OpenXRIsRunning() && now < menu.label_until;
     const Menu::Toast toast = menu_open ? Menu::Toast::None
+                              : labelling ? Menu::Toast::Label
                               : asking  ? Menu::Toast::Resume
                               : compiling ? Menu::Toast::Compile
                                           : Menu::Toast::None;
@@ -335,13 +372,15 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
     }
     const uint32_t key = toast == Menu::Toast::Resume
                              ? (question.afterCrash ? 1u : 0u) | (question.crashedAgain ? 2u : 0u)
-                             : VrMenu::CompileToastKey(done, total);
+                         : toast == Menu::Toast::Label ? 0u
+                                                       : VrMenu::CompileToastKey(done, total);
     if (toast != menu.toast || key != menu.toast_key) {
         const VrMenu::Pixels pixels =
             toast == Menu::Toast::Resume
                 ? VrMenu::BuildResumeToastPixels(question.room, saved, question.afterCrash,
                                                  question.crashedAgain)
-                : VrMenu::BuildCompileToastPixels(done, total);
+            : toast == Menu::Toast::Label ? BuildLabelToastPixels(label)
+                                          : VrMenu::BuildCompileToastPixels(done, total);
         aurora_set_stereo_panel_image(pixels.data(), VrMenu::kWidth, VrMenu::kImageHeight);
         menu.toast_key = key;
     }
@@ -353,6 +392,8 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
         if (toast == Menu::Toast::Resume) {
             PORTVR_LOG() << "resume question shown: " << question.room << (question.afterCrash ? " (after a crash)" : "")
                          << std::endl;
+        } else if (toast == Menu::Toast::Label) {
+            PORTVR_LOG() << "PF2_LABEL toast shown" << std::endl;
         } else {
             PORTVR_LOG() << "shader compilation toast shown: " << done << " / " << total << std::endl;
         }
