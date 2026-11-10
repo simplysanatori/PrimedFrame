@@ -5,6 +5,7 @@
 // Aurora the menu's image whenever what it shows changes.
 
 #include "vr/vr_menu.h"
+#include "vr/openxr_controller_snapshot.h"
 
 #include "vr/vr_log.h"
 #include "vr/vr_settings.h"
@@ -411,6 +412,12 @@ VrMenu::View BuildView(Menu& menu, const PortVrSettings& settings, double now) {
     view.foveation_live = aurora_stereo_foveation_available();
     view.multiview_available = aurora_get_stereo_multiview_available();
     view.in_game = PortDebug::StateManager() != nullptr;
+    // The Steam Frame's controllers (its native profile) read their own layout text.
+    for (const std::string& profile : OpenXRGetInputSnapshot().interaction_profiles) {
+        if (profile == "/interaction_profiles/valve/frame_controller_valve") {
+            view.frame_controllers = true;
+        }
+    }
     view.invulnerable = PortDebug::Invulnerable();
     view.streamed_audio = PortDebug::AiAudioEnabled();
     view.musyx_audio = PortDebug::MusyxAudioEnabled();

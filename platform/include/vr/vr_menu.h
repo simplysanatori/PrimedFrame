@@ -299,6 +299,7 @@ struct View {
     bool musyx_audio = true;
     bool log_file = false;
     bool quick_resume = true;
+    bool frame_controllers = false; // the active interaction profile is the Steam Frame's
     bool draw_tags = true; // PortDebug::DrawTags
     uint32_t eye_width = 0; // per eye at the chosen render scale; 0 without a session
     uint32_t eye_height = 0;
@@ -1112,7 +1113,72 @@ inline std::vector<Row> BuildRows(const State& s, const PortVrSettings& v, const
 
 // --- Drawing ---
 
-inline void DrawLayoutTextPage(Pixels& pixels) {
+// A custom-layout binding id (vr_controller_layout.h: 1-16 left hand, 17-32 right
+// hand, 33-34 right X / Y) named by where the Steam Frame has it. Its left
+// controller has the D-pad and View, its right controller A, B, X, Y and Menu.
+inline std::string FrameInputName(int binding) {
+    if (binding < 1 || binding > 36) {
+        return "NONE";
+    }
+    if (binding > 32) {
+        return binding == 33 ? "X BUTTON" : binding == 34 ? "Y BUTTON" : "UNAVAILABLE";
+    }
+    const bool left = binding <= 16;
+    const std::string side = left ? "LEFT " : "RIGHT ";
+    switch ((binding - 1) % 16 + 1) {
+    case 1: return left ? "D-PAD DOWN" : "A BUTTON";
+    case 2: return left ? "D-PAD UP" : "B BUTTON";
+    case 3: return side + "TRIGGER";
+    case 4: return side + "GRIP";
+    case 5: return side + "STICK CLICK";
+    case 6: return left ? "VIEW" : "MENU";
+    case 8: return side + "STICK UP";
+    case 9: return side + "STICK DOWN";
+    case 10: return side + "STICK LEFT";
+    case 11: return side + "STICK RIGHT";
+    case 12: return left ? "D-PAD UP" : "UNAVAILABLE";
+    case 13: return left ? "D-PAD DOWN" : "UNAVAILABLE";
+    case 14: return left ? "D-PAD LEFT" : "UNAVAILABLE";
+    case 15: return left ? "D-PAD RIGHT" : "UNAVAILABLE";
+    case 16: return side + "SHOULDER";
+    default: return "UNAVAILABLE"; // the touchpad press: no pad on the Frame
+    }
+}
+
+// The Steam Frame's rows: [0] the standard layout's left and right columns,
+// each line "CONTROL - ACTION" (what ApplyGameplay / ApplyClassic and the
+// native profile bind), or with a custom layout the "ACTION - CONTROL" lines
+// of its main bindings, split over the two columns.
+struct LayoutRows {
+    std::vector<std::string> left;
+    std::vector<std::string> right;
+    std::string footer;
+};
+
+inline LayoutRows FrameLayoutRows(const PortVrSettings& v) {
+    LayoutRows rows;
+    if (!v.custom_layout_enabled) {
+        rows.left = {"LEFT STICK - MOVE",       "D-PAD UP - START/PAUSE",         "D-PAD DOWN - MORPH BALL",
+                     "STICK CLICK/VIEW - VR SETTINGS", "LEFT GRIP - MAP",       "LEFT TRIGGER - LOCK ON"};
+        rows.right = {"RIGHT STICK - LOOK/JUMP",        "B BUTTON - BEAM SELECT", "A BUTTON - SELECT",
+                      "RIGHT STICK CLICK - SET HEIGHT", "RIGHT GRIP - MISSILES",  "RIGHT TRIGGER - SHOOT"};
+        rows.footer = "X, Y, SHOULDERS AND MENU ARE UNUSED";
+        return rows;
+    }
+    const auto line = [](const char* action, int binding) { return std::string(action) + " - " + FrameInputName(binding); };
+    rows.left = {line("SHOOT", v.custom_shoot),   line("LOCK ON", v.custom_lock),
+                 line("MISSILE", v.custom_missile), line("MAP", v.custom_map),
+                 line("MORPH BALL", v.custom_morph), line("PAUSE", v.custom_pause),
+                 line("BEAM SELECT", v.custom_beam), line("JUMP", v.custom_jump)};
+    rows.right = {line("BOMB", v.custom_bomb),         line("UNMORPH", v.custom_unmorph),
+                  line("BOOST", v.custom_boost),       line("POWER BOMB", v.custom_power_bomb),
+                  line("CONFIRM", v.custom_confirm),   line("BACK", v.custom_back),
+                  line("VR SETTINGS", v.custom_menu),  line("SET HEIGHT", v.custom_height)};
+    rows.footer = "CUSTOM LAYOUT - ON FOOT / MORPH BALL";
+    return rows;
+}
+
+inline void DrawLayoutTextPage(Pixels& pixels, const PortVrSettings& v = {}, bool frame = false) {
     constexpr int width = kWidth;
     constexpr int height = kMenuHeight;
     constexpr uint32_t title_color = 0xFFFFE6B8u;
@@ -1130,25 +1196,39 @@ inline void DrawLayoutTextPage(Pixels& pixels) {
     constexpr int left_x = 72;
     constexpr int right_x = 570;
     constexpr int heading_y = 220;
-    DrawString(pixels, width, height, "LEFT HAND", left_x, heading_y, 2, title_color);
-    DrawString(pixels, width, height, "RIGHT HAND", right_x, heading_y, 2, title_color);
+    const bool custom = frame && v.custom_layout_enabled;
+    DrawString(pixels, width, height, custom ? "ON FOOT" : "LEFT HAND", left_x, heading_y, 2, title_color);
+    DrawString(pixels, width, height, custom ? "MORPH BALL / MENUS" : "RIGHT HAND", right_x, heading_y, 2, title_color);
     FillRect(pixels, width, height, left_x, heading_y + 24, 360, 3, rule_color);
     FillRect(pixels, width, height, right_x, heading_y + 24, 360, 3, rule_color);
 
-    constexpr std::array<const char*, 6> left_rows = {
+    std::vector<std::string> left_rows = {
         "LEFT STICK - MOVE",          "Y BUTTON - START/PAUSE", "X BUTTON - MORPH BALL",
         "LEFT STICK CLICK - VR SETTINGS", "LEFT GRIP - MAP",    "L TRIGGER - LOCK ON"};
-    constexpr std::array<const char*, 6> right_rows = {
+    std::vector<std::string> right_rows = {
         "RIGHT STICK - LOOK/JUMP",        "B BUTTON - BEAM SELECT", "A BUTTON - SELECT",
         "RIGHT STICK CLICK - SET HEIGHT", "RIGHT GRIP - MISSILES", "RIGHT TRIGGER - SHOOT"};
-    for (int i = 0; i < 6; ++i) {
-        const int y = 262 + i * 34;
+    std::string footer;
+    if (frame) {
+        LayoutRows rows = FrameLayoutRows(v);
+        left_rows = std::move(rows.left);
+        right_rows = std::move(rows.right);
+        footer = std::move(rows.footer);
+    }
+    const int count = static_cast<int>(left_rows.size());
+    const int pitch = count > 6 ? 28 : 34;
+    for (int i = 0; i < count; ++i) {
+        const int y = 262 + i * pitch;
         FillRect(pixels, width, height, left_x - 14, y - 8, 398, 26, row_color);
         FillRect(pixels, width, height, right_x - 14, y - 8, 398, 26, row_color);
         FillRect(pixels, width, height, left_x - 14, y - 8, 5, 26, rule_color);
         FillRect(pixels, width, height, right_x - 14, y - 8, 5, 26, rule_color);
-        DrawString(pixels, width, height, left_rows[static_cast<size_t>(i)], left_x, y, 2, body_color);
-        DrawString(pixels, width, height, right_rows[static_cast<size_t>(i)], right_x, y, 2, body_color);
+        DrawString(pixels, width, height, left_rows[static_cast<size_t>(i)].c_str(), left_x, y, 2, body_color);
+        DrawString(pixels, width, height, right_rows[static_cast<size_t>(i)].c_str(), right_x, y, 2, body_color);
+    }
+    if (!footer.empty()) {
+        DrawString(pixels, width, height, footer.c_str(), (width - TextWidth(footer.c_str(), 2)) / 2, 262 + count * pitch + 4,
+                   2, accent_color);
     }
 }
 
@@ -1210,7 +1290,7 @@ inline Pixels BuildPixels(const State& s, const PortVrSettings& v, const View& v
     }
 
     if (s.tab == kLayoutTab) {
-        DrawLayoutTextPage(pixels);
+        DrawLayoutTextPage(pixels, v, view.frame_controllers);
     } else {
         draw_button("SAVE SETTINGS", 52, 108, 220);
         draw_button(s.reset_confirm == kResetAll ? "ARE YOU SURE?" : "RESET ALL", 300, 108, 220);
@@ -1273,6 +1353,13 @@ inline std::string ViewKey(const State& s, const PortVrSettings& v, const View& 
     key += FpsText(view);
     if (s.tab == kDebugTab) {
         key += DebugHeadline(view, DebugPageAt(view, Page(s, view)));
+    }
+    if (s.tab == kLayoutTab && view.frame_controllers) {
+        // The Frame's page follows the custom layout's bindings.
+        const LayoutRows rows = FrameLayoutRows(v);
+        key += 'F';
+        for (const std::string& text : rows.left) key += text + ';';
+        for (const std::string& text : rows.right) key += text + ';';
     }
     if (s.tab != kLayoutTab) {
         key += '|';
