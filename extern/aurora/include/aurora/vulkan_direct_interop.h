@@ -26,12 +26,24 @@ extern "C" {
  * aurora/d3d12_interop.h, whose images live on Dawn's device too.
  */
 
-/** One acquired swapchain image: a VkImage of Dawn's device, its size and its VkFormat. */
+/**
+ * One acquired swapchain image: a VkImage of Dawn's device, the size of the region the target is
+ * drawn into and its VkFormat. The fields after vkFormat are zero unless set:
+ * - x and imageWidth: the region starts x pixels from the image's left edge and the image is
+ *   imageWidth wide (0: the region is the whole image). Two targets may name one image (both eyes
+ *   side by side in one swapchain image, PF2_STEREO_PACKED); Aurora then draws them in one pass.
+ * - stamp: when not zero, a 64x15 block in the region's top left corner encodes this value and the
+ *   target's index (bits as white and black pixels, for the xrmock pose/image check;
+ *   PF2_FRAME_STAMP). Tests only.
+ */
 typedef struct {
   uint64_t image;
   uint32_t width;
   uint32_t height;
   int64_t vkFormat;
+  uint32_t x;
+  uint32_t imageWidth;
+  uint64_t stamp;
 } AuroraVulkanDirectTarget;
 
 /**

@@ -13,6 +13,7 @@
 
 #include "vr/openxr_diagnostics.h"
 #include "vr/openxr_screen_math.h"
+#include "vr/pf2_switches.h"
 #include "vr/prime_vr_policy.h"
 #include "vr/virtual_screen_anchor.h"
 #include "vr/vr_log.h"
@@ -1533,7 +1534,10 @@ private:
         std::optional<OpenXRBackendFrame> next;
         if (continue_pipeline && WaitForPickup(packet.xr_frame.serial, kPickupWaitMs)) {
             OpenXRBackendFrame candidate{};
-            const OpenXRBeginStatus located = backend_->LocatePacket(presentation, candidate, 3);
+            // PF2_AHEAD_PERIODS=n: one period more than a plain packet's n.
+            const int ahead = pf2::Get().ahead_periods;
+            const OpenXRBeginStatus located =
+                backend_->LocatePacket(presentation, candidate, ahead >= 0 ? static_cast<uint32_t>(ahead) + 1u : 3u);
             if (located == OpenXRBeginStatus::ExitRequested) {
                 OnRuntimeExitRequested();
                 return false;

@@ -16,7 +16,7 @@ namespace {
 
 constexpr std::array<const char*, static_cast<size_t>(Stage::Count)> kStageNames{
     "poll-events", "begin-call", "locate-views", "input-sync", "sync-actions",
-    "publish", "withdraw", "submission-wait", "cancel", "set-targets"};
+    "publish", "withdraw", "submission-wait", "cancel", "set-targets", "fence-wait"};
 
 constexpr double kNanosecondsPerMillisecond = 1'000'000.0;
 
