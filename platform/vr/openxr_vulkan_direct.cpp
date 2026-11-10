@@ -16,6 +16,7 @@
 #include "vr/openxr_diagnostics.h"
 #include "vr/openxr_eye_resize.h"
 #include "vr/openxr_passthrough.h"
+#include "vr/pf2_switches.h"
 #include "vr/vr_settings.h"
 
 #include <aurora/vulkan_direct_interop.h>
@@ -29,12 +30,15 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -96,6 +100,222 @@ constexpr const char* kPatchedDawnScript = "tools/Build-WindowsDawn.ps1";
 constexpr const char* kPatchedDawnScript = "tools/build-linux-dawn.sh";
 #endif
 
+// PF2_RELEASE_FENCE: when the GPU finished each eye set. Aurora's submitted callback (its frame
+// worker, right after the frame's queue submission and the images' release barrier) makes an empty
+// submission on Dawn's queue, under Dawn's device lock, that signals the next value of a timeline
+// semaphore: a semaphore signal completes only after all work submitted before it. The XR thread
+// waits for that value before xrReleaseSwapchainImage. A watcher thread records each set's time
+// from that signal to its completion (the "GPU per set" figure of the [pf2] line). Without
+// timeline semaphores the release drains the queue instead (correct, slower).
+class GpuFence {
+public:
+    enum class Mode { Off, Timeline, Drain };
+
+    ~GpuFence() { Stop(); }
+
+    Mode Start(PFN_vkGetInstanceProcAddr get_proc, VkInstance instance, VkDevice device, uint32_t family,
+               uint32_t index, bool timeline) {
+        Stop();
+        if (get_proc == nullptr || instance == VK_NULL_HANDLE || device == VK_NULL_HANDLE) {
+            return mode_ = Mode::Off;
+        }
+        const auto device_proc =
+            reinterpret_cast<PFN_vkGetDeviceProcAddr>(get_proc(instance, "vkGetDeviceProcAddr"));
+        if (device_proc == nullptr) {
+            return mode_ = Mode::Off;
+        }
+#define PF2_DEVICE_FN(name) name##_ = reinterpret_cast<PFN_##name>(device_proc(device, #name))
+        PF2_DEVICE_FN(vkGetDeviceQueue);
+        PF2_DEVICE_FN(vkQueueSubmit);
+        PF2_DEVICE_FN(vkQueueWaitIdle);
+        PF2_DEVICE_FN(vkCreateSemaphore);
+        PF2_DEVICE_FN(vkDestroySemaphore);
+        PF2_DEVICE_FN(vkWaitSemaphores);
+#undef PF2_DEVICE_FN
+        if (vkGetDeviceQueue_ == nullptr || vkQueueSubmit_ == nullptr || vkQueueWaitIdle_ == nullptr) {
+            return mode_ = Mode::Off;
+        }
+        device_ = device;
+        vkGetDeviceQueue_(device, family, index, &queue_);
+        if (queue_ == VK_NULL_HANDLE) {
+            return mode_ = Mode::Off;
+        }
+        if (timeline && vkCreateSemaphore_ != nullptr && vkDestroySemaphore_ != nullptr && vkWaitSemaphores_ != nullptr) {
+            VkSemaphoreTypeCreateInfo type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+            type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+            type.initialValue = 0;
+            VkSemaphoreCreateInfo create{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+            if (vkCreateSemaphore_(device, &create, nullptr, &semaphore_) == VK_SUCCESS) {
+                {
+                    std::lock_guard lock(mutex_);
+                    stop_ = false;
+                    failed_ = false;
+                    signaled_ = completed_ = 0;
+                    gpu_ms_.clear();
+                }
+                watcher_ = std::thread([this] { Watch(); });
+                return mode_ = Mode::Timeline;
+            }
+            semaphore_ = VK_NULL_HANDLE;
+        }
+        return mode_ = Mode::Drain;
+    }
+
+    void Stop() {
+        if (watcher_.joinable()) {
+            {
+                std::lock_guard lock(mutex_);
+                stop_ = true;
+            }
+            cv_.notify_all();
+            watcher_.join();
+        }
+        if (semaphore_ != VK_NULL_HANDLE && vkDestroySemaphore_ != nullptr) {
+            vkDestroySemaphore_(device_, semaphore_, nullptr);
+        }
+        semaphore_ = VK_NULL_HANDLE;
+        mode_ = Mode::Off;
+    }
+
+    Mode CurrentMode() const noexcept { return mode_; }
+
+    // Aurora's frame worker, in the submitted callback (Dawn's device lock not held). The value to
+    // wait for, or 0 (drain mode, or the signal failed: the release then drains the queue).
+    uint64_t Signal() {
+        if (mode_ != Mode::Timeline) {
+            return 0;
+        }
+        uint64_t value;
+        {
+            std::lock_guard lock(mutex_);
+            if (failed_) {
+                return 0;
+            }
+            value = signaled_ + 1;
+            signal_ns_[value % kRing] = NowNs();
+        }
+        VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+        timeline.signalSemaphoreValueCount = 1;
+        timeline.pSignalSemaphoreValues = &value;
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, &timeline};
+        submit.signalSemaphoreCount = 1;
+        submit.pSignalSemaphores = &semaphore_;
+        VkResult result;
+        {
+            void* guard = aurora_vulkan_direct_lock_queue();
+            result = vkQueueSubmit_(queue_, 1, &submit, VK_NULL_HANDLE);
+            aurora_vulkan_direct_unlock_queue(guard);
+        }
+        std::lock_guard lock(mutex_);
+        if (result != VK_SUCCESS) {
+            failed_ = true;
+            cv_.notify_all();
+            return 0;
+        }
+        signaled_ = value;
+        cv_.notify_all();
+        return value;
+    }
+
+    // XR thread, before releasing a set's images: true once the set that signalled `value` finished
+    // (0: drain Dawn's queue instead). False on a timeout or a failure.
+    bool Wait(uint64_t value, std::chrono::milliseconds timeout) {
+        if (mode_ == Mode::Off) {
+            return true;
+        }
+        if (value == 0 || mode_ == Mode::Drain) {
+            void* guard = aurora_vulkan_direct_lock_queue();
+            const bool idle = vkQueueWaitIdle_(queue_) == VK_SUCCESS;
+            aurora_vulkan_direct_unlock_queue(guard);
+            return idle;
+        }
+        std::unique_lock lock(mutex_);
+        return cv_.wait_for(lock, timeout, [&] { return completed_ >= value || failed_ || stop_; }) &&
+               completed_ >= value;
+    }
+
+    // The signal-to-completion times recorded since the last call.
+    void TakeGpuMs(std::vector<float>& out) {
+        std::lock_guard lock(mutex_);
+        out.insert(out.end(), gpu_ms_.begin(), gpu_ms_.end());
+        gpu_ms_.clear();
+    }
+
+private:
+    static constexpr uint64_t kRing = 64;
+
+    static int64_t NowNs() noexcept {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+
+    void Watch() {
+        uint64_t next = 1;
+        for (;;) {
+            {
+                std::unique_lock lock(mutex_);
+                cv_.wait(lock, [&] { return stop_ || failed_ || signaled_ >= next; });
+                if (stop_ || failed_) {
+                    return;
+                }
+            }
+            VkSemaphoreWaitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+            wait.semaphoreCount = 1;
+            wait.pSemaphores = &semaphore_;
+            wait.pValues = &next;
+            const VkResult result = vkWaitSemaphores_(device_, &wait, 50'000'000ull);
+            if (result == VK_TIMEOUT) {
+                continue;
+            }
+            const int64_t now = NowNs();
+            std::lock_guard lock(mutex_);
+            if (result != VK_SUCCESS) {
+                failed_ = true;
+                cv_.notify_all();
+                return;
+            }
+            if (gpu_ms_.size() < 4096) {
+                gpu_ms_.push_back(static_cast<float>(static_cast<double>(now - signal_ns_[next % kRing]) / 1.0e6));
+            }
+            completed_ = next++;
+            cv_.notify_all();
+        }
+    }
+
+    Mode mode_ = Mode::Off;
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkQueue queue_ = VK_NULL_HANDLE;
+    VkSemaphore semaphore_ = VK_NULL_HANDLE;
+    PFN_vkGetDeviceQueue vkGetDeviceQueue_ = nullptr;
+    PFN_vkQueueSubmit vkQueueSubmit_ = nullptr;
+    PFN_vkQueueWaitIdle vkQueueWaitIdle_ = nullptr;
+    PFN_vkCreateSemaphore vkCreateSemaphore_ = nullptr;
+    PFN_vkDestroySemaphore vkDestroySemaphore_ = nullptr;
+    PFN_vkWaitSemaphores vkWaitSemaphores_ = nullptr;
+    std::thread watcher_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    uint64_t signaled_ = 0;
+    uint64_t completed_ = 0;
+    bool failed_ = false;
+    bool stop_ = false;
+    std::array<int64_t, kRing> signal_ns_{};
+    std::vector<float> gpu_ms_;
+};
+
+// "p50/p95/max" of a window's samples, for the [pf2] line.
+std::string SampleStat(std::vector<float>& values) {
+    if (values.empty()) {
+        return "-";
+    }
+    std::sort(values.begin(), values.end());
+    const auto at = [&](double q) { return values[std::min(values.size() - 1, static_cast<size_t>(q * values.size()))]; };
+    char text[64];
+    std::snprintf(text, sizeof(text), "%.2f/%.2f/%.2f", at(0.5), at(0.95), values.back());
+    return text;
+}
+
 } // namespace
 
 class OpenXRVulkanDirectBackend::Impl final {
@@ -156,6 +376,7 @@ public:
         if (XR_SUCCEEDED(xr) && result == VK_SUCCESS) {
             owner.vk_instance_ = *reinterpret_cast<VkInstance*>(out);
             owner.instance_api_version_ = app.apiVersion;
+            owner.get_instance_proc_ = get_proc;
         }
         return XR_SUCCEEDED(xr) ? result : VK_ERROR_INITIALIZATION_FAILED;
     }
@@ -315,11 +536,13 @@ public:
             return Fail("OpenXR rejected Dawn's Vulkan device binding");
         }
         owns_session_ = true;
+        packed_ = pf2::Get().packed;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             const auto& view = runtime.ViewConfiguration()[eye];
             eye_size_[eye] = {view.render_width, view.render_height};
         }
         requested_eye_size_ = eye_size_;
+        eye_size_ = FitEyeSize(eye_size_);
         const auto abandon_session = [&] {
             DestroySwapchains();
             passthrough_.Destroy();
@@ -335,7 +558,10 @@ public:
             abandon_session();
             return Fail("OpenXR session became loss-pending while creating Vulkan swapchains");
         }
+        // Before the bridge can fire a submitted callback, which signals the release fence.
+        StartPf2(handles);
         if (!aurora_vulkan_direct_enable(&Impl::OnAuroraSubmitted, this)) {
+            fence_.Stop();
             abandon_session();
             return Fail("Aurora could not enable its direct Vulkan stereo bridge");
         }
@@ -343,8 +569,10 @@ public:
         bound_ = true;
         std::ostringstream message;
         message << "OpenXR Vulkan swapchains ready: VkFormat " << static_cast<int64_t>(swapchain_format_)
-                << " (Aurora " << static_cast<int64_t>(aurora_format_) << "), eyes " << eye_swapchains_[0].width << 'x'
-                << eye_swapchains_[0].height << " / " << eye_swapchains_[1].width << 'x' << eye_swapchains_[1].height
+                << " (Aurora " << static_cast<int64_t>(aurora_format_) << "), eyes " << EyeWidth(eye_swapchains_, 0)
+                << 'x' << EyeHeight(eye_swapchains_, 0) << " / " << EyeWidth(eye_swapchains_, 1) << 'x'
+                << EyeHeight(eye_swapchains_, 1)
+                << (packed_ ? " packed side by side in one swapchain per set" : "")
                 << ", Vulkan " << VK_API_VERSION_MAJOR(instance_api_version_) << '.'
                 << VK_API_VERSION_MINOR(instance_api_version_) << " instance, timeline semaphores "
                 << (timeline_semaphores_ ? "enabled" : "not enabled")
@@ -364,7 +592,7 @@ public:
         // Only a change: a refused size stays refused while it is still the one asked for.
         if (requested != requested_eye_size_) {
             requested_eye_size_ = requested;
-            eye_size_ = requested;
+            eye_size_ = FitEyeSize(requested);
             eye_resize_gate_.Requested();
         }
     }
@@ -403,8 +631,8 @@ public:
         active_frame_ = frame.xr_frame;
         active_origin_ = CurrentPoseOrigin();
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
-            frame.render_width[eye] = eye_swapchains_[eye].width;
-            frame.render_height[eye] = eye_swapchains_[eye].height;
+            frame.render_width[eye] = EyeWidth(eye_swapchains_, eye);
+            frame.render_height[eye] = EyeHeight(eye_swapchains_, eye);
         }
         if (!frame.xr_frame.should_render) {
             return OpenXRBeginStatus::Ready;
@@ -415,6 +643,7 @@ public:
             return OpenXRBeginStatus::Error;
         }
         active_frame_ = frame.xr_frame;
+        active_pose_time_ = frame.xr_frame.predicted_display_time;
         if (!frame.xr_frame.views_valid) {
             return OpenXRBeginStatus::Ready;
         }
@@ -439,17 +668,24 @@ public:
         }
         std::array<AuroraVulkanDirectTarget, kOpenXREyeCount> targets{};
         const diagnostics::Stopwatch acquire_timer;
+        // PF2_FRAME_STAMP: the display time these images' poses were located for.
+        const uint64_t stamp =
+            pf2::Get().stamp ? static_cast<uint64_t>(frame.xr_frame.predicted_display_time) : 0;
         for (uint32_t eye = 0; eye < target_count; ++eye) {
-            auto& swapchain = pair[eye];
-            if (!AcquireSwapchain(swapchain)) {
+            // Packed: both eyes are regions of the one image of pair[0], acquired once.
+            auto& swapchain = EyeChain(pair, eye);
+            if ((!packed_ || eye == 0) && !AcquireSwapchain(swapchain)) {
                 ReleaseAcquired(pair, panel_swapchain);
                 return OpenXRBeginStatus::Error;
             }
             targets[eye] = {
                 reinterpret_cast<uint64_t>(swapchain.images[swapchain.acquired_index].image),
-                swapchain.width,
-                swapchain.height,
+                EyeWidth(pair, eye),
+                EyeHeight(pair, eye),
                 static_cast<int64_t>(swapchain_format_),
+                EyeX(pair, eye),
+                packed_ ? swapchain.width : 0u,
+                stamp,
             };
         }
         // The settings panel's layer image, rendered with the eyes while it is open.
@@ -537,14 +773,22 @@ public:
             return Fail("FinishFrame received a stale or inactive OpenXR frame token");
         }
         bool submission_unsafe = false;
+        bool submission_done = false;
+        uint64_t gpu_value = 0;
         {
             std::lock_guard lock(submission_mutex_);
             const SubmissionResult* result = FindResultLocked(SubmissionToken(frame));
             submission_unsafe = result != nullptr && result->unsafe;
+            submission_done = result != nullptr && result->success;
+            gpu_value = result != nullptr ? result->gpu_value : 0;
         }
         if (submission_unsafe) {
             AbandonAcquiredSwapchains();
             Fail("Aurora's Vulkan stereo submission failed after GPU work may have been queued");
+        }
+        if (submission_done) {
+            // PF2_RELEASE_FENCE: not before the GPU finished writing the images.
+            WaitGpu(gpu_value);
         }
         const diagnostics::Stopwatch release_timer;
         const bool release_ok = ReleaseAcquiredSwapchains();
@@ -573,6 +817,7 @@ public:
         if (can_submit) {
             retained_panel_valid_ = frame.presentation.panel.requested;
             retained_frame_ = frame;
+            retained_pose_time_ = active_pose_time_;
             retained_session_serial_ = active_origin_.session;
             retained_space_serial_ = active_origin_.space;
             have_retained_frame_ = true;
@@ -580,9 +825,11 @@ public:
             retained_panel_valid_ = false;
         }
         const bool end_ok = EndRetainedFrame(can_submit);
+        Pf2Tick();
         frame_active_ = false;
         active_frame_serial_ = 0;
         active_frame_ = {};
+        active_pose_time_ = 0;
         frame.expects_gpu_submission = false;
         {
             std::lock_guard lock(submission_mutex_);
@@ -634,8 +881,10 @@ public:
             return OpenXRBeginStatus::Error;
         }
         // The eyes are ready after at most one game frame plus the encode and show at the first
-        // display slot after that: two periods past the last predicted display time.
-        const OpenXRBeginStatus located = LocatePacket(presentation, packet, 2);
+        // display slot after that: two periods past the last predicted display time
+        // (PF2_AHEAD_PERIODS replaces the two).
+        const int ahead = pf2::Get().ahead_periods;
+        const OpenXRBeginStatus located = LocatePacket(presentation, packet, ahead >= 0 ? static_cast<uint32_t>(ahead) : 2u);
         if (located != OpenXRBeginStatus::Ready || !packet.xr_frame.should_render || !packet.xr_frame.views_valid) {
             return located;
         }
@@ -680,8 +929,8 @@ public:
         packet.xr_frame.predicted_display_period = last_display_period_;
         packet.xr_frame.should_render = last_should_render_;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
-            packet.render_width[eye] = pair[eye].width;
-            packet.render_height[eye] = pair[eye].height;
+            packet.render_width[eye] = EyeWidth(pair, eye);
+            packet.render_height[eye] = EyeHeight(pair, eye);
         }
         if (!packet.xr_frame.should_render) {
             return OpenXRBeginStatus::Ready;
@@ -736,8 +985,11 @@ public:
     // one image would never hand it out.
     bool SupportsPipelining() const {
         const auto two_images = [](const EyeSwapchain& swapchain) { return swapchain.images.size() >= 2; };
-        return bound_ && std::all_of(eye_swapchains_.begin(), eye_swapchains_.end(), two_images) &&
-               std::all_of(retained_swapchains_.begin(), retained_swapchains_.end(), two_images) &&
+        // Packed: pair[0] alone holds both eyes.
+        const auto pair_ok = [&](const std::array<EyeSwapchain, kOpenXREyeCount>& pair) {
+            return two_images(pair[0]) && (packed_ || two_images(pair[1]));
+        };
+        return bound_ && pair_ok(eye_swapchains_) && pair_ok(retained_swapchains_) &&
                (!panel_swapchains_ready_ || (two_images(panel_swapchain_) && two_images(retained_panel_swapchain_)));
     }
 
@@ -746,8 +998,8 @@ public:
     bool EyesResizing() const {
         bool differ = false;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
-            const OpenXREyeSize written{eye_swapchains_[eye].width, eye_swapchains_[eye].height};
-            const OpenXREyeSize shown{retained_swapchains_[eye].width, retained_swapchains_[eye].height};
+            const OpenXREyeSize written{EyeWidth(eye_swapchains_, eye), EyeHeight(eye_swapchains_, eye)};
+            const OpenXREyeSize shown{EyeWidth(retained_swapchains_, eye), EyeHeight(retained_swapchains_, eye)};
             differ = differ || written != eye_size_[eye] || shown != eye_size_[eye];
         }
         return differ && eye_resize_gate_.Pending();
@@ -796,6 +1048,7 @@ public:
             // The packet completed; a stopped session must not strand it, nor a packet queued
             // behind it, and block the next prepare after the session is ready again.
             if (status == OpenXRBeginStatus::SessionNotRunning) {
+                WaitGpuForToken(packet.xr_frame.serial);
                 bool released = ReleaseAcquiredSwapchains();
                 if (queued_packet_serial_ != 0) {
                     released = DropQueuedPacket() && released;
@@ -812,6 +1065,8 @@ public:
             return status;
         }
         frame = packet;
+        active_pose_time_ = packet.xr_frame.predicted_display_time;
+        NotePoseLead(packet.xr_frame.predicted_display_time, active_frame_);
         // The current compositor token and timing with the packet's render poses; the packet's
         // own serial stays the name of its submission (SubmissionToken).
         frame.xr_frame.serial = active_frame_.serial;
@@ -878,6 +1133,7 @@ public:
         }
         // The drain retired every copy into an acquired image, including one after a failed
         // submission.
+        fence_.Stop();
         AllowAcquiredSwapchainsAfterGpuDrain();
         ReleaseAcquiredSwapchains();
         // A packet queued behind the pending one holds the retained pair's images.
@@ -974,6 +1230,7 @@ private:
             AbandonAcquired(retained_swapchains_, retained_panel_swapchain_);
             return true;
         }
+        WaitGpuForToken(token);
         return ReleaseAcquired(retained_swapchains_, retained_panel_swapchain_);
     }
 
@@ -1021,6 +1278,7 @@ private:
                                                                     : diagnostics::EmptyFrameReason::NoRetainedLayer);
             // Outside immersive play the room stays in view until there is an image to show (at
             // start and after a recenter), rather than flashing black.
+            pf2_last_end_time_ = active_frame_.predicted_display_time;
             if (const XrCompositionLayerBaseHeader* passthrough = passthrough_.Layer()) {
                 return runtime_->EndFrame(active_frame_, &passthrough, 1);
             }
@@ -1028,15 +1286,21 @@ private:
         }
         diagnostics::OnLayer(fresh);
         const auto& frame = retained_frame_;
+        // PF2_AHEAD_PERIODS: a fresh layer ends with the display time its poses were located for.
+        OpenXRFrame end_frame = active_frame_;
+        if (fresh && pf2::Get().ahead_periods >= 0 && retained_pose_time_ > 0) {
+            NoteEndOverride(retained_pose_time_ - active_frame_.predicted_display_time);
+            end_frame.predicted_display_time = retained_pose_time_;
+        }
         if (frame.presentation.mode == OpenXRFrameMode::VirtualScreen) {
             XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
             quad.layerFlags = 0;
             quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
             quad.subImage.swapchain = retained_swapchains_[0].handle;
             // Only the picture, not the black bands letterboxing it into the eye-sized image: they
-            // would frame it against the passthrough view.
-            const uint32_t image_width = retained_swapchains_[0].width;
-            quad.subImage.imageRect = OpenXRVirtualScreenContentRect(image_width, retained_swapchains_[0].height,
+            // would frame it against the passthrough view. Packed: the left half holds it.
+            const uint32_t image_width = EyeWidth(retained_swapchains_, 0);
+            quad.subImage.imageRect = OpenXRVirtualScreenContentRect(image_width, EyeHeight(retained_swapchains_, 0),
                                                                      frame.presentation.quad_content_aspect);
             quad.subImage.imageArrayIndex = 0;
             if (frame.presentation.quad_anchored) {
@@ -1053,7 +1317,7 @@ private:
                 std::max(0.25f, frame.presentation.quad_width_meters) / static_cast<float>(image_width);
             quad.size.width = meters_per_pixel * static_cast<float>(quad.subImage.imageRect.extent.width);
             quad.size.height = meters_per_pixel * static_cast<float>(quad.subImage.imageRect.extent.height);
-            return EndFrameWithPanel(frame, reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad));
+            return EndFrameWithPanel(frame, reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad), end_frame);
         }
         std::array<XrCompositionLayerProjectionView, kOpenXREyeCount> views{};
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
@@ -1061,13 +1325,13 @@ private:
             views[eye].pose.orientation = frame.xr_frame.views[eye].pose.orientation;
             views[eye].pose.position = frame.xr_frame.views[eye].pose.position;
             views[eye].fov = frame.xr_frame.views[eye].fov;
-            views[eye].subImage.swapchain = retained_swapchains_[eye].handle;
-            // The part of the image the eye was rendered into: all of it, except for the immersive
-            // window's eyes, which are only the window (OpenXRPresentation::window_eyes).
+            views[eye].subImage.swapchain = EyeChain(retained_swapchains_, eye).handle;
+            // The part of the image the eye was rendered into: all of it (packed: its half), except
+            // for the immersive window's eyes, which are only the window (OpenXRPresentation::window_eyes).
             views[eye].subImage.imageRect = {
-                {0, 0},
-                {static_cast<int32_t>(std::min(frame.render_width[eye], retained_swapchains_[eye].width)),
-                 static_cast<int32_t>(std::min(frame.render_height[eye], retained_swapchains_[eye].height))}};
+                {static_cast<int32_t>(EyeX(retained_swapchains_, eye)), 0},
+                {static_cast<int32_t>(std::min(frame.render_width[eye], EyeWidth(retained_swapchains_, eye))),
+                 static_cast<int32_t>(std::min(frame.render_height[eye], EyeHeight(retained_swapchains_, eye)))}};
             views[eye].subImage.imageArrayIndex = 0;
         }
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
@@ -1078,14 +1342,15 @@ private:
         projection.space = runtime_->AppSpace();
         projection.viewCount = kOpenXREyeCount;
         projection.views = views.data();
-        return EndFrameWithPanel(frame, reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection));
+        return EndFrameWithPanel(frame, reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection), end_frame);
     }
 
     // Ends the compositor frame with the scene's layer: over the room's camera view while that
     // runs and the scene is the virtual screen or the immersive window (never under a fully
     // immersive projection, which covers the whole view), and, while the retained frame
     // rendered it, under the settings panel's layer.
-    bool EndFrameWithPanel(const OpenXRBackendFrame& frame, const XrCompositionLayerBaseHeader* scene) {
+    bool EndFrameWithPanel(const OpenXRBackendFrame& frame, const XrCompositionLayerBaseHeader* scene,
+                           const OpenXRFrame& end_frame) {
         const auto& panel = frame.presentation.panel;
         std::array<XrCompositionLayerQuad, kOpenXRPanelMaxLayers> panel_quads{};
         const XrCompositionLayerBaseHeader* layers[2 + kOpenXRPanelMaxLayers] = {};
@@ -1103,7 +1368,8 @@ private:
                 layers[count++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&panel_quads[i]);
             }
         }
-        return runtime_->EndFrame(active_frame_, layers, count);
+        pf2_last_end_time_ = end_frame.predicted_display_time;
+        return runtime_->EndFrame(end_frame, layers, count);
     }
 
     bool SelectSwapchainFormat() {
@@ -1134,6 +1400,11 @@ private:
     bool CreateSwapchains() { return CreateSwapchainPair(eye_swapchains_) && CreateSwapchainPair(retained_swapchains_); }
 
     bool CreateSwapchainPair(std::array<EyeSwapchain, kOpenXREyeCount>& pair) {
+        if (packed_) {
+            // Both eyes side by side (FitEyeSize made them one size), eye N at x = N * eye width.
+            pair[1] = {};
+            return CreateSwapchain(pair[0], 2 * eye_size_[0].width, eye_size_[0].height, "packed eyes");
+        }
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             if (!CreateSwapchain(pair[eye], eye_size_[eye].width, eye_size_[eye].height,
                                  eye == 0 ? "left eye" : "right eye")) {
@@ -1152,7 +1423,7 @@ private:
             if (eye_swapchains_[eye].acquired) {
                 return true;
             }
-            current[eye] = {eye_swapchains_[eye].width, eye_swapchains_[eye].height};
+            current[eye] = {EyeWidth(eye_swapchains_, eye), EyeHeight(eye_swapchains_, eye)};
         }
         if (current == eye_size_) {
             return true;
@@ -1425,6 +1696,9 @@ private:
         if (self == nullptr) {
             return;
         }
+        // PF2_RELEASE_FENCE: marks the queue right after the set's work (Dawn's queue lock).
+        const uint64_t gpu_value =
+            success && self->fence_.CurrentMode() == GpuFence::Mode::Timeline ? self->fence_.Signal() : 0;
         {
             std::lock_guard lock(self->submission_mutex_);
             if (token != self->awaiting_token_) {
@@ -1432,7 +1706,7 @@ private:
             }
             self->awaiting_token_ = 0;
             self->submission_results_[1] = self->submission_results_[0];
-            self->submission_results_[0] = {token, success, !success};
+            self->submission_results_[0] = {token, success, !success, gpu_value};
         }
         self->submission_cv_.notify_all();
     }
@@ -1443,6 +1717,8 @@ private:
         uint64_t token = 0;
         bool success = false;
         bool unsafe = false;
+        // PF2_RELEASE_FENCE: the timeline value that completes after the set's GPU work (0: none).
+        uint64_t gpu_value = 0;
     };
 
     const SubmissionResult* FindResultLocked(uint64_t token) const noexcept {
@@ -1460,6 +1736,164 @@ private:
                 result = {};
             }
         }
+    }
+
+    // ---- PrimedFrame 2.0 headset A/B switches (vr/pf2_switches.h) -----------------------------
+
+    // Per eye, the swapchain, region and size of a pair: with packed eyes pair[0] holds both, side
+    // by side, eye N at x = N * eye width.
+    EyeSwapchain& EyeChain(std::array<EyeSwapchain, kOpenXREyeCount>& pair, uint32_t eye) const noexcept {
+        return packed_ ? pair[0] : pair[eye];
+    }
+    const EyeSwapchain& EyeChain(const std::array<EyeSwapchain, kOpenXREyeCount>& pair, uint32_t eye) const noexcept {
+        return packed_ ? pair[0] : pair[eye];
+    }
+    uint32_t EyeWidth(const std::array<EyeSwapchain, kOpenXREyeCount>& pair, uint32_t eye) const noexcept {
+        return packed_ ? pair[0].width / 2 : pair[eye].width;
+    }
+    uint32_t EyeHeight(const std::array<EyeSwapchain, kOpenXREyeCount>& pair, uint32_t eye) const noexcept {
+        return packed_ ? pair[0].height : pair[eye].height;
+    }
+    uint32_t EyeX(const std::array<EyeSwapchain, kOpenXREyeCount>& pair, uint32_t eye) const noexcept {
+        return packed_ ? eye * (pair[0].width / 2) : 0u;
+    }
+
+    // Packed eyes share one size, the larger of the two, at most half of kPackedMaxWidth wide
+    // (scaled down keeping the aspect). Per-eye swapchains keep the runtime's sizes.
+    std::array<OpenXREyeSize, kOpenXREyeCount> FitEyeSize(const std::array<OpenXREyeSize, kOpenXREyeCount>& size) {
+        if (!packed_) {
+            return size;
+        }
+        uint32_t width = std::max(size[0].width, size[1].width);
+        uint32_t height = std::max(size[0].height, size[1].height);
+        constexpr uint32_t kMaxEye = pf2::kPackedMaxWidth / 2;
+        if (width > kMaxEye) {
+            height = std::max(1u, static_cast<uint32_t>(static_cast<uint64_t>(height) * kMaxEye / width));
+            width = kMaxEye;
+            std::ostringstream message;
+            message << "PF2_STEREO_PACKED: eyes " << size[0].width << 'x' << size[0].height << " scaled to " << width
+                    << 'x' << height << " so the packed image stays " << pf2::kPackedMaxWidth << " wide";
+            Log(OpenXRLogLevel::Info, message.str());
+        }
+        return {OpenXREyeSize{width, height}, OpenXREyeSize{width, height}};
+    }
+
+    // At bind time: the switches line, and the release fence's GPU completion tracking.
+    void StartPf2(const AuroraDawnVulkanHandles& handles) {
+        const auto& switches = pf2::Get();
+        std::ostringstream message;
+        message << switches.Describe();
+        if (switches.fence) {
+            const GpuFence::Mode mode =
+                fence_.Start(get_instance_proc_, static_cast<VkInstance>(handles.instance),
+                             static_cast<VkDevice>(handles.device), handles.queueFamily, handles.queueIndex,
+                             timeline_semaphores_);
+            message << "; release fence "
+                    << (mode == GpuFence::Mode::Timeline ? "on a timeline semaphore"
+                        : mode == GpuFence::Mode::Drain  ? "by draining the queue (no timeline semaphores)"
+                                                         : "UNAVAILABLE (no Vulkan queue functions)");
+        }
+        if (packed_) {
+            message << "; packed " << eye_swapchains_[0].width << 'x' << eye_swapchains_[0].height
+                    << " per set (each eye drawn into its half; with multiview each layer of Aurora's eye target "
+                       "is blitted into its half, so multiview stays as set)";
+        }
+        Log(OpenXRLogLevel::Info, message.str());
+    }
+
+    // PF2_RELEASE_FENCE: waits (up to 100 ms) for the GPU work of the set that signalled `value`.
+    void WaitGpu(uint64_t value) {
+        if (fence_.CurrentMode() == GpuFence::Mode::Off) {
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        const bool done = diagnostics::Measure(diagnostics::Stage::FenceWait,
+                                               [&] { return fence_.Wait(value, std::chrono::milliseconds(100)); });
+        if (diagnostics::Enabled()) {
+            pf2_fence_ms_.push_back(static_cast<float>(
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+        }
+        if (!done) {
+            ++pf2_fence_timeouts_;
+            if (pf2_fence_timeouts_ == 1 || pf2_fence_timeouts_ % 100 == 0) {
+                std::ostringstream message;
+                message << "PF2_RELEASE_FENCE: an eye set's GPU work did not finish within 100 ms ("
+                        << pf2_fence_timeouts_ << " so far); released anyway";
+                Log(OpenXRLogLevel::Warning, message.str());
+            }
+        }
+    }
+
+    void WaitGpuForToken(uint64_t token) {
+        uint64_t value = 0;
+        bool done = false;
+        {
+            std::lock_guard lock(submission_mutex_);
+            if (const SubmissionResult* result = FindResultLocked(token)) {
+                done = result->success;
+                value = result->gpu_value;
+            }
+        }
+        if (done) {
+            WaitGpu(value);
+        }
+    }
+
+    // Where a fresh packet's poses were located against the compositor frame that shows it, in
+    // display periods (cause 3 of the H1 doubling: located 2 periods ahead, shown at the next).
+    void NotePoseLead(XrTime pose_time, const OpenXRFrame& shown) {
+        if (!diagnostics::Enabled() || shown.predicted_display_period <= 0) {
+            return;
+        }
+        const double periods = static_cast<double>(pose_time - shown.predicted_display_time) /
+                               static_cast<double>(shown.predicted_display_period);
+        const long rounded = std::lround(periods);
+        const size_t bucket = rounded <= -1 ? 0 : rounded == 0 ? 1 : rounded == 1 ? 2 : rounded == 2 ? 3 : 4;
+        ++pf2_lead_[bucket];
+    }
+
+    // PF2_AHEAD_PERIODS: a fresh layer ended at its poses' time instead of its frame's.
+    void NoteEndOverride(XrDuration delta) {
+        if (delta == 0) {
+            ++pf2_end_exact_;
+        } else {
+            ++pf2_end_moved_;
+        }
+        if (pf2_last_end_time_ != 0 && retained_pose_time_ <= pf2_last_end_time_) {
+            ++pf2_end_backwards_;
+        }
+    }
+
+    // The [pf2] line, once a second with MP_VR_LOG=1 (on the pacing thread, after xrEndFrame).
+    void Pf2Tick() {
+        if (!diagnostics::Enabled()) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (pf2_window_start_.time_since_epoch().count() == 0) {
+            pf2_window_start_ = now;
+            return;
+        }
+        if (now - pf2_window_start_ < std::chrono::seconds(1)) {
+            return;
+        }
+        pf2_window_start_ = now;
+        std::vector<float> gpu;
+        fence_.TakeGpuMs(gpu);
+        std::ostringstream line;
+        line << "[pf2] packed=" << (packed_ ? 1 : 0) << " fence=" << (fence_.CurrentMode() != GpuFence::Mode::Off ? 1 : 0)
+             << " ahead=" << pf2::Get().ahead_periods << " | fence-wait ms p50/p95/max " << SampleStat(pf2_fence_ms_)
+             << " timeouts " << pf2_fence_timeouts_ << " | gpu/set ms " << SampleStat(gpu) << " (" << gpu.size()
+             << " sets) | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
+             << " +1:" << pf2_lead_[2] << " +2:" << pf2_lead_[3] << " more:" << pf2_lead_[4];
+        if (pf2::Get().ahead_periods >= 0) {
+            line << " | ended at pose time: same as frame " << pf2_end_exact_ << ", moved " << pf2_end_moved_
+                 << ", not after the previous end " << pf2_end_backwards_;
+        }
+        diagnostics::detail::Info(line.str());
+        pf2_fence_ms_.clear();
+        pf2_lead_ = {};
+        pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = 0;
     }
 
     bool Fail(std::string message) {
@@ -1480,6 +1914,22 @@ private:
         }
     }
 
+    PFN_vkGetInstanceProcAddr get_instance_proc_ = nullptr;
+    // PF2 switches (vr/pf2_switches.h): packed eyes for this session, the release fence, and the
+    // [pf2] line's window (pacing thread).
+    bool packed_ = false;
+    GpuFence fence_;
+    // The display time the active frame's poses were located for, and the retained layer's.
+    XrTime active_pose_time_ = 0;
+    XrTime retained_pose_time_ = 0;
+    XrTime pf2_last_end_time_ = 0;
+    std::chrono::steady_clock::time_point pf2_window_start_{};
+    std::vector<float> pf2_fence_ms_;
+    uint64_t pf2_fence_timeouts_ = 0;
+    std::array<uint32_t, 5> pf2_lead_{};
+    uint32_t pf2_end_exact_ = 0;
+    uint32_t pf2_end_moved_ = 0;
+    uint32_t pf2_end_backwards_ = 0;
     PFN_xrCreateVulkanInstanceKHR create_instance_ = nullptr;
     PFN_xrCreateVulkanDeviceKHR create_device_ = nullptr;
     PFN_xrGetVulkanGraphicsDevice2KHR get_device_ = nullptr;
