@@ -531,8 +531,14 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
                                       CColor::White().WithAlphaOf(staticAlpha), nullptr, 1.f);
       }
       if (vrHudFade > 0.f) {
+#ifdef TARGET_PC
+        PortVr::VrSetHudOffsetActive(!x34_samusHud->PortVrBallHudShown());
+#endif
         x34_samusHud->Draw(mgr, x1f4_visorStaticAlpha * (1.f - staticAlpha) * vrHudFade,
                            x1e0_helmetVisMode, hudVis, targeting && !scanVisor && vrHudFade >= 1.f);
+#ifdef TARGET_PC
+        PortVr::VrSetHudOffsetActive(false);
+#endif
       }
     }
 #ifdef TARGET_PC
@@ -690,6 +696,9 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
 #endif
     if (!vrMap) {
       CGuiCamera* camera = x34_samusHud->GetBaseHudFrame()->GetFrameCamera();
+#ifdef TARGET_PC
+      PortVr::VrSetHudOffsetActive(!x34_samusHud->PortVrBallHudShown());
+#endif
       camera->Draw(CGuiWidgetDrawParms(0.f, CVector3f::Zero()));
       CGraphics::SetDepthRange(0.f, 1.f / 512.f);
       // The minimap and its depth mask are drawn outside CGuiFrame. Spread both
@@ -721,6 +730,7 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
       CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
       x148_model_automapper->SetIsVisible(false);
 #ifdef TARGET_PC
+      PortVr::VrSetHudOffsetActive(false);
       drawsMap = drawsSince();
       AuroraSetStereoDrawRoute(AURORA_STEREO_ROUTE_WORLD);
 #endif
