@@ -26,7 +26,7 @@ namespace PortVr::diagnostics {
 // Pacing-thread wall time, including scheduling delays. Stages may nest.
 enum class Stage : uint8_t {
     PollEvents, BeginCall, LocateViews, InputSync, SyncActions, Publish,
-    Withdraw, SubmissionWait, Cancel, SetTargets, Count
+    Withdraw, SubmissionWait, Cancel, SetTargets, FenceWait, Count
 };
 
 enum class EmptyFrameReason : uint8_t {
