@@ -1015,7 +1015,7 @@ void TestLiveSettings() {
 void TestFrameLayoutText() {
   PortVrSettings v{};
   const LayoutRows standard = FrameLayoutRows(v);
-  Check(standard.left.size() == 6 && standard.right.size() == 6, "frame rows");
+  Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "MENU - NO ACTION", "frame rows");
   Check(standard.left[1] == "D-PAD UP - START/PAUSE" && standard.left[2] == "D-PAD DOWN - MORPH BALL",
         "frame left face buttons are the D-pad");
   Check(standard.right[1] == "B BUTTON - BEAM SELECT" && standard.right[2] == "A BUTTON - SELECT", "frame A and B");
