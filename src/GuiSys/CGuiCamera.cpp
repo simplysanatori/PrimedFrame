@@ -11,6 +11,9 @@
 #include <Kyoto/Streams/CInputStream.hpp>
 
 #include "port_debug.h"
+#ifdef TARGET_PC
+#include "vr/vr_view.h"
+#endif
 
 CGuiWidget* CGuiCamera::Create(CGuiFrame* frame, CInputStream& in, CSimplePool* sp) {
   CGuiWidgetParms parms = ReadWidgetHeader(frame, in);
@@ -167,7 +170,21 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
 
   mSpreadView =
       CTransform4f::Translate(parms.GetCameraOffset()) * GetWorldTransform();
+#ifdef TARGET_PC
+  // PortVr: the HUD's left/right and up/down placement (vr_metroid_hud_offset_*) moves
+  // the view only, so the spread and lag maths above keep the authored layout. The
+  // HUD's body stands about twenty units from its camera.
+  float hudShiftX = 0.f;
+  float hudShiftZ = 0.f;
+  PortVr::VrHudCameraShift(20.f, hudShiftX, hudShiftZ);
+  if (hudShiftX != 0.f || hudShiftZ != 0.f) {
+    CGraphics::SetViewPointMatrix(mSpreadView * CTransform4f::Translate(hudShiftX, 0.f, hudShiftZ));
+  } else {
+    CGraphics::SetViewPointMatrix(mSpreadView);
+  }
+#else
   CGraphics::SetViewPointMatrix(mSpreadView);
+#endif
   // A pillarboxed frame (no spread) in a window taller than authored would show widgets placed
   // just off the authored screen (the file select's corner brackets above its panel): clip it to
   // the authored band, as the original screen did.

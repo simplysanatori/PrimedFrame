@@ -1012,6 +1012,39 @@ void TestLiveSettings() {
 
 } // namespace
 
+void TestFrameLayoutText() {
+  PortVrSettings v{};
+  const LayoutRows standard = FrameLayoutRows(v);
+  Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "MENU - NO ACTION", "frame rows");
+  Check(standard.left[1] == "D-PAD UP - START/PAUSE" && standard.left[2] == "D-PAD DOWN - MORPH BALL",
+        "frame left face buttons are the D-pad");
+  Check(standard.right[1] == "B BUTTON - BEAM SELECT" && standard.right[2] == "A BUTTON - SELECT", "frame A and B");
+  v.custom_layout_enabled = true;
+  const LayoutRows custom = FrameLayoutRows(v);
+  Check(custom.left[0] == "SHOOT - RIGHT TRIGGER" && custom.left[4] == "MORPH BALL - D-PAD DOWN" &&
+            custom.right[6] == "VR SETTINGS - LEFT STICK CLICK",
+        "frame custom defaults");
+  v.custom_morph = 33;
+  v.custom_pause = 0;
+  Check(FrameLayoutRows(v).left[4] == "MORPH BALL - X BUTTON" && FrameLayoutRows(v).left[5] == "PAUSE - NONE",
+        "frame custom follows bindings");
+  // Every line fits its 360 px column.
+  for (const LayoutRows& rows : {standard, custom}) {
+    for (const auto* column : {&rows.left, &rows.right}) {
+      for (const std::string& text : *column) Check(TextWidth(text.c_str(), 2) <= 380, "frame row fits");
+    }
+  }
+  Pixels touch(static_cast<size_t>(kWidth) * kImageHeight, 0u);
+  Pixels frame = touch;
+  DrawLayoutTextPage(touch, PortVrSettings{}, false);
+  DrawLayoutTextPage(frame, PortVrSettings{}, true);
+  Check(touch != frame, "frame page differs from the Touch page");
+  View on;
+  on.frame_controllers = true;
+  Check(ViewKey(State{}, PortVrSettings{}, on, false) != ViewKey(State{}, PortVrSettings{}, View{}, false),
+        "profile in the key");
+}
+
 int main() {
   for (unsigned ticks : {0u, 15u, 16u, 600u, 360000u}) {
     Check(PortVr::ResumePromptAnswer(ticks, false, false, false) == -1,
@@ -1047,6 +1080,7 @@ int main() {
   TestScreenAnchor();
   TestCinemaCooldown();
   TestControls();
+  TestFrameLayoutText();
   TestHeldGripsMenuRelease();
   TestCompileToast();
   std::puts("vr menu tests passed");
