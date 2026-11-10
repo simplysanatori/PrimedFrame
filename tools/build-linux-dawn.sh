@@ -38,6 +38,7 @@ work=${1:-"$repo/build/ld"}
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
 jobs=${JOBS:-$(nproc)}
+arch=$(uname -m)
 
 # The source revision is aurora's; its archive hash is pinned here, as in quest/Build-QuestDawn.ps1,
 # so a Dawn bump in aurora fails loudly until this script (and the patches) are checked against it.
@@ -138,11 +139,11 @@ if ! nm --defined-only "$library" 2>/dev/null | grep ' T AuroraDawnVulkanConfigu
     exit 1
 fi
 
-packing="$work/dawn-linux-x86_64-primedgun.partial.tar.gz"
+packing="$work/dawn-linux-$arch-primedgun.partial.tar.gz"
 tar -czf "$packing" -C "$install" .
 package_sha=$(sha256sum "$packing" | cut -d' ' -f1)
-package_file="dawn-linux-x86_64-primedgun-${package_sha:0:12}.tar.gz"
-find "$work" -maxdepth 1 -name 'dawn-linux-x86_64-primedgun*.tar.gz' ! -name "$package_file" \
+package_file="dawn-linux-$arch-primedgun-${package_sha:0:12}.tar.gz"
+find "$work" -maxdepth 1 -name "dawn-linux-$arch-primedgun*.tar.gz" ! -name "$package_file" \
     ! -name "$(basename "$packing")" -delete
 mv -f "$packing" "$work/$package_file"
 
