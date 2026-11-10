@@ -1159,10 +1159,12 @@ inline LayoutRows FrameLayoutRows(const PortVrSettings& v) {
     LayoutRows rows;
     if (!v.custom_layout_enabled) {
         rows.left = {"LEFT STICK - MOVE",       "D-PAD UP - START/PAUSE",         "D-PAD DOWN - MORPH BALL",
-                     "STICK CLICK/VIEW - VR SETTINGS", "LEFT GRIP - MAP",       "LEFT TRIGGER - LOCK ON"};
+                     "LEFT STICK CLICK - VR SETTINGS", "VIEW - VR SETTINGS", "LEFT GRIP - MAP",
+                     "LEFT TRIGGER - LOCK ON"};
         rows.right = {"RIGHT STICK - LOOK/JUMP",        "B BUTTON - BEAM SELECT", "A BUTTON - SELECT",
-                      "RIGHT STICK CLICK - SET HEIGHT", "RIGHT GRIP - MISSILES",  "RIGHT TRIGGER - SHOOT"};
-        rows.footer = "X, Y, SHOULDERS AND MENU ARE UNUSED";
+                      "RIGHT STICK CLICK - SET HEIGHT", "RIGHT GRIP - MISSILES",  "RIGHT TRIGGER - SHOOT",
+                      "MENU - NO ACTION"};
+        rows.footer = "NO ACTION - X, Y, SHOULDERS, D-PAD LEFT/RIGHT";
         return rows;
     }
     const auto line = [](const char* action, int binding) { return std::string(action) + " - " + FrameInputName(binding); };

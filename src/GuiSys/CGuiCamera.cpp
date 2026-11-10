@@ -176,9 +176,7 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
   // HUD's body stands about twenty units from its camera.
   float hudShiftX = 0.f;
   float hudShiftZ = 0.f;
-  if (mDrawTanX > 0.f && mDrawTanY > 0.f) {
-    PortVr::VrHudCameraShift(mDrawTanX, mDrawTanY, 20.f, hudShiftX, hudShiftZ);
-  }
+  PortVr::VrHudCameraShift(20.f, hudShiftX, hudShiftZ);
   if (hudShiftX != 0.f || hudShiftZ != 0.f) {
     CGraphics::SetViewPointMatrix(mSpreadView * CTransform4f::Translate(hudShiftX, 0.f, hudShiftZ));
   } else {
