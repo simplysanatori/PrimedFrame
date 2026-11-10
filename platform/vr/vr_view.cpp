@@ -545,6 +545,29 @@ void VrHeadLockedScales(float& xy, float& depth) noexcept {
     xy = settings.metroid_hud_size * settings.metroid_hud_distance;
 }
 
+namespace {
+bool s_hudOffsetActive = false; // game thread only
+} // namespace
+
+void VrSetHudOffsetActive(bool active) noexcept { s_hudOffsetActive = active; }
+
+void VrHudCameraShift(float depth, float& x, float& z) noexcept {
+    x = 0.f;
+    z = 0.f;
+    if (!s_hudOffsetActive) {
+        return;
+    }
+    // 1.x put the offset in metres on a plane `metroid_hud_distance` metres away, so the
+    // angle is offset / distance whatever the size. Here the head-locked route scales a
+    // position's x and z by size * distance against depth * distance, so a camera
+    // shift d at `depth` is the angle size * d / depth. The camera moves the opposite
+    // way to its contents.
+    const PortVrSettings& settings = GetVrSettings();
+    const float perMetre = depth / (settings.metroid_hud_size * settings.metroid_hud_distance);
+    x = -(settings.metroid_hud_offset_right - settings.metroid_hud_offset_left) * perMetre;
+    z = -(settings.metroid_hud_offset_up - settings.metroid_hud_offset_down) * perMetre;
+}
+
 void VrResetEyeDepth() noexcept {
     const CGraphics::CProjectionState projection = CGraphics::GetProjectionState();
     const CTransform4f viewPoint = CGraphics::GetViewMatrix();
