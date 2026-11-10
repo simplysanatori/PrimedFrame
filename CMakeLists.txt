@@ -245,6 +245,9 @@ if(MP_ENABLE_OPENXR)
             set(BUILD_CONFORMANCE_TESTS OFF CACHE BOOL "" FORCE)
             set(BUILD_SDK_TESTS OFF CACHE BOOL "" FORCE)
             set(DYNAMIC_LOADER OFF CACHE BOOL "" FORCE)
+            # A system jsoncpp makes the loader's install export fail; the vendored copy is also
+            # what a portable build wants.
+            set(BUILD_WITH_SYSTEM_JSONCPP OFF CACHE BOOL "" FORCE)
             if(MP_OPENXR_SDK_DIR)
                 if(NOT EXISTS "${MP_OPENXR_SDK_DIR}/CMakeLists.txt")
                     message(FATAL_ERROR "MP_OPENXR_SDK_DIR does not contain OpenXR-SDK: ${MP_OPENXR_SDK_DIR}")
