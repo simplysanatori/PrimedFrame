@@ -157,6 +157,11 @@ void VrMapHologram(float& distance, float& halfHeight, float& clearance, float& 
 // The head-locked route's scales (vr_metroid_hud_size, vr_metroid_hud_distance):
 // a HUD position's x and z (Prime camera space) by `xy`, its depth (y) by `depth`.
 void VrHeadLockedScales(float& xy, float& depth) noexcept;
+// The HUD's placement offsets (vr_metroid_hud_offset_*): while on, a GUI camera's
+// view is moved so its contents shift by (right, up) times the camera's half view
+// at `depth` units (1 = to the edge of its view). Off, nothing moves. Game thread.
+void VrSetHudOffsetActive(bool active) noexcept;
+void VrHudCameraShift(float tanHalfWidth, float tanHalfHeight, float depth, float& x, float& z) noexcept;
 // Every eye's depth back to the far plane (an orthographic quad through a
 // far-only depth window, depth written, no colour), keeping the projection,
 // view and model. Draw it on a route that covers the whole eye (WORLD).
