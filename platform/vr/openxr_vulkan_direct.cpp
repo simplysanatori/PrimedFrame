@@ -477,10 +477,10 @@ std::string SampleStat(std::vector<float>& values) {
 // time). The pacing thread looks at it at most every 50 ms and aims the end at
 //   after[:us]  -> vsync + update end p95 + us (default 300),
 //   before[:us] -> vsync + update start p50 - us (default 1500),
-// of the vsync at or before the wake-up. Without a fresh grid (none, older than 0.5 s, period 1 %
-// off xrWaitFrame's) the end waits PF2_END_DELAY_US after the wake-up, else the offset the lock
-// last used at this refresh rate (vr_end_phase.txt in the user folder), else half the display
-// period: at 90 Hz 5.6 ms after the wake-up, past the Frame's update window (3.0-5.3 ms after the
+// of the vsync at or before the wake-up. Without a fresh grid (none, older than 0.5 s, or
+// xrWaitFrame's period not 1-4 times the grid's within 1 %) the end waits PF2_END_DELAY_US after
+// the wake-up, else the offset the lock last used at this refresh rate (vr_end_phase.txt in the
+// user folder), else half the display's true period (never xrWaitFrame's doubled one): at 90 Hz 5.6 ms after the wake-up, past the Frame's update window (3.0-5.3 ms after the
 // vsync) and next to where the lock ends (about 5.2 ms). Not later: the next packet is located
 // only after this end and the game must hand it over before the next wake-up, so an end at 0.75
 // of the period left the game 2.8 ms and cost the mock 15-20 fps; a fixed 4000 us ended inside
@@ -577,26 +577,49 @@ public:
         log_(line);
     }
 
+    // The display's own refresh period: the compositor grid's when `nominal_ns` (the session's
+    // refresh period as xrWaitFrame reported it on time, DisplayPeriod below) is a whole multiple of
+    // it, else `nominal_ns`. Never xrWaitFrame's current period, which SteamVR doubles (22.2 ms at
+    // 90 Hz) while the app misses refreshes.
+    int64_t TruePeriod(int64_t nominal_ns) const {
+        if (have_ && period_ns_ > 0 && nominal_ns > 0 && Multiple(nominal_ns, period_ns_) > 0) return period_ns_;
+        return nominal_ns;
+    }
+
+    // k when `period` is k (1..4) times `base` within 1 %, else 0.
+    static int Multiple(int64_t period, int64_t base) {
+        if (base <= 0 || period <= 0) return 0;
+        const int64_t k = std::llround(static_cast<double>(period) / static_cast<double>(base));
+        return k >= 1 && k <= 4 && std::llabs(period - k * base) * 100 <= period ? static_cast<int>(k) : 0;
+    }
+
     // When to release and end this cycle's frame. wake: xrWaitFrame's return; period: its display
-    // period. Never later than one period after the wake-up less 1 ms (the next refresh's wake-up).
-    Clock::time_point Target(Clock::time_point wake, int64_t period_ns) {
+    // period; nominal: the session's refresh period (see TruePeriod). Never later than one true
+    // period after the wake-up less 1 ms (the next refresh's wake-up). A grid whose period divides
+    // xrWaitFrame's (SteamVR reports 2 or more periods after a missed refresh) still locks: the end
+    // stays on the display's own grid, so the next frame can be on time again (ending half of the
+    // doubled period after the wake-up instead kept the game at half rate).
+    Clock::time_point Target(Clock::time_point wake, int64_t period_ns, int64_t nominal_ns) {
+        const Clock::time_point now = Clock::now();
+        if (mode_ == Mode::After || mode_ == Mode::Before) Refresh(now);
+        const int64_t true_ns = TruePeriod(nominal_ns > 0 ? nominal_ns : period_ns);
         const Clock::time_point deadline =
-            wake + std::chrono::nanoseconds(std::max<int64_t>(period_ns - 1000000, 0));
+            wake + std::chrono::nanoseconds(std::max<int64_t>(true_ns - 1000000, 0));
         vsync_ns_ = 0;
-        Clock::time_point target = wake + std::chrono::microseconds(FallbackUs(period_ns));
+        Clock::time_point target = wake + std::chrono::microseconds(FallbackUs(true_ns));
         if (mode_ == Mode::After || mode_ == Mode::Before) {
-            const Clock::time_point now = Clock::now();
-            Refresh(now);
             const int64_t now_ns = now.time_since_epoch().count();
-            const bool fresh = have_ && now_ns - written_ns_ < 500000000 && period_ns_ > 0 &&
-                               std::llabs(period_ns_ - period_ns) * 100 <= period_ns;
+            const int multiple = Multiple(period_ns, period_ns_);
+            const bool fresh = have_ && now_ns - written_ns_ < 500000000 && multiple > 0;
+            if (fresh && multiple > 1) ++multiple_frames_;
             if (fresh != locked_ || !announced_) {
                 log_(std::string("end phase: ") +
                      (fresh ? "locked to the compositor grid (" + SourceName() + ")"
-                            : "fallback " + std::to_string(FallbackUs(period_ns)) + " us after the wake-up, " +
+                            : "fallback " + std::to_string(FallbackUs(true_ns)) + " us after the wake-up, " +
                                   FallbackName() + " (" +
-                                  (have_ ? (now_ns - written_ns_ >= 500000000 ? "grid older than 0.5 s"
-                                                                              : "grid period differs from xrWaitFrame's")
+                                  (have_ ? (now_ns - written_ns_ >= 500000000
+                                                ? "grid older than 0.5 s"
+                                                : "grid period not a whole multiple of xrWaitFrame's")
                                          : "no grid from " + SourceName()) +
                                   ")"));
                 locked_ = fresh;
@@ -644,17 +667,17 @@ public:
             std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(i), v.end());
             return v[i];
         };
-        char line[480];
+        char line[560];
         std::snprintf(line, sizeof line,
                       "end phase: 10 s, %u frames (%u on the fallback, %u capped at the next wake-up); end after "
-                      "wake-up p5 %.2f p50 %.2f p95 %.2f ms; after vsync p50 %.2f p95 %.2f, minus update start p50 "
+                      "wake-up p5 %.2f p50 %.2f p95 %.2f ms (%u locked while xrWaitFrame's period was a multiple of the grid's); after vsync p50 %.2f p95 %.2f, minus update start p50 "
                       "%+.2f p95 %+.2f, minus update end p95: p50 %+.2f p95 %+.2f (grid start %.2f end %.2f/%.2f "
                       "p50/p95)",
-                      frames_, fallback_frames_, capped_, q(e_, 0.05), q(e_, 0.5), q(e_, 0.95), q(vs_, 0.5),
+                      frames_, fallback_frames_, capped_, q(e_, 0.05), q(e_, 0.5), q(e_, 0.95), multiple_frames_, q(vs_, 0.5),
                       q(vs_, 0.95), q(us_, 0.5), q(us_, 0.95), q(ue_, 0.5), q(ue_, 0.95), us50_ / 1e6, ue50_ / 1e6,
                       ue95_ / 1e6);
         log_(line);
-        frames_ = fallback_frames_ = capped_ = 0;
+        frames_ = fallback_frames_ = capped_ = multiple_frames_ = 0;
         vs_.clear(), us_.clear(), ue_.clear(), e_.clear();
     }
 
@@ -771,7 +794,7 @@ private:
     int64_t vsync_pub_ = 0, period_ns_ = 0, us50_ = 0, ue50_ = 0, ue95_ = 0, written_ns_ = 0;
     int64_t vsync_ns_ = 0;
     Clock::time_point summary_at_{};
-    uint32_t frames_ = 0, fallback_frames_ = 0, capped_ = 0;
+    uint32_t frames_ = 0, fallback_frames_ = 0, capped_ = 0, multiple_frames_ = 0;
     std::vector<double> vs_, us_, ue_, e_;
 };
 
@@ -1256,7 +1279,8 @@ public:
         const bool phased = end_phase_.Enabled() && wake.time_since_epoch().count() != 0 &&
                             active_frame_.predicted_display_period > 0;
         if (phased) {
-            std::this_thread::sleep_until(end_phase_.Target(wake, active_frame_.predicted_display_period));
+            std::this_thread::sleep_until(
+                end_phase_.Target(wake, active_frame_.predicted_display_period, nominal_period_));
             if (diagnostics::Enabled()) {
                 end_phase_.NoteEnd(std::chrono::steady_clock::now(), wake);
             }
@@ -1395,9 +1419,12 @@ public:
         // pending packet.
         const auto& pair = pending_packet_serial_ != 0 ? retained_swapchains_ : eye_swapchains_;
         packet.xr_frame.serial = next_packet_serial_++;
-        packet.xr_frame.predicted_display_time =
-            last_display_time_ + static_cast<XrDuration>(periods_ahead) * last_display_period_;
-        packet.xr_frame.predicted_display_period = last_display_period_;
+        // The display's own period, not xrWaitFrame's: after a missed refresh SteamVR reports 2 or
+        // more periods, which located the poses that much further ahead (and stepped the game that
+        // much at a time) although the next frame can be on time again.
+        const XrDuration period = DisplayPeriod();
+        packet.xr_frame.predicted_display_time = last_display_time_ + static_cast<XrDuration>(periods_ahead) * period;
+        packet.xr_frame.predicted_display_period = period;
         packet.xr_frame.should_render = last_should_render_;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             packet.render_width[eye] = EyeWidth(pair, eye);
@@ -1634,6 +1661,7 @@ public:
         DestroySwapchains();
         pending_packet_serial_ = 0;
         last_display_period_ = 0;
+        nominal_period_ = 0;
         // Its handles belong to the session.
         passthrough_.Destroy();
         if (owns_session_ && runtime_ != nullptr) {
@@ -1711,11 +1739,29 @@ private:
         return ReleaseAcquired(retained_swapchains_, retained_panel_swapchain_);
     }
 
+    // The display's true refresh period: the compositor grid's when it divides the session's,
+    // else the session's (never xrWaitFrame's doubled period after a missed refresh).
+    XrDuration DisplayPeriod() const {
+        const XrDuration nominal = nominal_period_ > 0 ? nominal_period_ : last_display_period_;
+        return end_phase_.Enabled() ? end_phase_.TruePeriod(nominal) : nominal;
+    }
+
     void NoteDisplayTiming(const OpenXRFrame& frame) noexcept {
         last_display_time_ = frame.predicted_display_time;
         last_display_period_ = frame.predicted_display_period;
         last_should_render_ = frame.should_render;
+        if (timing_session_serial_ != runtime_->SessionRunSerial()) {
+            nominal_period_ = 0;
+        }
         timing_session_serial_ = runtime_->SessionRunSerial();
+        // The session's refresh period: the shortest xrWaitFrame reported, kept while later ones are
+        // whole multiples of it (missed refreshes), replaced by any other (a new refresh rate).
+        if (const int64_t p = frame.predicted_display_period; p > 0) {
+            if (nominal_period_ <= 0 || p < nominal_period_ - nominal_period_ / 100 ||
+                EndPhaseLock::Multiple(p, nominal_period_) == 0) {
+                nominal_period_ = p;
+            }
+        }
         pf2_wait_return_ = std::chrono::steady_clock::now();
     }
 
@@ -2342,8 +2388,9 @@ private:
         if (!diagnostics::Enabled() || shown.predicted_display_period <= 0) {
             return;
         }
-        const double periods = static_cast<double>(pose_time - shown.predicted_display_time) /
-                               static_cast<double>(shown.predicted_display_period);
+        const XrDuration period = DisplayPeriod() > 0 ? DisplayPeriod() : shown.predicted_display_period;
+        const double periods =
+            static_cast<double>(pose_time - shown.predicted_display_time) / static_cast<double>(period);
         const long rounded = std::lround(periods);
         const size_t bucket = rounded <= -1 ? 0 : rounded == 0 ? 1 : rounded == 1 ? 2 : rounded == 2 ? 3 : 4;
         ++pf2_lead_[bucket];
@@ -2512,6 +2559,8 @@ private:
     uint64_t timing_session_serial_ = 0;
     XrTime last_display_time_ = 0;
     XrDuration last_display_period_ = 0;
+    // The session's refresh period (NoteDisplayTiming), and the display's true one (DisplayPeriod).
+    XrDuration nominal_period_ = 0;
     bool last_should_render_ = false;
     uint64_t active_frame_serial_ = 0;
     OpenXRFrame active_frame_{};
