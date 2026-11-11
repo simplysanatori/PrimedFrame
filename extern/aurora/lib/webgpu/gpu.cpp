@@ -1668,6 +1668,17 @@ void shutdown() {
   g_queue = {};
   g_surface = {};
   window::set_surface_held(false);
+  // Statics in other translation units (the GX empty texture, pipeline maps, the sampler and
+  // pipeline caches, ...) still hold Dawn objects here, and exit() destroys them after this
+  // function. The last of them to go would drop the last device reference, so the adapter and
+  // the instance would be destroyed inside exit(): Dawn's VkInstance destroy then runs after the
+  // Vulkan layers' own statics (the gamescope WSI layer's) are gone and crashes the process on
+  // every exit. Keep one reference to the device, and so to the adapter and the instance, until
+  // the process ends; the driver releases them with the process.
+  if (g_device) {
+    static wgpu::Device* const keepAlive = new wgpu::Device(g_device);
+    (void)keepAlive;
+  }
   g_device = {};
   g_adapter = {};
   g_instance = {};
