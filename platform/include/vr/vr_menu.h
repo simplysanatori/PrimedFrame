@@ -251,6 +251,7 @@ enum ResetAction : uint32_t {
     kExitGame = 6,
     kResetPortConfig = 7,
     kGrantEverything = 8,
+    kOpenLauncher = 9,
 };
 enum StateAction : uint32_t {
     kNoStateAction = 0,
@@ -294,6 +295,7 @@ struct View {
     bool foveation_live = false; // this session has density maps: a level applies at once
     bool multiview_available = true; // false on a GPU Aurora keeps on a pass per eye (Adreno 6xx)
     bool in_game = false;        // a game is running (the cheats need one)
+    bool launcher_available = false; // the launcher is next to the game (Steam Frame): OPEN LAUNCHER
     bool invulnerable = false;
     bool streamed_audio = true;
     bool musyx_audio = true;
@@ -327,6 +329,9 @@ public:
     virtual void SaveSettings() = 0;
     // Saves the settings and leaves the game the way closing its window does.
     virtual void ExitGame() = 0;
+    // Saves the settings, leaves the game like ExitGame, then starts the
+    // launcher (Steam Frame; only offered when View::launcher_available).
+    virtual void OpenLauncher() = 0;
     // The save-state slot the actions use, 1..kStateSlotCount.
     virtual int StateSlot() const = 0;
     virtual void SelectStateSlot(int slot) = 0;
@@ -392,6 +397,7 @@ enum class PortItem : uint8_t {
     RoomScale,
     MessageBoxInView,
     FloatingHud,
+    OpenLauncher,
     Reset,
 };
 
@@ -440,6 +446,9 @@ inline PortList PortItems(const View& view) {
     add(PortItem::FloatingHud);
     add(PortItem::WristVisor);
 
+    if (view.launcher_available) {
+        add(PortItem::OpenLauncher);
+    }
     add(PortItem::Reset);
     return list;
 }
@@ -873,6 +882,8 @@ inline Row PortRow(const State& s, const PortVrSettings& v, const View& view, Po
         return {"MESSAGE BOX IN VIEW", OnOff(v.message_box_immersive)};
     case PortItem::FloatingHud:
         return {"FLOATING HUD", OnOff(v.floating_hud)};
+    case PortItem::OpenLauncher:
+        return {"OPEN LAUNCHER", ConfirmText(s, kOpenLauncher)};
     case PortItem::Reset:
         return {"RESET CONFIG", ConfirmText(s, kResetPortConfig)};
     }
@@ -1466,6 +1477,9 @@ inline uint32_t ResetActionForSelection(const State& s, const View& view) {
     if (s.tab == kPortConfigTab && PortItemAt(s, view, s.selected) == PortItem::Reset) {
         return kResetPortConfig;
     }
+    if (s.tab == kPortConfigTab && PortItemAt(s, view, s.selected) == PortItem::OpenLauncher) {
+        return kOpenLauncher;
+    }
     if (s.tab == kDebugTab && DebugPageAt(view, Page(s, view)).kind == DebugPageKind::Switches &&
         static_cast<DebugItem>(s.selected) == DebugItem::GrantEverything) {
         return kGrantEverything;
@@ -2049,6 +2063,11 @@ inline void Activate(State& s, PortVrSettings& v, const View& view, double now, 
             break;
         case PortItem::FloatingHud:
             v.floating_hud = !v.floating_hud;
+            break;
+        case PortItem::OpenLauncher:
+            if (ConfirmReset(s, reset_action, now)) {
+                actions.OpenLauncher();
+            }
             break;
         case PortItem::Reset:
             if (ConfirmReset(s, reset_action, now)) {
