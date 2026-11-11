@@ -10,7 +10,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
 #include <QProcess>
@@ -28,6 +30,48 @@
 #include <windows.h>
 #endif
 namespace PrimedGunLauncher {
+#if defined(PRIMEDFRAME_LINUX)
+namespace {
+// Steam Frame: nothing is downloaded or installed here. The dialog shows the
+// newest release's name (one GitHub API request, no identifiers sent) and opens
+// the releases page, where PrimedFrame is updated.
+const char* const kFrameReleasesPage = "https://github.com/simplysanatori/PrimedFrame/releases";
+class UpdateDialog final : public QDialog {
+  QLabel* status;
+  QProcess* request = nullptr;
+public:
+  explicit UpdateDialog(TabContext& context):QDialog(context.window) {
+    setAttribute(Qt::WA_DeleteOnClose); setWindowTitle(tr("PrimedFrame Updates")); resize(420,160);
+    auto* layout=new QVBoxLayout(this);
+    layout->addWidget(new QLabel(tr("Installed: %1").arg(QStringLiteral(PRIMEDGUN_LAUNCHER_VERSION))));
+    status=new QLabel(tr("Checking the latest release...")); status->setWordWrap(true); layout->addWidget(status);
+    layout->addStretch();
+    auto* page=new QPushButton(tr("Open Releases Page")); layout->addWidget(page);
+    connect(page,&QPushButton::clicked,this,[] { QDesktopServices::openUrl(QUrl(QString::fromLatin1(kFrameReleasesPage))); });
+    request=new QProcess(this);
+    request->setProgram(QStringLiteral("curl"));
+    request->setArguments({"--fail","--location","--proto","=https","--proto-redir","=https",
+        "--connect-timeout","10","--max-time","20","--max-filesize","1048576","--silent","--show-error",
+        "--user-agent","PrimedFrame-Launcher","--header","Accept: application/vnd.github+json",
+        "--url","https://api.github.com/repos/simplysanatori/PrimedFrame/releases?per_page=1"});
+    connect(request,&QProcess::errorOccurred,this,[this](QProcess::ProcessError error) {
+      if (error==QProcess::FailedToStart) status->setText(tr("Could not check the latest release."));
+    });
+    connect(request,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,[this](int code,QProcess::ExitStatus state) {
+      const auto doc=QJsonDocument::fromJson(request->readAllStandardOutput());
+      if (code!=0 || state!=QProcess::NormalExit || !doc.isArray() || doc.array().isEmpty()) {
+        status->setText(tr("Could not check the latest release.")); return;
+      }
+      const auto latest=doc.array().first().toObject();
+      QString name=latest["name"].toString(); if (name.isEmpty()) name=latest["tag_name"].toString();
+      status->setText(name.isEmpty() ? tr("Could not check the latest release.") : tr("Latest release: %1").arg(name));
+    });
+    request->start();
+  }
+  ~UpdateDialog() override { if (request && request->state()!=QProcess::NotRunning) { request->kill(); request->waitForFinished(1000); } }
+};
+}
+#else
 namespace {
 class UpdateDialog final : public QDialog {
   TabContext& ctx;
@@ -167,6 +211,7 @@ public:
   ~UpdateDialog() override { if (transfer) { transfer->kill(); transfer->waitForFinished(1000); } }
 };
 }
+#endif
 void CheckForUpdates(TabContext& ctx) {
   static QPointer<UpdateDialog> current;
   if (current) { current->raise(); current->activateWindow(); return; }

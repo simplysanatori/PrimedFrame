@@ -44,6 +44,7 @@ class RecordingActions final : public Actions {
 public:
   void SaveSettings() override { ++saves; }
   void ExitGame() override { ++exits; }
+  void OpenLauncher() override { ++launcherOpens; }
   int StateSlot() const override { return slot; }
   void SelectStateSlot(int s) override { slot = s; }
   void LoadState(int s) override { loaded = s; }
@@ -71,6 +72,7 @@ public:
 
   int saves = 0;
   int exits = 0;
+  int launcherOpens = 0;
   int slot = 1;
   int loaded = 0;
   int saved = 0;
@@ -451,6 +453,27 @@ void TestConfig() {
             !v.wrist_visor_enabled && Near(v.wrist_pitch, PortVrSettings{}.wrist_pitch) && v.cannon_targeting && v.room_scale && v.message_box_immersive && !v.floating_hud &&
             Near(v.metroid_hud_size, 2.0f),
         "reset config");
+
+  // The Steam Frame: OPEN LAUNCHER sits before RESET CONFIG, and only when the
+  // launcher is next to the game.
+  {
+    State t;
+    Open(t);
+    t.tab = kPortConfigTab;
+    View withLauncher = pc;
+    withLauncher.launcher_available = true;
+    Check(ItemCount(t, pc) == 12 && ItemCount(t, withLauncher) == 12, "page 1 is as long with a launcher");
+    t.port_page = 2;
+    Check(ItemCount(t, pc) == 2 && ItemCount(t, withLauncher) == 3, "OPEN LAUNCHER adds one row");
+    Check(BuildRows(t, v, withLauncher)[1].label == std::string("OPEN LAUNCHER") &&
+              BuildRows(t, v, withLauncher)[2].label == std::string("RESET CONFIG"),
+          "OPEN LAUNCHER sits before RESET CONFIG");
+    RecordingActions launcher;
+    Click(t, v, withLauncher, kLabelX, RowY(kPortConfigTab, 1), now, launcher);
+    Check(launcher.launcherOpens == 0 && t.reset_confirm == kOpenLauncher, "OPEN LAUNCHER is armed first");
+    Click(t, v, withLauncher, kLabelX, RowY(kPortConfigTab, 1), now, launcher);
+    Check(launcher.launcherOpens == 1, "OPEN LAUNCHER is confirmed by a second click");
+  }
 
   // The Quest: foveation waits for the next start without density maps.
   State q{};
