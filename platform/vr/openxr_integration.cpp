@@ -1974,6 +1974,7 @@ private:
                              const PrimeVRPolicySnapshot& policy) noexcept {
         OpenXRFrameRequest request{};
         request.predicted_display_time = source.xr_frame.predicted_display_time;
+        request.predicted_display_period = source.xr_frame.predicted_display_period;
         request.display_time_nanos = published_frame_.frame.displayTimeNanos;
         request.immersive = immersive;
         request.content_tag = policy.content_tag;

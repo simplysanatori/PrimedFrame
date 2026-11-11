@@ -8,6 +8,8 @@
 // Port: Aurora owns the application/window/GPU loop; the game entry is renamed
 // and driven by platform/main.cpp.
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <chrono>
 #include <aurora/aurora.h>
 #include <aurora/event.h>
@@ -27,6 +29,7 @@
 #include "port_prompts.h"
 // PortVr: the headset paces the loop and reads the game mode from here.
 #include "vr/openxr_integration.h"
+#include "vr/pf2_switches.h"
 #include "vr/prime_vr_policy.h"
 #include "vr/vr_pad.h"
 #include "vr/vr_view.h"
@@ -175,6 +178,133 @@ bool COsContext::mProgressiveMode;
 u32 sARAMMemArray[2];
 float sInfiniteLoopTime;
 static uint sTicksAdvanced = 0;
+
+// PrimedFrame 2 (vr/pf2_switches.h). PF2_ALPHA_DISPLAY: in the headset the tick clock advances by
+// the display times of the packets the draws land in rather than by the wall clock at pickup
+// (which varies 0.5-1 ms per frame), so each layer's interpolation alpha is the game state for
+// the moment it is seen. sPf2AlphaBase is where that clock stands (XrTime ns): a draw without a
+// new packet (a request timeout) moves it by the wall clock; a jump (> 250 ms ahead or > 100 ms
+// behind, a stall or a new session) restarts it at the packet's time with a wall-clock step.
+static int64_t sPf2AlphaBase = 0;
+static uint64_t sPf2AlphaSerial = 0;
+// The packet the coming draw lands in, how its alpha advanced, and the steps since the last
+// headset draw (the [pf2] line's true repeats).
+static uint64_t sPf2DrawSerial = 0;
+static int64_t sPf2DrawDisplayTime = 0;
+static bool sPf2DrawByDisplay = false;
+static uint sPf2StepsSinceDraw = 0;
+static float sPf2LastAlpha = -2.f;
+// PF2_SIM_LOCK: the last packet that stepped the game and its display time; whether this
+// frame's steps came from the lock (its draw then shows the newest state, no interpolation).
+static uint64_t sPf2LockSerial = 0;
+static int64_t sPf2LockDisplay = 0;
+static bool sPf2Locked = false;
+
+// PF2_SIM_LOCK: the steps for this frame (one per display period the new packet's display time
+// moved, normally exactly 1) and their period, or -1 when the lock does not step this frame (off,
+// no headset, no new packet: the wall clock then steps the game).
+static int Pf2SimLockSteps(double& period) {
+  sPf2Locked = false;
+  if (!PortVr::pf2::Get().sim_lock || !PortVr::OpenXRIsRunning()) {
+    sPf2LockDisplay = 0;
+    return -1;
+  }
+  PortVr::OpenXRFrameRequest request;
+  if (!PortVr::OpenXRLatestFrameRequest(request) || request.predicted_display_time <= 0 ||
+      request.predicted_display_period <= 0 || request.serial == sPf2LockSerial) {
+    return -1;
+  }
+  sPf2LockSerial = request.serial;
+  const double displayPeriod = static_cast< double >(request.predicted_display_period) * 1e-9;
+  int steps = 1;
+  if (sPf2LockDisplay != 0) {
+    const double moved =
+        static_cast< double >(request.predicted_display_time - sPf2LockDisplay) / request.predicted_display_period;
+    const int most = std::max(1, static_cast< int >(0.25 / displayPeriod));
+    steps = std::clamp(static_cast< int >(std::lround(moved)), 0, most);
+  }
+  sPf2LockDisplay = request.predicted_display_time;
+  period = displayPeriod;
+  sPf2Locked = true;
+  return steps;
+}
+
+static double Pf2TickElapsed(double wall) {
+  sPf2DrawByDisplay = false;
+  if (!PortVr::OpenXRIsRunning()) {
+    sPf2AlphaBase = 0;
+    sPf2DrawSerial = 0;
+    sPf2DrawDisplayTime = 0;
+    return wall;
+  }
+  PortVr::OpenXRFrameRequest request;
+  const bool have = PortVr::OpenXRLatestFrameRequest(request) && request.predicted_display_time > 0;
+  sPf2DrawSerial = have ? request.serial : 0;
+  sPf2DrawDisplayTime = have ? request.predicted_display_time : 0;
+  if (!PortVr::pf2::Get().alpha_display || !have) {
+    sPf2AlphaBase = 0;
+    return wall;
+  }
+  if (sPf2AlphaBase == 0) {
+    sPf2AlphaBase = request.predicted_display_time;
+    sPf2AlphaSerial = request.serial;
+    return wall;
+  }
+  if (request.serial == sPf2AlphaSerial) {
+    sPf2AlphaBase += static_cast< int64_t >(wall * 1e9);
+    return wall;
+  }
+  sPf2AlphaSerial = request.serial;
+  const int64_t delta = request.predicted_display_time - sPf2AlphaBase;
+  if (delta > 250000000 || delta < -100000000) {
+    sPf2AlphaBase = request.predicted_display_time;
+    return wall;
+  }
+  sPf2DrawByDisplay = true;
+  if (delta <= 0) {
+    // Behind the clock (it ran on the wall clock meanwhile): this layer waits for it.
+    return 0.0;
+  }
+  sPf2AlphaBase = request.predicted_display_time;
+  return static_cast< double >(delta) * 1e-9;
+}
+
+// A headset draw with its alpha: the [pf2] line's counters and PF2_ALPHA_TRACE.
+static void Pf2NoteDraw(float alpha, double period) {
+  if (!PortVr::OpenXRIsRunning()) {
+    sPf2StepsSinceDraw = 0;
+    return;
+  }
+  namespace pf2 = PortVr::pf2;
+  pf2::g_draws.fetch_add(1, std::memory_order_relaxed);
+  pf2::g_draw_steps[std::min(sPf2StepsSinceDraw, 2u)].fetch_add(1, std::memory_order_relaxed);
+  if (sPf2Locked)
+    pf2::g_locked_draws.fetch_add(1, std::memory_order_relaxed);
+  if (sPf2StepsSinceDraw == 0 && std::fabs(alpha - sPf2LastAlpha) < 1e-4f) {
+    pf2::g_true_repeats.fetch_add(1, std::memory_order_relaxed);
+  }
+  (sPf2DrawByDisplay ? pf2::g_alpha_display : pf2::g_alpha_wall).fetch_add(1, std::memory_order_relaxed);
+  const std::string& path = pf2::Get().alpha_trace;
+  if (!path.empty()) {
+    static FILE* trace = nullptr;
+    static bool opened = false;
+    if (!opened) {
+      opened = true;
+      trace = std::fopen(path.c_str(), "w");
+      if (trace != nullptr)
+        std::fprintf(trace, "# serial display_time_ns steps alpha source(d=display w=wall) period_s\n");
+    }
+    if (trace != nullptr) {
+      std::fprintf(trace, "%llu %lld %u %.6f %c %.9f\n",
+                   static_cast< unsigned long long >(sPf2DrawSerial),
+                   static_cast< long long >(sPf2DrawDisplayTime), sPf2StepsSinceDraw, alpha,
+                   sPf2DrawByDisplay ? 'd' : 'w', period);
+      std::fflush(trace);
+    }
+  }
+  sPf2StepsSinceDraw = 0;
+  sPf2LastAlpha = alpha;
+}
 
 // Port: the player is in (or going into or out of) morph ball during play, with
 // no pause or map screen up.
@@ -543,10 +673,19 @@ bool CGameArchitectureSupport::UpdateTicks() {
   } else {
     period = 1.0 / static_cast< double >(PortDebug::SimRate());
   }
+  // PF2_SIM_LOCK: one step of the display period per new packet in the headset.
+  const int lockSteps = Pf2SimLockSteps(period);
   x7c_tickClock.SetPeriod(period);
-  unsigned ticks =
-      x7c_tickClock.Advance(elapsed, gpMain->GetScreenFading() || PortDebug::Turbo(),
-                            PortDebug::FrameLimitEnabled());
+  // PF2_ALPHA_DISPLAY: the packets' display times in the headset (fixed steps only).
+  const double tickElapsed = adaptive ? static_cast< double >(elapsed) : Pf2TickElapsed(elapsed);
+  unsigned ticks = 0;
+  if (lockSteps >= 0) {
+    x7c_tickClock.DropRemainder();
+    ticks = static_cast< unsigned >(lockSteps);
+  } else {
+    ticks = x7c_tickClock.Advance(tickElapsed, gpMain->GetScreenFading() || PortDebug::Turbo(),
+                                  PortDebug::FrameLimitEnabled());
+  }
   // A frame within the clamp is covered by its one step; past it (a hitch)
   // the remainder is kept so the following frames catch up.
   if (adaptive && ticks > 0 && elapsed <= 1.f / 30.f) {
@@ -596,6 +735,7 @@ bool CGameArchitectureSupport::UpdateTicks() {
   }
 
   x58_ioWinMgr.PumpMessages(x4_archQueue);
+  sPf2StepsSinceDraw += sTicksAdvanced;
   return !terminate;
 }
 
@@ -1260,11 +1400,13 @@ int CMain::RsMain(int argc, const char* const* argv) {
           interpolation = 1.f;
         // Keep headset interpolation independent of the flat-screen frame cap.
         // Adaptive simulation already presents its current state at present time.
+        // PF2_SIM_LOCK: the step ended at this layer's display time, so the newest state is shown.
         if ((PortDebug::FrameLimitEnabled() && !PortVr::OpenXRIsRunning()) ||
-            (PortDebug::SimAdaptive() && !PortDebug::Turbo()))
+            (PortDebug::SimAdaptive() && !PortDebug::Turbo()) || sPf2Locked)
           interpolation = -1.f;
         PortDebug::PresentOverride(interpolation);
         CCameraManager::SetPresentationInterpolation(interpolation);
+        Pf2NoteDraw(interpolation, dt);
         // The render clock advances dt per tick (TickRenderTimings above).
         CGraphics::SetRenderTimePresentLag(
             interpolation >= 0.f && interpolation < 1.f && PortDebug::ParticleInterpolation()
