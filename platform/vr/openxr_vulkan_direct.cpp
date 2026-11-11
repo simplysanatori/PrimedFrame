@@ -939,6 +939,12 @@ public:
             Fail("xrLocateViews failed for a packet");
             return OpenXRBeginStatus::Error;
         }
+        // [pf2]: how long after the last xrWaitFrame returned the poses were located (PF2_LATE_LOCATE
+        // moves this later; the display time they are for stays the same).
+        if (diagnostics::Enabled() && pf2_wait_return_.time_since_epoch().count() != 0) {
+            pf2_locate_ms_.push_back(static_cast<float>(
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pf2_wait_return_).count()));
+        }
         if (!packet.xr_frame.views_valid) {
             return OpenXRBeginStatus::Ready;
         }
@@ -1239,6 +1245,7 @@ private:
         last_display_period_ = frame.predicted_display_period;
         last_should_render_ = frame.should_render;
         timing_session_serial_ = runtime_->SessionRunSerial();
+        pf2_wait_return_ = std::chrono::steady_clock::now();
     }
 
     OpenXRBeginStatus BeginCompositorCycle() {
@@ -1285,6 +1292,7 @@ private:
             return runtime_->EndFrameWithoutLayers(active_frame_);
         }
         diagnostics::OnLayer(fresh);
+        pf2_fresh_layers_ += fresh ? 1u : 0u;
         const auto& frame = retained_frame_;
         // PF2_AHEAD_PERIODS: a fresh layer ends with the display time its poses were located for.
         OpenXRFrame end_frame = active_frame_;
@@ -1886,6 +1894,14 @@ private:
              << " timeouts " << pf2_fence_timeouts_ << " | gpu/set ms " << SampleStat(gpu) << " (" << gpu.size()
              << " sets) | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
              << " +1:" << pf2_lead_[2] << " +2:" << pf2_lead_[3] << " more:" << pf2_lead_[4];
+        // Simulation steps against fresh layers: fewer steps than layers means layers between steps
+        // show interpolated (or repeated) game states.
+        const uint32_t steps = pf2::g_sim_steps.exchange(0, std::memory_order_relaxed);
+        const uint32_t ticks = pf2::g_sim_ticks.exchange(0, std::memory_order_relaxed);
+        line << " | sim steps " << steps << " (" << ticks << " ticks of 1/600 s) for " << pf2_fresh_layers_
+             << " fresh layers | locate after wait ms p50/p95/max " << SampleStat(pf2_locate_ms_);
+        pf2_fresh_layers_ = 0;
+        pf2_locate_ms_.clear();
         if (pf2::Get().ahead_periods >= 0) {
             line << " | ended at pose time: same as frame " << pf2_end_exact_ << ", moved " << pf2_end_moved_
                  << ", not after the previous end " << pf2_end_backwards_;
@@ -1925,6 +1941,9 @@ private:
     XrTime pf2_last_end_time_ = 0;
     std::chrono::steady_clock::time_point pf2_window_start_{};
     std::vector<float> pf2_fence_ms_;
+    std::vector<float> pf2_locate_ms_;
+    std::chrono::steady_clock::time_point pf2_wait_return_{};
+    uint32_t pf2_fresh_layers_ = 0;
     uint64_t pf2_fence_timeouts_ = 0;
     std::array<uint32_t, 5> pf2_lead_{};
     uint32_t pf2_end_exact_ = 0;
