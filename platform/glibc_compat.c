@@ -39,6 +39,9 @@ float hypotf(float x, float y) { return (float)hypot(x, y); }
 // nearbyint(), which is not; hypot() is bound to its original version, since
 // the later one only changed how it rounds.
 double remainder(double x, double y) { return x - nearbyint(x / y) * y; }
+// remainderf() got a new symbol version in glibc 2.43. For floats the double arithmetic is exact
+// (the product of two 24-bit values fits in 53 bits), so it is rebuilt from the same pieces.
+float remainderf(float x, float y) { return (float)((double)x - nearbyint((double)x / (double)y) * (double)y); }
 
 // Both halves matter, or hypot() spins forever calling itself. No
 // __asm__("hypot") label, unlike the parsers below: that names the wrapper
