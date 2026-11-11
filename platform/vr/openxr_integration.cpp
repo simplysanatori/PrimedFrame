@@ -1329,6 +1329,8 @@ private:
                                        std::to_string(static_cast<int>(runtime_->SessionState())) + ")")) {
             fatal = false;
             consecutive_skips = 0;
+            last_pacing_mode = -1;
+            immersive_submission_logged = false;
             goto pacing_loop;
         }
 
@@ -2361,6 +2363,13 @@ private:
             if (stop_.load(std::memory_order_acquire)) {
                 return false;
             }
+            // Packets located for the old session (PF2_OVERLAP's, a pipelined one) are armed on its
+            // swapchains, which RecreateSession destroys: the new session starts with none.
+#if defined(__linux__) && !defined(__ANDROID__)
+            overlap_packet_.reset();
+#endif
+            pipelined_packet_.reset();
+            pipelined_scale_ = -1.0f;
             {
                 std::lock_guard lock(stop_mutex_);
                 session_recovery_done_ = false;
