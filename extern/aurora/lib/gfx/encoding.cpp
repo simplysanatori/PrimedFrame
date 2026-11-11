@@ -316,13 +316,16 @@ void render_stereo_multiview_pass(wgpu::CommandEncoder& cmd, RenderPass& passInf
   wgpu::DawnRenderPassMultiview multiview{};
   multiview.viewMask = stereo_multiview::kViewMask;
   const auto label = fmt::format("Stereo eyes pass {} (multiview)", passIndex);
-  // No timestamp writes: a query inside a multiview pass takes one slot per view.
+  // A query inside a multiview pass would take one slot per view, but Dawn's Vulkan backend writes
+  // a pass's timestamps outside the render pass instance (before vkCmdBeginRenderPass, after its
+  // end), so the pass is timed like an eye pass (gputimes).
   const wgpu::RenderPassDescriptor renderPassDescriptor{
       .nextInChain = &multiview,
       .label = label.c_str(),
       .colorAttachmentCount = 1,
       .colorAttachments = &attachment,
       .depthStencilAttachment = depthStencilAttachmentPtr,
+      .timestampWrites = webgpu::gpu_prof::pass_writes(label),
   };
   auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
   render_stereo_eye_pass_commands(pass, passInfo, 0, true);
