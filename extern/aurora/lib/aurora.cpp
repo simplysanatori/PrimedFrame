@@ -10,6 +10,7 @@
 #include "gfx/frame.hpp"
 #include "gfx/pipeline_cache.hpp"
 #include "gfx/recording.hpp"
+#include <aurora/vfx.hpp>
 #include "gfx/texture.hpp"
 #include "gfx/render_worker.hpp"
 #include "gx/command_processor.hpp"
@@ -451,6 +452,14 @@ bool begin_frame(uint64_t contentTag) noexcept {
   }
   // The stereo packet for this frame, before the first uniform is staged.
   gfx::set_frame_stereo(stereo_host::begin_frame(contentTag));
+  // What end_frame asks before rendering the final pass's eyes only, asked for the whole frame.
+  {
+    const bool eyesOnly = (stereo_host::headset_owns_display() || stereo_host::mirror_skips_mono()) &&
+                          !g_screenshotRequested.load(std::memory_order_acquire) &&
+                          !gfx::depth_peek::snapshot_wanted();
+    gfx::arm_mono_skip(eyesOnly);
+    gfx::vfx::set_eyes_only_frame(eyesOnly && gfx::recorded_stereo_state().immersive);
+  }
   // A failed staging-buffer acquisition must not leave an ImGui frame open.
   imgui::new_frame(window::get_window_size());
   gx::fifo::begin_frame();

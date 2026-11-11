@@ -25,6 +25,8 @@ struct RegisteredEncoderTaskType {
 
 std::optional<RegisteredDrawType> find_runtime_draw_type(DrawTypeId id);
 std::optional<RegisteredEncoderTaskType> find_runtime_encoder_task_type(EncoderTaskId id);
+// Whether a registered encoder task may read the EFB it is recorded between (the mono image).
+bool encoder_task_reads_efb(EncoderTaskId id);
 
 } // namespace aurora::gfx::detail
 
