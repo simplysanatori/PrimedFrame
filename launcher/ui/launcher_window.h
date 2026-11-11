@@ -55,7 +55,8 @@ private:
   void SelectGame();
   void ShowGameOptions();
   void ShowSetupNotes();
-  void TransferOldSave();
+  void TransferOldSave(bool fromFrame1 = false);
+  void OfferFrame1Save();
 
   void Play(bool optionsOnly = false);
   void OpenPortOptions();
