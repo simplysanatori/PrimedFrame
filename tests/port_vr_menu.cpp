@@ -280,16 +280,19 @@ void TestClicks() {
   v.rumble_hand = RumbleHand::Right;
   Click(s, v, view, kLabelX, RowY(kControlTab, 2), now, actions);
   Check(v.rumble_hand == RumbleHand::Split, "rumble cycles back to split");
-  // AUTO FIRE BUTTON: RIGHT SHOULDER (LEFT when left-handed) or OFF, on by default.
-  Check(v.auto_fire_button && BuildRows(s, v, view)[8].label == "AUTO FIRE BUTTON" &&
-            BuildRows(s, v, view)[8].value == "RIGHT SHOULDER", "auto fire button default");
+  // AUTO FIRE BUTTON: RIGHT SHOULDER (LEFT when left-handed) or OFF, off by default.
+  Check(!v.auto_fire_button && BuildRows(s, v, view)[8].label == "AUTO FIRE BUTTON" &&
+            BuildRows(s, v, view)[8].value == "OFF", "auto fire button default off");
+  Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
+  Check(v.auto_fire_button && BuildRows(s, v, view)[8].value == "RIGHT SHOULDER", "auto fire button on");
   v.use_right_hand = false;
   Check(BuildRows(s, v, view)[8].value == "LEFT SHOULDER", "auto fire button mirrors for the left hand");
   v.use_right_hand = true;
   Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
   Check(!v.auto_fire_button && BuildRows(s, v, view)[8].value == "OFF", "auto fire button off");
-  Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
-  Check(v.auto_fire_button, "auto fire button back on");
+  v.auto_fire_button = true;
+  ResetController(v);
+  Check(!v.auto_fire_button, "reset controller restores auto fire off");
   v.rumble_hand = RumbleHand::Both;
   // The control tab's second page: VISOR GESTURE, then back.
   Click(s, v, view, kNextX, kPageY, now, actions);
@@ -1048,11 +1051,17 @@ void TestLiveSettings() {
 void TestFrameLayoutText() {
   PortVrSettings v{};
   const LayoutRows standard = FrameLayoutRows(v);
-  Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "RIGHT SHOULDER - AUTO FIRE", "frame rows");
+  Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "MENU - NO ACTION", "frame rows");
   Check(standard.left[1] == "D-PAD UP - START/PAUSE" && standard.left[2] == "D-PAD DOWN - MORPH BALL",
         "frame left face buttons are the D-pad");
   Check(standard.right[1] == "B BUTTON - BEAM SELECT" && standard.right[2] == "A BUTTON - SELECT", "frame A and B");
-  Check(standard.footer == "NO ACTION - MENU, X, Y, LEFT SHOULDER, D-PAD LEFT/RIGHT", "frame footer");
+  Check(standard.footer == "NO ACTION - X, Y, SHOULDERS, D-PAD LEFT/RIGHT", "frame footer");
+  PortVrSettings armed_settings{};
+  armed_settings.auto_fire_button = true;
+  const LayoutRows armed = FrameLayoutRows(armed_settings);
+  Check(armed.right[6] == "RIGHT SHOULDER - AUTO FIRE" &&
+            armed.footer == "NO ACTION - MENU, X, Y, LEFT SHOULDER, D-PAD LEFT/RIGHT", "frame rows with auto fire on");
+  Check(TextWidth(armed.footer.c_str(), 2) <= kWidth - 40, "frame footer on fits");
   Check(TextWidth(standard.footer.c_str(), 2) <= kWidth - 40, "frame footer fits");
   v.custom_layout_enabled = true;
   const LayoutRows custom = FrameLayoutRows(v);

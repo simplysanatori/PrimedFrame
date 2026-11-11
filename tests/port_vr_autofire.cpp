@@ -4,6 +4,8 @@
 // timing in game time at 60, 90 and 120 simulation steps a second.
 
 #include "vr/vr_autofire.h"
+#include "vr/vr_settings.h"
+#include "vr/vr_settings.h"
 
 #include <cmath>
 #include <cstdio>
@@ -82,9 +84,17 @@ void TestRefire() {
     Check(std::abs(ShotsHeld(0.25f, 1.0f / 60.0f, 5.0f) - ShotsHeld(0.25f, 1.0f / 120.0f, 5.0f)) <= 2,
           "60 and 120 steps a second agree");
 }
+
+void TestSettingDefault() {
+    PortVr::PortVrSettings v{};
+    Check(!v.auto_fire_button, "the Auto Fire Button setting is off by default");
+    v.auto_fire_button = true;
+    Check(v.auto_fire_button, "the Auto Fire Button setting can be turned on");
+}
 } // namespace
 
 int main() {
+    TestSettingDefault();
     TestToggle();
     TestLatch();
     TestRefire();

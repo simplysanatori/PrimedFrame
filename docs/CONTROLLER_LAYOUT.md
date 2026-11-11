@@ -22,14 +22,15 @@ stick selections in the editor replace the standard stick assignment.
   for Combat (up), Thermal (down), Scan (left) and X-ray (right). Its right X/Y
   buttons and shoulders are separate assignable inputs. The native profile is
   used when the runtime advertises XR_VALVE_frame_controller_interaction.
-- **Auto Fire (Steam Frame):** the weapon hand's shoulder (right, or left when
+- **Auto Fire (Steam Frame):** off by default; turn on **Controller > Auto Fire
+  Button** in the VR menu and the weapon hand's shoulder (right, or left when
   left-handed) toggles Auto Fire in first-person play, with a short on-screen
   label. While it is on, holding the fire trigger repeats the beam's shots at its
   own cooldown and never charges; missiles, grapple, scan visor and the Morph Ball
   are unchanged. It starts off at every launch. A custom layout can assign the
   toggle with **Auto Fire toggle**; left unassigned it uses the weapon-hand
-  shoulder unless another action has that shoulder. **Controller > Auto Fire
-  Button** in the VR menu turns the button off.
+  shoulder unless another action has that shoulder. While the setting is off the
+  shoulder does nothing. Reset Controller turns it off again.
 - **Vive / WMR:** their presets use triggers, grips, menu buttons and pad clicks
   instead of unavailable face buttons. Wands leave the separate height binding
   unassigned; choose an available input if you want it.
