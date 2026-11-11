@@ -42,7 +42,7 @@
 //                         SteamVR timing reader (steamvr_frame_timing.h), or from a 64-byte record
 //                         at PF2_PHASE_FILE when that is set (dev/tools/vrtiming.py). Without a
 //                         grid the end waits the offset the lock last used at this refresh rate
-//                         (saved in the user folder), or 0.75 of the display period. Log lines
+//                         (saved in the user folder), or half the display period. Log lines
 //                         start "end phase:".
 //   PF2_END_DELAY_US=<n>  release and end each eye set n us (1..12000) after xrWaitFrame returned
 //                         (after the release fence; the layer keeps its display time and poses),

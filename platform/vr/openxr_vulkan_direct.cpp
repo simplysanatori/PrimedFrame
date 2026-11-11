@@ -334,8 +334,12 @@ std::string SampleStat(std::vector<float>& values) {
 //   before[:us] -> vsync + update start p50 - us (default 1500),
 // of the vsync at or before the wake-up. Without a fresh grid (none, older than 0.5 s, period 1 %
 // off xrWaitFrame's) the end waits PF2_END_DELAY_US after the wake-up, else the offset the lock
-// last used at this refresh rate (vr_end_phase.txt in the user folder), else 0.75 of the display
-// period: past the Frame's update window (3.0-5.3 ms after the vsync at 90 Hz), before the next.
+// last used at this refresh rate (vr_end_phase.txt in the user folder), else half the display
+// period: at 90 Hz 5.6 ms after the wake-up, past the Frame's update window (3.0-5.3 ms after the
+// vsync) and next to where the lock ends (about 5.2 ms). Not later: the next packet is located
+// only after this end and the game must hand it over before the next wake-up, so an end at 0.75
+// of the period left the game 2.8 ms and cost the mock 15-20 fps; a fixed 4000 us ended inside
+// the update window at 90 Hz.
 // Every 10 s (MP_VR_LOG=1) a summary line: where the ends landed against the vsync and the window.
 class EndPhaseLock {
 public:
@@ -464,7 +468,7 @@ public:
                 const int64_t at = mode_ == Mode::After ? vsync_ns_ + ue95_ + offset_us_ * 1000
                                                         : vsync_ns_ + us50_ - offset_us_ * 1000;
                 target = Clock::time_point(Clock::duration(at));
-                Learn(target - wake, period_ns);
+                Learn(target - wake, wake_ns - vsync_ns_, period_ns);
             }
         }
         if (target > deadline) {
@@ -528,7 +532,7 @@ private:
     std::string FallbackName() const {
         if (fixed_us_ > 0) return "PF2_END_DELAY_US=" + std::to_string(fixed_us_);
         if (learned_us_ > 0) return "the offset learned at " + std::to_string(learned_hz_) + " Hz";
-        return "0.75 of the display period";
+        return "half the display period";
     }
 
     // The end's delay after the wake-up without a grid.
@@ -543,12 +547,14 @@ private:
             // Only a value inside the period's useful part.
             if (learned_us_ * 1000 < period_ns / 5 || learned_us_ * 1000 > period_ns - 1000000) learned_us_ = 0;
         }
-        return learned_us_ > 0 ? learned_us_ : static_cast<long>(period_ns * 3 / 4 / 1000);
+        return learned_us_ > 0 ? learned_us_ : static_cast<long>(period_ns / 2 / 1000);
     }
 
     // The locked offsets after the wake-up: their median every 900 frames is kept for runs
-    // without a grid.
-    void Learn(Clock::duration offset, int64_t period_ns) {
+    // without a grid. Only wake-ups on time (within 1 ms of their vsync) count: a late one (the
+    // previous frame missed its slot) shortens the offset, which a fallback must not copy.
+    void Learn(Clock::duration offset, int64_t wake_after_vsync_ns, int64_t period_ns) {
+        if (wake_after_vsync_ns < 0 || wake_after_vsync_ns > 1000000) return;
         const long us = static_cast<long>(std::chrono::duration_cast<std::chrono::microseconds>(offset).count());
         if (us <= 0 || us * 1000 >= period_ns) return;
         learn_.push_back(us);
