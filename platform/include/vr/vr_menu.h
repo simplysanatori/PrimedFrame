@@ -1175,8 +1175,9 @@ inline LayoutRows FrameLayoutRows(const PortVrSettings& v) {
                      "LEFT TRIGGER - LOCK ON"};
         rows.right = {"RIGHT STICK - LOOK/JUMP",        "B BUTTON - BEAM SELECT", "A BUTTON - SELECT",
                       "RIGHT STICK CLICK - SET HEIGHT", "RIGHT GRIP - MISSILES",  "RIGHT TRIGGER - SHOOT",
-                      "RIGHT SHOULDER - AUTO FIRE"};
-        rows.footer = "NO ACTION - MENU, X, Y, LEFT SHOULDER, D-PAD LEFT/RIGHT";
+                      v.auto_fire_button ? "RIGHT SHOULDER - AUTO FIRE" : "MENU - NO ACTION"};
+        rows.footer = v.auto_fire_button ? "NO ACTION - MENU, X, Y, LEFT SHOULDER, D-PAD LEFT/RIGHT"
+                                         : "NO ACTION - X, Y, SHOULDERS, D-PAD LEFT/RIGHT";
         return rows;
     }
     const auto line = [](const char* action, int binding) { return std::string(action) + " - " + FrameInputName(binding); };
@@ -1372,6 +1373,7 @@ inline std::string ViewKey(const State& s, const PortVrSettings& v, const View& 
         // The Frame's page follows the custom layout's bindings.
         const LayoutRows rows = FrameLayoutRows(v);
         key += 'F';
+        key += v.auto_fire_button ? '1' : '0';
         for (const std::string& text : rows.left) key += text + ';';
         for (const std::string& text : rows.right) key += text + ';';
     }
@@ -1534,7 +1536,7 @@ inline void ResetController(PortVrSettings& v) {
     v.rumble_intensity = 1.0f;
     v.rumble_hand = RumbleHand::Split;
     v.grip_inputs_enabled = true;
-    v.auto_fire_button = true;
+    v.auto_fire_button = false;
     v.grip_inputs_use_trackpad = false;
     v.trackpad_press_threshold = 0.5f;
     v.index_grip_press_threshold = 0.5f;
