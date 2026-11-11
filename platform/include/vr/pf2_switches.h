@@ -65,6 +65,17 @@
 //   PF2_IDLE_AFTER_SEAL=0 in the headset the resource loader's per-frame idle runs before the frame
 //                         is sealed (EndScene), as on a flat screen; default: after it, so a slow
 //                         load step delays the next frame, not the one already drawn.
+//   PF2_OVERLAP=<us> | 0  render-first pacing in immersive play: when the next packet is due before
+//                         this frame's end (the recent CPU time from locate to Aurora's submission,
+//                         plus the eye set's own GPU time, plus <us> of margin (default 1500), no
+//                         longer fit between this frame's end and the next one's), it is located,
+//                         armed and published while this frame still waits for its GPU work and
+//                         its end phase, so the game's next step and draw run while the GPU
+//                         finishes this one. Its poses are for the same display time as without
+//                         it (PF2_AHEAD_PERIODS after the last xrWaitFrame), only located earlier,
+//                         by as much as needed. Linux default: on; 0/off: the next packet only
+//                         after the end (a CPU + GPU budget of one period). [pf2]: "early locate".
+//   PF2_DEV_GPU_LOAD_MB=<MB>  tests only: each eye set also fills that many MB on the GPU.
 //   PF2_HZ=<hz>           the refresh rate the game asks the headset for (72..144), over the
 //                         vr_display_refresh_rate setting; that setting's 0 (runtime default) asks
 //                         SteamVR for 90 on Linux.
@@ -103,6 +114,8 @@ struct Switches {
     // PF2_SIM_LOCK_MAX_HZ: one step per packet up to this rate, one per two packets above.
     int sim_lock_max_hz = 96;
     bool idle_after_seal = false;
+    // PF2_OVERLAP: the margin in us (0: off).
+    long overlap_margin_us = 0;
     // PF2_HZ: 0 unset.
     int hz = 0;
     std::string alpha_trace;
@@ -132,6 +145,7 @@ struct Switches {
         if (end_delay_us > 0) text += " end-delay=" + std::to_string(end_delay_us) + "us";
         if (!timing_reader) text += " no-timing-reader";
         text += idle_after_seal ? " idle-after-seal" : " idle-before-seal";
+        text += overlap_margin_us > 0 ? " overlap(margin " + std::to_string(overlap_margin_us) + " us)" : " no-overlap";
         if (hz > 0) text += " hz=" + std::to_string(hz);
         if (stamp) text += " stamp";
         if (!alpha_trace.empty()) text += " alpha-trace";
@@ -213,6 +227,14 @@ inline const Switches& Get() {
             }
         }
         s.idle_after_seal = flag("PF2_IDLE_AFTER_SEAL", kFrameDefaults);
+        s.overlap_margin_us = kFrameDefaults ? 1500 : 0;
+        if (const char* overlap = get("PF2_OVERLAP")) {
+            char* end = nullptr;
+            const long us = std::strtol(overlap, &end, 10);
+            s.overlap_margin_us = std::string(overlap) == "on"                   ? 1500
+                                  : end != overlap && us >= 0 && us <= 8000 ? us
+                                                                            : 0;
+        }
         if (const char* hz = get("PF2_HZ")) {
             const long v = std::strtol(hz, nullptr, 10);
             if (v >= 60 && v <= 144) {

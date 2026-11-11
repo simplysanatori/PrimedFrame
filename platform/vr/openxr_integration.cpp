@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <functional>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -1131,6 +1132,17 @@ private:
             }
             // A new scale rebuilds the eyes as the backend next prepares them.
             backend_->SetRenderScale(scale);
+#if defined(__linux__) && !defined(__ANDROID__)
+            // PF2_OVERLAP: a packet prepared during the last frame is finished first, by a
+            // render-first cycle, whatever the mode now is.
+            if (overlap_packet_) {
+                if (!RenderFirstCycle(presentation, policy, immersive, consecutive_skips,
+                                      immersive_submission_logged)) {
+                    fatal = true;
+                }
+                continue;
+            }
+#endif
             if (pipelined || pipelined_packet_) {
                 // With a packet in flight and the mode changed, this cycle only finishes it.
                 if (!PipelinedCycle(presentation, policy, immersive, consecutive_skips,
@@ -1348,13 +1360,24 @@ private:
     // failure; a cycle that ends without a layer returns true and the loop tries again.
     bool RenderFirstCycle(OpenXRPresentation presentation, const PrimeVRPolicySnapshot& policy, bool immersive,
                           uint32_t& consecutive_skips, bool& immersive_submission_logged) {
+        OpenXRBackendFrame packet{};
+#if defined(__linux__) && !defined(__ANDROID__)
+        // PF2_OVERLAP: the last frame already located, armed and published this cycle's packet.
+        const bool overlapped = overlap_packet_.has_value();
+        if (overlapped) {
+            packet = *overlap_packet_;
+            overlap_packet_.reset();
+        }
+#else
+        constexpr bool overlapped = false;
+#endif
         // PF2_LATE_LOCATE=<ms>: the poses are located that much later for the same display slot,
         // from the idle time this thread otherwise spends in xrWaitFrame once the eyes are done.
-        if (const int late = pf2::Get().late_locate_ms; late > 0 && immersive) {
+        if (const int late = pf2::Get().late_locate_ms; late > 0 && immersive && !overlapped) {
             std::this_thread::sleep_for(std::chrono::milliseconds(late));
         }
-        OpenXRBackendFrame packet{};
-        const OpenXRBeginStatus prepared = backend_->PreparePacket(presentation, packet);
+        const OpenXRBeginStatus prepared =
+            overlapped ? OpenXRBeginStatus::Ready : backend_->PreparePacket(presentation, packet);
         if (prepared == OpenXRBeginStatus::SessionNotRunning) {
             PrimeVRPolicySetSessionActive(false);
             return true;
@@ -1367,29 +1390,31 @@ private:
             SetError(backend_->LastError());
             return false;
         }
-        NoteEyeSize(packet);
-        // The head pose this packet was located with places the screens and aims the pointer.
-        ServiceRecenterRequest();
-        UpdateVirtualScreenPose(packet, policy);
-        const OpenXRPointerScreen screen = PointerScreen(packet, policy, immersive);
-        if (input_ != nullptr) {
-            const diagnostics::ScopedStage input_timer(diagnostics::Stage::InputSync);
-            input_->Sync(packet.xr_frame.predicted_display_time, screen, backend_->PanelLayerAvailable());
+        if (!overlapped) {
+            NoteEyeSize(packet);
+            // The head pose this packet was located with places the screens and aims the pointer.
+            ServiceRecenterRequest();
+            UpdateVirtualScreenPose(packet, policy);
+            const OpenXRPointerScreen screen = PointerScreen(packet, policy, immersive);
+            if (input_ != nullptr) {
+                const diagnostics::ScopedStage input_timer(diagnostics::Stage::InputSync);
+                input_->Sync(packet.xr_frame.predicted_display_time, screen, backend_->PanelLayerAvailable());
+            }
+            PlacePanelLayer(packet, screen);
+            if (!packet.expects_gpu_submission) {
+                // Nothing to render (no rendering requested or no tracking): keep the compositor fed.
+                return KeepAlive();
+            }
+            {
+                const diagnostics::ScopedStage publish_timer(diagnostics::Stage::Publish);
+                std::lock_guard lock(published_mutex_);
+                BuildPublishedFrame(packet, immersive, policy);
+                PublishFrameRequest(packet, immersive, policy);
+                diagnostics::OnPacketPublished();
+                published_.store(&published_frame_, std::memory_order_release);
+            }
+            aurora_notify_stereo_frame();
         }
-        PlacePanelLayer(packet, screen);
-        if (!packet.expects_gpu_submission) {
-            // Nothing to render (no rendering requested or no tracking): keep the compositor fed.
-            return KeepAlive();
-        }
-        {
-            const diagnostics::ScopedStage publish_timer(diagnostics::Stage::Publish);
-            std::lock_guard lock(published_mutex_);
-            BuildPublishedFrame(packet, immersive, policy);
-            PublishFrameRequest(packet, immersive, policy);
-            diagnostics::OnPacketPublished();
-            published_.store(&published_frame_, std::memory_order_release);
-        }
-        aurora_notify_stereo_frame();
 
         // Aurora renders the eyes at its next seal. Meanwhile the compositor keeps showing the
         // retained layer; a 50 ms stall repeats it explicitly and withdraws the packet.
@@ -1473,7 +1498,29 @@ private:
             frame.expects_gpu_submission ? backend_->CopyRenderedEyes(frame) : OpenXRSubmissionStatus::Skipped;
         const bool submit = copy == OpenXRSubmissionStatus::Success;
         diagnostics::OnSubmission(submit);
-        if (!backend_->FinishFrame(frame, submit)) {
+#if defined(__linux__) && !defined(__ANDROID__)
+        // PF2_OVERLAP: in immersive play the next packet may be prepared and published before this
+        // frame's end (the backend decides when); the next cycle then starts from it. Its
+        // presentation is this cycle's (a change shows one frame later, as with pipelining).
+        const std::function<void()> overlap = [&] {
+            OpenXRBackendFrame next{};
+            const OpenXRBeginStatus status = backend_->PrepareOverlapPacket(presentation, next);
+            if (status == OpenXRBeginStatus::Error) {
+                PORTVR_LOG() << "OpenXR: overlapped packet not prepared: " << backend_->LastError() << std::endl;
+                return;
+            }
+            if (status == OpenXRBeginStatus::Ready && next.expects_gpu_submission) {
+                PublishPacket(next, policy, immersive);
+                overlap_packet_ = next;
+            }
+        };
+        const bool use_overlap = immersive && submit && pf2::Get().overlap_margin_us > 0;
+        const bool finished =
+            use_overlap ? backend_->FinishFrame(frame, submit, overlap) : backend_->FinishFrame(frame, submit);
+#else
+        const bool finished = backend_->FinishFrame(frame, submit);
+#endif
+        if (!finished) {
             SetError(backend_->LastError());
             return false;
         }
@@ -2265,6 +2312,10 @@ private:
     // Pipelined pacing (PipelinedCycle): the packet in flight, the scale it runs at, and the
     // game's pickup of the latest packet (ProvideStereoFrame), which the cycle waits for.
     std::optional<OpenXRBackendFrame> pipelined_packet_;
+#if defined(__linux__) && !defined(__ANDROID__)
+    // PF2_OVERLAP: the packet the last frame prepared and published before its end (RenderFirstCycle).
+    std::optional<OpenXRBackendFrame> overlap_packet_;
+#endif
     float pipelined_scale_ = -1.0f;
     std::mutex pickup_mutex_;
     std::condition_variable pickup_cv_;
