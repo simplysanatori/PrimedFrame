@@ -7,6 +7,9 @@
 #include "MetroidPrime/Cameras/CGameCamera.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/Weapons/CWeapon.hpp"
+#ifdef TARGET_PC
+#include "port_debug.h"
+#endif
 
 inline void CScriptTrigger::ActivatePlayer(CStateManager& mgr) {
   if (x148_28_playerTriggerProc != true) {
@@ -261,7 +264,13 @@ void CScriptTrigger::UpdateInhabitants(float dt, CStateManager& mgr) {
 
               const CVector3f force = forceMult * x11c_forceField;
               if ((x12c_flags & kTFL_UseCollisionImpulses)) {
+#ifdef TARGET_PC
+                // Added to the momentum on every tick inside: per 60 Hz frame, so scale it to
+                // the tick or a faster rate pushes harder.
+                pact->ApplyImpulseWR(PortDebug::TickFrames() * force, CAxisAngle::Identity());
+#else
                 pact->ApplyImpulseWR(force, CAxisAngle::Identity());
+#endif
                 pact->UseCollisionImpulses();
               } else {
                 pact->ApplyForceWR(force, CAxisAngle::Identity());

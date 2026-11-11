@@ -60,10 +60,6 @@ friction below was the cause.
 
 ### Still open (everything else is in "Implemented" below)
 
-- `CGroundMovement`: `x14_waterLandingVelocityReduction` is applied inside the
-  collision sub-step loop. Probably a one-time landing response, but if it
-  re-applies while skimming water it is rate-dependent; verify against a real
-  water surface before touching it.
 - Short debounces, deliberately left as-is (a few frames of timing error at a
   doubled rate): `CPlayer::x2b0_outOfWaterTicks` and
   `xa2c_damageLoopSfxDelayTicks`, `CSpacePirate::x63c_frenzyFrames`, the
@@ -75,9 +71,13 @@ friction below was the cause.
   at a raised rate they run more often): `CParasite` / `CSeedling`
   `x5d4_thinkCounter`, `CSpacePirate` / `CFlyingPirate` `% 7` cadences,
   `CFishCloud::x118_thinkCounter`, `CBallCamera::x478_shortMoveCount`.
-- HUD memo countdown (`CStateManager::xf80_hudMessageFrameCount`, via
-  `CMFGame`'s `IncrementHUDMessageFrameCounter`): ticks down once per `Update`,
-  so the memo clears faster in wall time at a raised rate.
+- Particle-only shots between 60 Hz frames: the projectile's attached systems are re-placed on
+  ticks that step no frame (`CProjectileWeapon::PortPlaceAttachedSystems`) but not stepped, and
+  its swooshes still add a segment per stepped frame only.
+- Small per-tick remainders, left: the player acceleration ramp after a hit (`x2d0_curAcceleration`,
+  3 ticks; VR movement overwrites the planar velocity anyway), `CActorLights` bright-light lag
+  (15 draws), `CMetroidBeta` shot severity per damage message, the morph-ball control-direction
+  blend, `CGroundMovement::CheckFalling`'s out-of-bounds angular damping.
 
 Done and moved to "Implemented": the tick plumbing, the projectile tick
 period, decals, the `x8d8_updateFrameIdx` seed (now a `float` of 60 Hz frame
@@ -183,6 +183,31 @@ all three accumulate real time and step it in fixed 1/60 substeps.
   a dt-based 0.2 s timer; `CWallCrawlerSwarm::x368_boidGenCooldownTimer` is a
   duration set to `1/rate` and decremented by dt.
 
+- Second pass (90/120 Hz in the headset, `PF2_SIM_LOCK`), helpers in
+  `include/MetroidPrime/PortRate.hpp` (each exact at 60 Hz), checked by `port_rate_tests`:
+  - `CGameProjectile::UpdateProjectileMovement`: underwater shots stepped `37.5 * dt^2`, i.e.
+    0.625 of real time only at 60 Hz (0.42 at 90, 0.31 at 120); now `0.625 * dt`.
+  - `CProjectileWeapon`: shots move in 60 Hz frames, so at 90 Hz they held still every third
+    tick. They are now drawn between their last two frames at the tick's time (PAL's
+    `x98_interpolationOffset`, which never applies at 60 Hz), and the attached particle systems
+    follow on ticks that step no frame. The 1/60 tick period stays right at any rate.
+  - `CGroundMovement::MoveObjectAnalytical`: the underwater slope damping
+    (`x14_waterLandingVelocityReduction`) applies on every airborne tick in contact, so sliding
+    down an underwater slope slowed faster at a raised rate; now a per-tick factor.
+  - `CMorphBall`: half-pipe boost drag (0.99 per tick), boost light fade steps, spider-ball
+    bolt lifetimes (`x8_curFrame`, now a `float`).
+  - `CScriptTrigger` force fields with collision impulses and `CMetroidPrime::PushPlayer`'s
+    upward impulse are added to the momentum every tick: scaled by `TickFrames()`.
+  - `CExplosion` fixed-step systems (Remastered flag 0x10) stepped a whole 1/60 s per tick.
+  - Phazon suit shimmer (`CSamusDoll`, `CScriptPlayerActor`), the grapple beam's wave phase,
+    the fire flea death flash (frame count carried in real time), `CBeetle::Stuck` and the
+    swarm boids' off-surface limit (thresholds in 60 Hz frames).
+  - Checked, no change: particles (`CElementGen` and friends) step real time in 1/60 substeps
+    and draw between their last two frames (`x80_timeDeltaScale`); the swarm's every-other-tick
+    boid update uses per-update limits scaled by `dt`; AI triggers roll their random once per
+    state; damage over time uses `MakeScaledForTime(dt)`. The HUD memo counter is an id bumped
+    on unpause, not a countdown.
+
 Verified: with `MP_SIM_RATE=120` the timing trace reports `simulation=120.0
 ticks/s` with the render at 60 FPS; with `MP_SIM_ADAPTIVE=1` and the cap on it
 reports `render=60.0 simulation=60.0` (exactly one step per frame), and with the
@@ -194,12 +219,6 @@ adaptive) so both the renderer and the tick run at the display rate.
 Known caveats:
 
 - Tick-indexed particle seeding is fixed (see above).
-- Open item: `CGroundMovement.cpp:765` applies
-  `velocity *= 1.f - x14_waterLandingVelocityReduction` inside the collision
-  sub-step loop. It is probably a one-time landing response, but if it re-applies
-  every tick while skimming water it is rate-dependent; left unchanged because
-  scaling a collision response by dt may over-correct. Verify against a real
-  water surface before touching it.
 - Remaining per-tick counters, deliberately left as-is:
   - Short debounces of a few frames (`CPlayer::x2b0_outOfWaterTicks` and
     `xa2c_damageLoopSfxDelayTicks`, `CSpacePirate::x63c_frenzyFrames`,

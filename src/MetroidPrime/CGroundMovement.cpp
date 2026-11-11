@@ -19,6 +19,7 @@
 
 #ifdef TARGET_PC
 #include "port_debug.h"
+#include "MetroidPrime/PortRate.hpp"
 #endif
 
 #include <float.h>
@@ -797,7 +798,14 @@ CMaterialList CGroundMovement::MoveObjectAnalytical(CStateManager& mgr, CPhysics
           float landingForce = rstl::max_val(options.x4_waterLandingForceCoefficient * normalZ,
                                              options.x8_minimumWaterLandingForce);
           actor.SetForceWR(CVector3f(0.f, 0.f, -(1.f + landingForce) * actor.GetWeight()));
+#ifdef TARGET_PC
+          // Applied on every tick the airborne player touches a sloped surface underwater
+          // (sliding down it, too), so it is a per-tick damping: scale it to the tick.
+          velocity *= PortRate::PerTickFactor(1.f - options.x14_waterLandingVelocityReduction,
+                                              PortDebug::TickFrames());
+#else
           velocity *= 1.f - options.x14_waterLandingVelocityReduction;
+#endif
         }
       }
       actor.SetVelocityWR(velocity);

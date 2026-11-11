@@ -40,6 +40,7 @@
 #include "Kyoto/Math/CMath.hpp"
 #include "port_apclient.h"
 #include "port_debug.h"
+#include "MetroidPrime/PortRate.hpp"
 #include "port_model_variant.h"
 #include "port_ball_looks.h"
 #include "port_dread_samus_mod.h"
@@ -1170,7 +1171,13 @@ void CMorphBall::ComputeMarioMovement(const CFinalInput& input, CStateManager& m
           controlForce = x1924_surfaceToWorld.Rotate(halfPipeForce);
 
           if (maxSpeed > 95.f) {
+#ifdef TARGET_PC
+            // Per-tick half-pipe drag while boosting: the same drag per second at any rate.
+            x0_player.SetVelocityWR(PortRate::PerTickFactor(0.99f, PortDebug::TickFrames()) *
+                                    x0_player.GetVelocityWR());
+#else
             x0_player.SetVelocityWR(0.99f * x0_player.GetVelocityWR());
+#endif
           }
         }
       }
@@ -1622,10 +1629,19 @@ void CMorphBall::UpdateEffects(float dt, CStateManager& mgr) {
 
   x19d4_spiderBallMagnetEffectGen->Update(dt);
 
+#ifdef TARGET_PC
+  // Per-tick fade steps: the same fade time at any tick rate.
+  x1c30_boostOverLightFactor -= PortRate::PerTickStep(0.03f, PortDebug::TickFrames());
+#else
   x1c30_boostOverLightFactor -= 0.03f;
+#endif
   x1c30_boostOverLightFactor = rstl::max_val(0.f, x1c30_boostOverLightFactor);
   if (x1c30_boostOverLightFactor == 0.f) {
+#ifdef TARGET_PC
+    x1c34_boostLightFactor -= PortRate::PerTickStep(0.04f, PortDebug::TickFrames());
+#else
     x1c34_boostLightFactor -= 0.04f;
+#endif
     x1c34_boostLightFactor = rstl::max_val(0.f, x1c34_boostLightFactor);
   }
 
@@ -3090,7 +3106,11 @@ void CMorphBall::UpdateSpiderBallElectricalEffects() {
 
   while (it != x1b68_activeSpiderElectricList.end()) {
     CSpiderBallElectrictyManager& effect = *it;
+#ifdef TARGET_PC
+    if (effect.x8_curFrame >= static_cast< float >(effect.x4_lifetime)) {
+#else
     if (effect.x8_curFrame >= effect.x4_lifetime) {
+#endif
       x19e4_spiderElectricGens[effect.x0_effectIdx].second = false;
       it = x1b68_activeSpiderElectricList.erase(it);
       continue;
@@ -3101,7 +3121,11 @@ void CMorphBall::UpdateSpiderBallElectricalEffects() {
         CColor(1.f, 1.f, 1.f, 1.f - float(effect.x8_curFrame) / float(effect.x4_lifetime)));
     x19e4_spiderElectricGens[effect.x0_effectIdx].first->SetGlobalTranslation(translation);
     x19e4_spiderElectricGens[effect.x0_effectIdx].first->SetGlobalOrientation(orientation);
+#ifdef TARGET_PC
+    effect.x8_curFrame += PortDebug::TickFrames();
+#else
     ++effect.x8_curFrame;
+#endif
     ++it;
   }
 }

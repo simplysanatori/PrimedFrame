@@ -120,6 +120,17 @@ private:
   bool x124_31_VMD2 : 1;
 #ifdef TARGET_PC
   int mPortBeamTint = -1;
+  // Port: the shot moves in 60 Hz frames and retail NTSC draws its newest frame, so a tick
+  // shorter than a frame (above 60 Hz) moves it on some ticks only. PAL, whose ticks did not
+  // match the frames either, draws it between its last two frames at the tick's time; the same
+  // offset is used here. Never set at 60 Hz, where every tick ends on a frame.
+  CVector3f xPortPrevLocalOffset = CVector3f(0.f, 0.f, 0.f);
+  CVector3f xPortInterpOffset = CVector3f(0.f, 0.f, 0.f);
+  bool xPortInterpolating = false;
+  CVector3f PortLocalOffset() const {
+    return xPortInterpolating ? x80_localOffset + xPortInterpOffset : x80_localOffset;
+  }
+  void PortPlaceAttachedSystems();
 #endif
 };
 CHECK_SIZEOF(CProjectileWeapon,

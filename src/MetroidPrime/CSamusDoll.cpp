@@ -5,6 +5,8 @@
 #include "MetroidPrime/CSamusDoll.hpp"
 #ifdef TARGET_PC
 #include "port_pause_lighting.h"
+#include "MetroidPrime/PortRate.hpp"
+#include "port_debug.h"
 #include <dolphin/gx/GXExtra.h>
 #endif
 
@@ -348,7 +350,12 @@ void CSamusDoll::Update(float dt, CRandom16& rand) {
   }
   if (x250_phazonIndirectTexture) {
     x250_phazonIndirectTexture->TryCache();
+#ifdef TARGET_PC
+    // Per-tick step of the Phazon suit's shimmer: the same speed at any tick rate.
+    x260_phazonOffsetAngle += PortRate::PerTickStep(0.03f, PortDebug::TickFrames());
+#else
     x260_phazonOffsetAngle += 0.03f;
+#endif
     x260_phazonOffsetAngle = CMath::ClampRadians(x260_phazonOffsetAngle);
     gpRender->AllocatePhazonSuitMaskTexture();
   }

@@ -17,6 +17,7 @@
 
 #ifdef TARGET_PC
 #include "port_skip_cutscenes.h"
+#include "port_debug.h"
 #endif
 
 #include "float.h"
@@ -650,7 +651,14 @@ void CBeetle::Shuffle(CStateManager& mgr, EStateMsg msg, float dt) {
 
 bool CBeetle::HitSomething(CStateManager& mgr, float arg) { return x838_24_hitSomething; }
 
+#ifdef TARGET_PC
+// Stuck after more than 30 60 Hz frames off its predicted path, whatever the tick rate.
+bool CBeetle::Stuck(CStateManager& mgr, float arg) {
+  return static_cast< float >(x820_posDeviationCounter) * PortDebug::TickFrames() > 30.f;
+}
+#else
 bool CBeetle::Stuck(CStateManager& mgr, float arg) { return x820_posDeviationCounter > 30; }
+#endif
 
 bool CBeetle::ShouldTurn(CStateManager& mgr, float arg) {
   CVector2f delta2f = (mgr.GetPlayer()->GetTranslation() - GetTranslation()).ToVec2f();

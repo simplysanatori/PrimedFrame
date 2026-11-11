@@ -1686,6 +1686,7 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_savestate.cpp platform/port_savestate_format.cpp
         INCLUDES platform/include)
     mp_port_test(port_timing_tests SOURCES tests/port_timing.cpp INCLUDES platform/include)
+    mp_port_test(port_rate_tests SOURCES tests/port_rate.cpp INCLUDES include)
     mp_port_test(port_audio_math_tests
         SOURCES tests/port_audio_math.c
         INCLUDES extern/musyx/include)

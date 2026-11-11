@@ -1,6 +1,8 @@
 #include "MetroidPrime/ScriptObjects/CScriptPlayerActor.hpp"
 #include "port_dread_samus_mod.h"
 #include "port_shell.h"
+#include "MetroidPrime/PortRate.hpp"
+#include "port_debug.h"
 
 #include "MetroidPrime/CActorLights.hpp"
 #include "MetroidPrime/CActorModelParticles.hpp"
@@ -196,7 +198,12 @@ void CScriptPlayerActor::Think(float dt, CStateManager& mgr) {
   }
   if (x338_phazonIndirectTexture) {
     x338_phazonIndirectTexture->TryCache();
+#ifdef TARGET_PC
+    // Per-tick step of the Phazon suit's shimmer: the same speed at any tick rate.
+    x34c_phazonOffsetAngle += PortRate::PerTickStep(0.03f, PortDebug::TickFrames());
+#else
     x34c_phazonOffsetAngle += 0.03f;
+#endif
     x34c_phazonOffsetAngle = CMath::ClampRadians(x34c_phazonOffsetAngle);
   }
   CScriptActor::Think(dt, mgr);
