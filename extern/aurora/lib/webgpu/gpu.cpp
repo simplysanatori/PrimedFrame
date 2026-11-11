@@ -125,7 +125,20 @@ void wgpu_log(wgpu::LoggingType type, wgpu::StringView message) {
   Log.report(wgpu_log_level(type), "WebGPU message: {}", message);
 }
 
-#if defined(WEBGPU_DAWN) && defined(__ANDROID__) && defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
+#if defined(WEBGPU_DAWN) && defined(__linux__) && defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
+// Whether this platform asks for Vulkan multiview at all. The Quest always does. On the Steam Frame
+// (desktop Linux, OpenXR on the game's own Vulkan device: vulkan_direct_interop.cpp) it is asked for
+// only with PF2_MULTIVIEW=1 until headset tests confirm it; the vr_multiview setting still applies
+// on top (gfx/stereo_multiview.cpp).
+bool multiview_wanted_on_platform() noexcept {
+#if defined(__ANDROID__)
+  return true;
+#else
+  const char* value = std::getenv("PF2_MULTIVIEW");
+  return value != nullptr && value[0] == '1';
+#endif
+}
+
 // Multiview is left off on an Adreno 6xx (Quest 2 and Quest Pro, Adreno 650): there the
 // impact particles of a charged shot came out as green and red blocks under multiview and
 // were right in a pass per eye (a Quest 2 player, 2026-10-09; the Quest 3's Adreno 740
@@ -1422,12 +1435,15 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
            feature == wgpu::FeatureName::SharedFenceSyncFD)) {
         requiredFeatures.push_back(feature);
       }
-#if defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
-      // PrimedGun's patched Dawn (quest/dawn): both eyes in one Vulkan multiview
-      // render pass (gfx/stereo_multiview.hpp).
+#endif
+#if defined(WEBGPU_DAWN) && defined(__linux__) && defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
+      // PrimedGun's patched Dawn (quest/dawn; the Frame's Linux build uses the same patches):
+      // both eyes in one Vulkan multiview render pass (gfx/stereo_multiview.hpp).
       if (g_config.xrInterop && g_backendType == wgpu::BackendType::Vulkan &&
           feature == wgpu::FeatureName::DawnMultiview) {
-        if (multiview_unsafe_on_adapter()) {
+        if (!multiview_wanted_on_platform()) {
+          Log.info("Vulkan multiview available but off: a pass per eye (PF2_MULTIVIEW=1 turns it on)");
+        } else if (multiview_unsafe_on_adapter()) {
           Log.info("Vulkan multiview left off on {}: a pass per eye (MP_MULTIVIEW_ADRENO6=1 forces it)",
                    std::string_view{g_adapterInfo.device});
         } else {
@@ -1435,7 +1451,6 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
           g_multiviewSupported = true;
         }
       }
-#endif
 #endif
 #ifdef WEBGPU_DAWN
       // The game thread creates textures and buffers (room env volumes, lightmaps, spilled uploads)
