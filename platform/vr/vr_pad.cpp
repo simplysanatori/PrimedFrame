@@ -5,6 +5,8 @@
 #include "vr/openxr_controller_snapshot.h"
 #include "vr/openxr_integration.h"
 #include "vr/openxr_screen_math.h"
+#include "vr/openxr_settings_panel.h"
+#include "vr/vr_autofire.h"
 #include "vr/vr_beam_wheel.h"
 #include "vr/vr_directional_move.h"
 #include "vr/vr_rumble.h"
@@ -32,6 +34,7 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <string_view>
 
 namespace PortVr {
 namespace {
@@ -88,6 +91,8 @@ bool g_recenter_was_pressed = false; // the right stick click's last state
 bool g_was_gameplay = false;
 bool g_in_game_menu = false; // VrNoteInGameMenu, from the game thread like VrPadUpdate
 uint32_t g_gameplay_samples = 0;
+AutoFire::Toggle g_autofire;           // game thread only; never saved, off at every launch
+std::atomic<bool> g_autofire_on{false}; // the toggle's state for CPlayerGun
 std::atomic<bool> g_custom_layout{false};
 std::atomic<bool> g_owns_motor{false}; // port 0's rumble goes to the headset controllers
 
@@ -357,6 +362,31 @@ float ApplyGameplay(const OpenXRControllerState& left, const OpenXRControllerSta
     return turnSpeedScale;
 }
 
+// Whether another custom action already has this input: the Auto Fire toggle
+// yields to it.
+bool CustomBindingTaken(const PortVrSettings& s, int binding) noexcept {
+#define VR_BIND(name, initial, group, label) \
+    if (std::string_view(#name) != "auto_fire" && s.custom_##name == binding) return true;
+#include "vr/vr_controller_bindings.inc"
+#undef VR_BIND
+    return false;
+}
+
+// The Auto Fire toggle's input, down or not. The Steam Frame's shoulder on the
+// weapon hand (the mirror when left-handed) unless a custom layout assigned the
+// toggle elsewhere or gave that shoulder to another action.
+bool AutoFireDown(const std::array<OpenXRControllerState, 2>& hands, uint32_t weapon_hand,
+                  const PortVrSettings& settings) noexcept {
+    if (!settings.custom_layout_enabled) {
+        return hands[weapon_hand].connected && hands[weapon_hand].shoulder;
+    }
+    if (settings.custom_auto_fire != 0) {
+        return ControllerLayout::Pressed(hands, settings.custom_auto_fire, ControllerLayout::Thresholds(settings));
+    }
+    const int shoulder = static_cast<int>(weapon_hand) * ControllerLayout::ControlsPerHand + 16;
+    return !CustomBindingTaken(settings, shoulder) && hands[weapon_hand].connected && hands[weapon_hand].shoulder;
+}
+
 } // namespace
 
 void VrPadUpdate(const CStateManager* mgr) noexcept {
@@ -392,6 +422,8 @@ void VrPadUpdate(const CStateManager* mgr) noexcept {
         g_snap_pending = 0.0f;
         g_move = {};
         g_gameplay_samples = 0;
+        g_autofire.Reset();
+        g_autofire_on.store(false, std::memory_order_relaxed);
         return;
     }
     if (!g_was_active) {
@@ -558,6 +590,21 @@ void VrPadUpdate(const CStateManager* mgr) noexcept {
         g_recenter_was_pressed = pressed;
     }
 
+    // Auto Fire: the weapon hand's shoulder toggles it in first-person gameplay
+    // (not while the VR menu has the controllers, or the beam wheel is up).
+    {
+        const bool allowed = settings.auto_fire_button && gameplay && !OpenXRSettingsPanelOpen() && !g_wheel.open;
+        bool changed = false;
+        if (!settings.auto_fire_button) {
+            changed = g_autofire.Disable();
+        }
+        changed |= g_autofire.Update(AutoFireDown(snapshot.controllers, weapon_hand, settings), allowed);
+        g_autofire_on.store(g_autofire.on, std::memory_order_relaxed);
+        if (changed) {
+            VrShowNotice(AutoFire::Toggle::Label(g_autofire.on), AutoFire::kLabelSeconds);
+        }
+    }
+
     PADStatus pad{};
     pad.err = PAD_ERR_NONE;
     float turnSpeedScale = 1.0f;
@@ -643,6 +690,8 @@ VrPadState GetVrPadState() noexcept {
 
 // The motor claim is the port claim: VrPadUpdate sets it when the controllers
 // take port 0 and clears it with PADClearVirtualStatus when they let go.
+bool VrAutoFireActive() noexcept { return g_autofire_on.load(std::memory_order_relaxed); }
+
 bool VrCustomLayoutActive() noexcept { return g_custom_layout.load(std::memory_order_relaxed); }
 
 bool VrPadOwnsPort0() noexcept { return g_owns_motor.load(std::memory_order_relaxed); }

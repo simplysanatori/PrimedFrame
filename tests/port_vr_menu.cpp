@@ -172,7 +172,7 @@ void TestRows() {
   s.calibration_page = 1;
   Check(ItemCount(s, View{}) == 12, "calibration page 2");
   s.tab = kControlTab;
-  Check(ItemCount(s, View{}) == 8, "control page 1");
+  Check(ItemCount(s, View{}) == 9, "control page 1");
   s.control_page = 1;
   Check(ItemCount(s, View{}) == 8, "control page 2");
   s.tab = kMovementTab;
@@ -280,6 +280,16 @@ void TestClicks() {
   v.rumble_hand = RumbleHand::Right;
   Click(s, v, view, kLabelX, RowY(kControlTab, 2), now, actions);
   Check(v.rumble_hand == RumbleHand::Split, "rumble cycles back to split");
+  // AUTO FIRE BUTTON: RIGHT SHOULDER (LEFT when left-handed) or OFF, on by default.
+  Check(v.auto_fire_button && BuildRows(s, v, view)[8].label == "AUTO FIRE BUTTON" &&
+            BuildRows(s, v, view)[8].value == "RIGHT SHOULDER", "auto fire button default");
+  v.use_right_hand = false;
+  Check(BuildRows(s, v, view)[8].value == "LEFT SHOULDER", "auto fire button mirrors for the left hand");
+  v.use_right_hand = true;
+  Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
+  Check(!v.auto_fire_button && BuildRows(s, v, view)[8].value == "OFF", "auto fire button off");
+  Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
+  Check(v.auto_fire_button, "auto fire button back on");
   v.rumble_hand = RumbleHand::Both;
   // The control tab's second page: VISOR GESTURE, then back.
   Click(s, v, view, kNextX, kPageY, now, actions);
@@ -1038,10 +1048,12 @@ void TestLiveSettings() {
 void TestFrameLayoutText() {
   PortVrSettings v{};
   const LayoutRows standard = FrameLayoutRows(v);
-  Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "MENU - NO ACTION", "frame rows");
+  Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "RIGHT SHOULDER - AUTO FIRE", "frame rows");
   Check(standard.left[1] == "D-PAD UP - START/PAUSE" && standard.left[2] == "D-PAD DOWN - MORPH BALL",
         "frame left face buttons are the D-pad");
   Check(standard.right[1] == "B BUTTON - BEAM SELECT" && standard.right[2] == "A BUTTON - SELECT", "frame A and B");
+  Check(standard.footer == "NO ACTION - MENU, X, Y, LEFT SHOULDER, D-PAD LEFT/RIGHT", "frame footer");
+  Check(TextWidth(standard.footer.c_str(), 2) <= kWidth - 40, "frame footer fits");
   v.custom_layout_enabled = true;
   const LayoutRows custom = FrameLayoutRows(v);
   Check(custom.left[0] == "SHOOT - RIGHT TRIGGER" && custom.left[4] == "MORPH BALL - D-PAD DOWN" &&

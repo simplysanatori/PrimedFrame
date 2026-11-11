@@ -251,6 +251,7 @@ const Field kFields[] = {
     Field{"vr_rumble_hand", [](PortVrSettings& s, const std::string& v) { ParseRumbleHand(v, s.rumble_hand); },
           [](const PortVrSettings& s, std::ostream& o) { o << RumbleHandName(s.rumble_hand); }},
     VR_BOOL(grip_inputs_enabled),
+    VR_BOOL(auto_fire_button),
     VR_BOOL(grip_inputs_use_trackpad),
     VR_FLOAT(trackpad_press_threshold, 0.05f, 1.0f),
     VR_FLOAT(index_grip_press_threshold, 0.05f, 1.0f),
