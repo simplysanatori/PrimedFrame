@@ -187,6 +187,21 @@ static uint sTicksAdvanced = 0;
 // behind, a stall or a new session) restarts it at the packet's time with a wall-clock step.
 static int64_t sPf2AlphaBase = 0;
 static uint64_t sPf2AlphaSerial = 0;
+#if defined(__linux__) && !defined(__ANDROID__)
+// PrimedFrame: Valve's FDM injection layer (XR_APILAYER_VALVE_fdm_injection, an implicit OpenXR
+// layer that adds VK_LAYER_VALVE_fdm_injection to the runtime's Vulkan device) renders the eyes'
+// periphery at a lower density, which blurs distant HUD panels. Off before anything (Aurora's
+// Vulkan, the OpenXR loader) can load it, as Azahar for Frame does; PRIMEDFRAME_FDM=1 keeps it.
+// The OpenXR backend logs whether it loaded.
+__attribute__((constructor)) static void PrimedFrameFdmOff() {
+  if (const char* fdm = std::getenv("PRIMEDFRAME_FDM"); fdm != nullptr && fdm[0] == '1') {
+    unsetenv("DISABLE_VULKAN_FDM_INJECTION_LAYER");
+    return;
+  }
+  setenv("DISABLE_VULKAN_FDM_INJECTION_LAYER", "1", 0);
+}
+#endif
+
 // The packet the coming draw lands in, how its alpha advanced, and the steps since the last
 // headset draw (the [pf2] line's true repeats).
 static uint64_t sPf2DrawSerial = 0;
@@ -199,15 +214,29 @@ static float sPf2LastAlpha = -2.f;
 static uint64_t sPf2LockSerial = 0;
 static int64_t sPf2LockDisplay = 0;
 static bool sPf2Locked = false;
+// The display periods moved but not yet stepped (a stride of 2), and the lock's step period
+// (display period x stride; 0 before the first locked packet).
+static int sPf2LockCarry = 0;
+static double sPf2LockPeriod = 0.0;
 
-// PF2_SIM_LOCK: the steps for this frame (one per display period the new packet's display time
-// moved, normally exactly 1) and their period, or -1 when the lock does not step this frame (off,
-// no headset, no new packet: the wall clock then steps the game).
+// PF2_SIM_LOCK: the steps for this frame and their period, or -1 when the lock does not step
+// this frame (off, no headset, no new packet: the wall clock then steps the game, at the lock's
+// step period once there is one, so the display rate stays the simulation rate).
+// Rate guard (pf2::SimLockStride): one step per packet up to PF2_SIM_LOCK_MAX_HZ (default 96),
+// above it one step of two periods per two packets. A packet whose display time moved k periods
+// (missed refreshes, a hitch) adds k: at most 0.25 s of steps, and UpdateTicks' tick budget
+// (max(2 step periods, 1/30 s) of tick work) drops what does not fit, so a long stall slows the
+// game instead of spiralling.
 static int Pf2SimLockSteps(double& period) {
   sPf2Locked = false;
   if (!PortVr::pf2::Get().sim_lock || !PortVr::OpenXRIsRunning()) {
     sPf2LockDisplay = 0;
+    sPf2LockPeriod = 0.0;
+    sPf2LockCarry = 0;
     return -1;
+  }
+  if (sPf2LockPeriod > 0.0) {
+    period = sPf2LockPeriod;
   }
   PortVr::OpenXRFrameRequest request;
   if (!PortVr::OpenXRLatestFrameRequest(request) || request.predicted_display_time <= 0 ||
@@ -216,15 +245,23 @@ static int Pf2SimLockSteps(double& period) {
   }
   sPf2LockSerial = request.serial;
   const double displayPeriod = static_cast< double >(request.predicted_display_period) * 1e-9;
-  int steps = 1;
+  const int stride = PortVr::pf2::SimLockStride(1.0 / displayPeriod);
+  int moved = 1;
   if (sPf2LockDisplay != 0) {
-    const double moved =
+    const double periods =
         static_cast< double >(request.predicted_display_time - sPf2LockDisplay) / request.predicted_display_period;
-    const int most = std::max(1, static_cast< int >(0.25 / displayPeriod));
-    steps = std::clamp(static_cast< int >(std::lround(moved)), 0, most);
+    const int most = std::max(stride, static_cast< int >(0.25 / displayPeriod));
+    moved = std::clamp(static_cast< int >(std::lround(periods)), 0, most);
   }
+  if (stride == 1) {
+    sPf2LockCarry = 0;
+  }
+  sPf2LockCarry += moved;
+  const int steps = sPf2LockCarry / stride;
+  sPf2LockCarry %= stride;
   sPf2LockDisplay = request.predicted_display_time;
-  period = displayPeriod;
+  period = displayPeriod * stride;
+  sPf2LockPeriod = period;
   sPf2Locked = true;
   return steps;
 }
@@ -685,6 +722,11 @@ bool CGameArchitectureSupport::UpdateTicks() {
   } else {
     ticks = x7c_tickClock.Advance(tickElapsed, gpMain->GetScreenFading() || PortDebug::Turbo(),
                                   PortDebug::FrameLimitEnabled());
+    // PF2_SIM_LOCK: the wall clock stepped the game without a new packet, so the next packet
+    // starts afresh (one step) instead of counting those periods again.
+    if (ticks > 0 && sPf2LockPeriod > 0.0) {
+      sPf2LockDisplay = 0;
+    }
   }
   // A frame within the clamp is covered by its one step; past it (a hitch)
   // the remainder is kept so the following frames catch up.
@@ -1046,6 +1088,27 @@ bool CMain::CheckReset() {
 static bool sVrLastGameFrameDrawn = false;
 static PortVr::OpenXRFrameRequest sVrFrameRequest;
 
+// Port (PrimedFrame): where the game thread's frames went between two "port: frame" lines,
+// timed here (the per-phase timers in the game code average over the last second only, so
+// lines taken in the menus or while loading read 0.00): the game update (UpdateTicks), the draw
+// (the IO windows: world and HUD), the loader's idle, and when the frame was sealed (EndScene)
+// after the loop began.
+struct PortFrameSpan {
+  double sum[4] = {};
+  double max[4] = {};
+  unsigned frames = 0;
+  void Add(int i, double ms) {
+    sum[i] += ms;
+    max[i] = std::max(max[i], ms);
+  }
+  double Avg(int i) const { return frames > 0 ? sum[i] / frames : 0.0; }
+};
+enum { kSpanUpdate, kSpanDraw, kSpanIdle, kSpanSealed };
+static PortFrameSpan sFrameSpan;
+static double PortMsSince(std::chrono::steady_clock::time_point start) {
+  return std::chrono::duration< double, std::milli >(std::chrono::steady_clock::now() - start).count();
+}
+
 int CMain::RsMain(int argc, const char* const* argv) {
   PPCSetFpIEEEMode();
   CStopwatch timer;
@@ -1306,7 +1369,10 @@ int CMain::RsMain(int argc, const char* const* argv) {
       // PortVr: PrimedGun's control scheme on port 0, from the headset
       // controllers, before the ticks read the pads.
       PortVr::VrPadUpdate(PortDebug::StateManager());
-      if (!archSupport->UpdateTicks()) {
+      const auto updateStart = std::chrono::steady_clock::now();
+      const bool updateOk = archSupport->UpdateTicks();
+      sFrameSpan.Add(kSpanUpdate, PortMsSince(updateStart));
+      if (!updateOk) {
         PortSaveState::ResumeQuitCleanly();
         x160_24_finished = true;
       }
@@ -1413,7 +1479,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
                 ? static_cast< float >((1.f - interpolation) * dt)
                 : 0.f);
         aurora::phase::set(aurora::phase::Main, "game draw");
+        const auto drawStart = std::chrono::steady_clock::now();
         archSupport->GetIOWinManager().Draw();
+        sFrameSpan.Add(kSpanDraw, PortMsSince(drawStart));
         CCameraManager::SetPresentationInterpolation(-1.f);
         CGraphics::SetSimTimePresentLag(0.f);
         CGraphics::SetRenderTimePresentLag(0.f);
@@ -1434,10 +1502,26 @@ int CMain::RsMain(int argc, const char* const* argv) {
           idleMicros = idleTime * 1000000;
         else
           idleMicros = 0;
-        AsyncIdle(idleMicros);
+        // PrimedFrame (PF2_IDLE_AFTER_SEAL, default on Linux): in the headset the frame is sealed
+        // first and the loader idles after, in the time the loop would wait for the next packet;
+        // a slow load step (an area's first construction) then delays the next frame instead of
+        // holding back the one already drawn. The budget stays the same.
+        const bool idleAfterSeal = PortVr::OpenXRIsRunning() && PortVr::pf2::Get().idle_after_seal;
+        const auto idleStart = std::chrono::steady_clock::now();
+        if (!idleAfterSeal) {
+          AsyncIdle(idleMicros);
+          sFrameSpan.Add(kSpanIdle, PortMsSince(idleStart));
+        }
 
         gpRender->EndScene();
         aurora::phase::set(aurora::phase::Main, "after EndScene");
+        sFrameSpan.Add(kSpanSealed, static_cast< double >(SDL_GetTicksNS() - loopStartNs) / 1e6);
+        if (idleAfterSeal) {
+          aurora::phase::set(aurora::phase::Main, "resource loading (AsyncIdle after the seal)");
+          const auto sealedIdleStart = std::chrono::steady_clock::now();
+          AsyncIdle(idleMicros);
+          sFrameSpan.Add(kSpanIdle, PortMsSince(sealedIdleStart));
+        }
         presented = true;
 
         sVrLastGameFrameDrawn = x161_24_gameFrameDrawn;
@@ -1534,25 +1618,37 @@ int CMain::RsMain(int argc, const char* const* argv) {
         // The whole iteration, pacing included: what a player sees as a frame.
         const uint64_t frameEndNs = SDL_GetTicksNS();
         milestoneWorstNs = std::max(milestoneWorstNs, frameEndNs - loopStartNs);
+        ++sFrameSpan.frames;
+        // The start-up milestones, then a line every 30 s for the rest of the run.
+        const bool milestone = s_frameLog == 2 || s_frameLog == 10 || s_frameLog == 60 || s_frameLog == 300 ||
+                               s_frameLog == 1800 ||
+                               (s_frameLog > 1800 && frameEndNs - milestoneSpanStartNs >= 30000000000ull);
         if (s_frameLog == 1) {
           milestoneSpanStartNs = frameEndNs;
           milestoneSpanStartFrame = 1;
           milestoneWorstNs = 0;
-        } else if (s_frameLog == 2 || s_frameLog == 10 || s_frameLog == 60 || s_frameLog == 300 ||
-                   s_frameLog == 1800) {
+          sFrameSpan = {};
+        } else if (milestone) {
           const double span = static_cast< double >(frameEndNs - milestoneSpanStartNs) / 1e9;
-          // Port: with the game thread's phases over the last timing window (PortDebug::FramePhaseMs).
+          // Port: the game thread's own times over the span (sFrameSpan), with the game code's
+          // world/HUD split over the last second (PortDebug::FramePhaseMs; 0 outside gameplay).
+          const PortFrameSpan& f = sFrameSpan;
           PortLog::Write("port: frame %u at %.2f s (avg fps %.1f over the last %u frames, worst frame %.1f ms; game "
-                         "thread per frame: update %.2f, world draw %.2f, HUD draw %.2f ms)\n",
+                         "thread per frame avg/max: update %.2f/%.2f, draw %.2f/%.2f (last second: world %.2f, HUD "
+                         "%.2f), loader idle %.2f/%.2f %s, sealed %.2f/%.2f ms into the frame)\n",
                          s_frameLog, static_cast< double >(frameEndNs - loopBeganNs) / 1e9,
                          span > 0.0 ? (s_frameLog - milestoneSpanStartFrame) / span : 0.0,
                          s_frameLog - milestoneSpanStartFrame, static_cast< double >(milestoneWorstNs) / 1e6,
-                         PortDebug::FramePhaseMs(PortDebug::kPhaseUpdate),
+                         f.Avg(kSpanUpdate), f.max[kSpanUpdate], f.Avg(kSpanDraw), f.max[kSpanDraw],
                          PortDebug::FramePhaseMs(PortDebug::kPhaseDrawWorld),
-                         PortDebug::FramePhaseMs(PortDebug::kPhaseDrawGui));
+                         PortDebug::FramePhaseMs(PortDebug::kPhaseDrawGui), f.Avg(kSpanIdle), f.max[kSpanIdle],
+                         PortVr::OpenXRIsRunning() && PortVr::pf2::Get().idle_after_seal ? "after the seal"
+                                                                                         : "before the seal",
+                         f.Avg(kSpanSealed), f.max[kSpanSealed]);
           milestoneSpanStartNs = frameEndNs;
           milestoneSpanStartFrame = s_frameLog;
           milestoneWorstNs = 0;
+          sFrameSpan = {};
           if (s_frameLog == 60) {
             PortDebug::DriverWorkaroundsStarted();
           }

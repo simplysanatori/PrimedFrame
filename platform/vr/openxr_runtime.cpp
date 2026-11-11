@@ -16,6 +16,9 @@
 
 #include "vr/openxr_runtime.h"
 #include "vr/openxr_diagnostics.h"
+#if defined(__linux__) && !defined(__ANDROID__)
+#include "vr/steamvr_frame_timing.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -1026,6 +1029,10 @@ bool OpenXRRuntime::ConsumeAppSpaceChangesThrough(XrTime display_time) {
 }
 
 void OpenXRRuntime::DestroySession() {
+#if defined(__linux__) && !defined(__ANDROID__)
+    // The in-process SteamVR timing reader uses this session's vrclient connection: stopped first.
+    PortVr::steamvr_timing::Stop();
+#endif
     if (!HasSession()) {
         ResetSessionState();
         return;
