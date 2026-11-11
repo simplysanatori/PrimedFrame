@@ -5,7 +5,7 @@
 # ask for no glibc symbol newer than 2.39, the oldest SteamOS (the others have 2.43, whose newer symbol
 # versions would not load there). The host's /usr/lib stays on the search path, after the glibc tree,
 # for the libraries the build links but does not bring (Qt, which is packed with the release); the glibc tree
-# comes first on rpath-link too, or a library's own need of libm would bind to the host's newer libm.
+# comes first on -L and rpath-link, or -lm and a library's own need of libm would bind to the host's libm (glibc 2.43 symbols)
 self=$(dirname "$(readlink -f "$0")")
 name=$(basename "$0")
 case $name in pf-g++ | g++ | c++) tool=g++ ;; *) tool=gcc ;; esac
@@ -13,6 +13,6 @@ real=$(PATH=${PATH//"$self:"/} command -v "$tool") || { echo "$name: $tool not f
 link=1
 for a in "$@"; do case $a in -c | -S | -E | -M | -MM | -MD | --version | -v | -### | -print-* | -dumpmachine | -dumpversion) link=0 ;; esac; done
 if [ "$link" = 1 ] && [ -n "$PF_GLIBC239_SYSROOT" ]; then
-    exec "$real" "$@" --sysroot="$PF_GLIBC239_SYSROOT" -L/usr/lib -Wl,-rpath-link,"$PF_GLIBC239_SYSROOT/usr/lib" -Wl,-rpath-link,/usr/lib
+    exec "$real" "$@" --sysroot="$PF_GLIBC239_SYSROOT" -L"$PF_GLIBC239_SYSROOT/usr/lib" -L/usr/lib -Wl,-rpath-link,"$PF_GLIBC239_SYSROOT/usr/lib" -Wl,-rpath-link,/usr/lib
 fi
 exec "$real" "$@"
