@@ -541,6 +541,7 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
   // An earlier pass of an immersive frame whose mono image nothing reads (StereoPassReplay::monoSkipped):
   // only its eye passes and the copies taken from them.
   const bool monoSkipped = passInfo.stereo.enabled && passInfo.stereo.monoSkipped;
+  const bool monoBegins = !(passInfo.stereo.enabled && passInfo.stereo.skipMono) && !monoSkipped;
   // A pass carries one occlusion query set: overdraw's capture, else the game's visibility queries.
   wgpu::QuerySet occlusion;
   if (!monoSkipped) {
@@ -556,12 +557,13 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
       .colorAttachments = attachments.data(),
       .depthStencilAttachment = depthStencilAttachmentPtr,
       .occlusionQuerySet = occlusion,
-      .timestampWrites = webgpu::gpu_prof::pass_writes(profName),
+      // Only a pass that is begun is timed: an unwritten query reads back stale times (gputimes).
+      .timestampWrites = monoBegins ? webgpu::gpu_prof::pass_writes(profName) : nullptr,
   };
 
   // An immersive frame's final pass on a headset that owns the display: nothing
   // reads its mono image (stereo_frame.hpp StereoPassReplay::skipMono).
-  if (!(passInfo.stereo.enabled && passInfo.stereo.skipMono) && !monoSkipped) {
+  if (monoBegins) {
     auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
     render_pass(pass, frame, passInfo);
     pass.End();
