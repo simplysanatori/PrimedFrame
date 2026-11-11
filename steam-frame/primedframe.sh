@@ -11,6 +11,7 @@
 #   PRIMEDFRAME_HOME      data folder: saves, settings, mods, caches, sessions (default ~/.local/share/PrimedFrame/v2)
 #   PRIMEDFRAME_HZ        SteamVR's refresh rate for this entry (72 80 90 96 108 120 144; default 90)
 #   PRIMEDFRAME_EYE       SteamVR's render size per eye, pixels (default 1728)
+#   PRIMEDFRAME_SMOOTHING 1 = SteamVR motion smoothing on (fills in missed frames); default off
 #   PRIMEDFRAME_APPID     the Steam entry's appid when this is not started from Steam
 #   PRIMEDFRAME_VR_WAIT   seconds to wait for SteamVR to accept the keys (default 20)
 #   PRIMEDFRAME_STEAMVR_DIR  SteamVR's folder with vrcmd (default /opt/steamvr/bin/linuxarm64)
@@ -53,7 +54,8 @@ HZ=${PRIMEDFRAME_HZ:-90}; EYE=${PRIMEDFRAME_EYE:-1728}
 case "$HZ" in 72 | 80 | 90 | 96 | 108 | 120 | 144) ;; *) echo "primedframe: PRIMEDFRAME_HZ=$HZ is not a Frame mode (72 80 90 96 108 120 144), using 90" >&2; HZ=90 ;; esac
 case "$EYE" in [0-9][0-9][0-9][0-9]) ;; *) echo "primedframe: PRIMEDFRAME_EYE=$EYE is not a pixel size, using 1728" >&2; EYE=1728 ;; esac
 APPID=${PRIMEDFRAME_APPID:-$SteamAppId}
-KEYS=("preferredRefreshRate=$HZ" "motionSmoothingOverride=2" "resolutionOverride=$EYE" "framesToThrottle=0")   # 2 = motion smoothing off; 0 = no half-rate throttle (PrimedFrame 1.0 left 1 on this entry)
+SMOOTH=2; [ "${PRIMEDFRAME_SMOOTHING:-0}" = 1 ] && SMOOTH=1   # SteamVR: 1 = force on, 2 = force off
+KEYS=("preferredRefreshRate=$HZ" "motionSmoothingOverride=$SMOOTH" "resolutionOverride=$EYE" "framesToThrottle=0")   # 2 = motion smoothing off; 0 = no half-rate throttle (PrimedFrame 1.0 left 1 on this entry)
 
 # vrcmd read of one per-app key: prints the value, empty when unset or unreadable.
 vr_get() { env -u LD_PRELOAD timeout 5 "$VRCMD" --settings-int "steam.app.$APPID.$1" 2> /dev/null | sed -n "s/^steam\.app\.$APPID\.$1=//p" | head -n 1; }
