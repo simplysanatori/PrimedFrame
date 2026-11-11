@@ -10,6 +10,7 @@
 #include "MetroidPrime/Enemies/CPuddleToadGamma.hpp"
 #include "MetroidPrime/Enemies/CWallCrawlerSwarm.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
+#include "MetroidPrime/PortRate.hpp"
 #include "MetroidPrime/ScriptObjects/CHUDBillboardEffect.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
@@ -350,7 +351,11 @@ CRayCastResult CGameProjectile::DoCollisionCheck(TUniqueId& idOut, CStateManager
 void CGameProjectile::UpdateProjectileMovement(float dt, CStateManager& mgr) {
   float useDt = dt;
   if (x2e4_26_waterUpdate) {
+#ifdef TARGET_PC
+    useDt = PortRate::UnderwaterProjectileDt(dt);
+#else
     useDt = 37.5f * (dt * dt);
+#endif
   }
   x298_previousPos = GetTranslation();
   x170_projectile.Update(useDt);
