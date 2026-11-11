@@ -4,6 +4,7 @@
 #include <aurora/aurora.h>
 
 #include "port_debug.h"
+#include "vr/pf2_switches.h"
 #include "vr/prime_vr_policy.h"
 #include "vr/vr_view.h"
 #include <algorithm>
@@ -1511,6 +1512,7 @@ void CGraphics::TickSimTime(float dt) {
   sSimTickCarry -= add;
   mSimTicks = (mSimTicks + add) % 9072000u;
   sLastSimTickAdd = add;
+  PortVr::pf2::NoteSimStep(add);
 }
 
 float CGraphics::GetSimTime() {

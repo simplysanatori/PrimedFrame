@@ -1313,6 +1313,11 @@ private:
     // failure; a cycle that ends without a layer returns true and the loop tries again.
     bool RenderFirstCycle(OpenXRPresentation presentation, const PrimeVRPolicySnapshot& policy, bool immersive,
                           uint32_t& consecutive_skips, bool& immersive_submission_logged) {
+        // PF2_LATE_LOCATE=<ms>: the poses are located that much later for the same display slot,
+        // from the idle time this thread otherwise spends in xrWaitFrame once the eyes are done.
+        if (const int late = pf2::Get().late_locate_ms; late > 0 && immersive) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(late));
+        }
         OpenXRBackendFrame packet{};
         const OpenXRBeginStatus prepared = backend_->PreparePacket(presentation, packet);
         if (prepared == OpenXRBeginStatus::SessionNotRunning) {
@@ -1534,6 +1539,10 @@ private:
         std::optional<OpenXRBackendFrame> next;
         if (continue_pipeline && WaitForPickup(packet.xr_frame.serial, kPickupWaitMs)) {
             OpenXRBackendFrame candidate{};
+            // PF2_LATE_LOCATE=<ms>: as in RenderFirstCycle (vr_pipelined_rendering=1).
+            if (const int late = pf2::Get().late_locate_ms; late > 0 && immersive) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(late));
+            }
             // PF2_AHEAD_PERIODS=n: one period more than a plain packet's n.
             const int ahead = pf2::Get().ahead_periods;
             const OpenXRBeginStatus located =
