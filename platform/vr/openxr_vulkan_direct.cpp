@@ -2127,6 +2127,19 @@ private:
                        "is blitted into its half, so multiview stays as set)";
         }
         Log(OpenXRLogLevel::Info, message.str());
+#ifdef PF2_STEAMVR_READER
+        // Valve's FDM injection layer (an implicit OpenXR API layer that adds a Vulkan layer) blurs
+        // distant HUDs: platform main turns it off unless PRIMEDFRAME_FDM=1 (src/MetroidPrime/main.cpp).
+        {
+            const char* disable = std::getenv("DISABLE_VULKAN_FDM_INJECTION_LAYER");
+            Log(OpenXRLogLevel::Info,
+                std::string("Vulkan FDM injection layer (VK_LAYER_VALVE_fdm_injection): ") +
+                    (steamvr_timing::LibraryLoaded("VALVE_fdm_injection") ? "LOADED" : "not loaded") +
+                    " (DISABLE_VULKAN_FDM_INJECTION_LAYER=" + (disable != nullptr ? disable : "unset") +
+                    (std::getenv("PRIMEDFRAME_FDM") != nullptr ? ", PRIMEDFRAME_FDM=" + std::string(std::getenv("PRIMEDFRAME_FDM")) : std::string()) +
+                    ")");
+        }
+#endif
         end_phase_.Configure(switches, runtime_ != nullptr ? runtime_->RuntimeInfo().runtime_name : std::string(),
                              [this](const std::string& line) { Log(OpenXRLogLevel::Info, line); });
     }

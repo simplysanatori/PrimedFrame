@@ -187,6 +187,21 @@ static uint sTicksAdvanced = 0;
 // behind, a stall or a new session) restarts it at the packet's time with a wall-clock step.
 static int64_t sPf2AlphaBase = 0;
 static uint64_t sPf2AlphaSerial = 0;
+#if defined(__linux__) && !defined(__ANDROID__)
+// PrimedFrame: Valve's FDM injection layer (XR_APILAYER_VALVE_fdm_injection, an implicit OpenXR
+// layer that adds VK_LAYER_VALVE_fdm_injection to the runtime's Vulkan device) renders the eyes'
+// periphery at a lower density, which blurs distant HUD panels. Off before anything (Aurora's
+// Vulkan, the OpenXR loader) can load it, as Azahar for Frame does; PRIMEDFRAME_FDM=1 keeps it.
+// The OpenXR backend logs whether it loaded.
+__attribute__((constructor)) static void PrimedFrameFdmOff() {
+  if (const char* fdm = std::getenv("PRIMEDFRAME_FDM"); fdm != nullptr && fdm[0] == '1') {
+    unsetenv("DISABLE_VULKAN_FDM_INJECTION_LAYER");
+    return;
+  }
+  setenv("DISABLE_VULKAN_FDM_INJECTION_LAYER", "1", 0);
+}
+#endif
+
 // The packet the coming draw lands in, how its alpha advanced, and the steps since the last
 // headset draw (the [pf2] line's true repeats).
 static uint64_t sPf2DrawSerial = 0;
