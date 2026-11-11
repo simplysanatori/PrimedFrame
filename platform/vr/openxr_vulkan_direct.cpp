@@ -1729,6 +1729,7 @@ public:
             return false;
         }
         bound_ = false;
+        ResetSessionPacing();
         if (!runtime.PrepareSessionRecreate()) {
             return Fail("OpenXR instance is lost; a new session needs a new instance");
         }
@@ -1744,6 +1745,32 @@ public:
             return Fail("Aurora no longer reports the Dawn Vulkan device the session was made on");
         }
         return BindSession(runtime, handles);
+    }
+
+    // Session recovery: what the pacing kept of the old session's frames (PF2_OVERLAP's CPU and
+    // GPU history, located packets, pose and end times, the display timing and the packet
+    // origins) starts over with the new session. ReleaseSession already dropped the packets
+    // and the swapchains; next_packet_serial_ keeps counting, so no old token matches a new one.
+    void ResetSessionPacing() {
+        cpu_ms_.clear();
+        gpu_own_ms_.clear();
+        located_ns_ = {};
+        pf2_gpu_own_ms_.clear();
+        pf2_overlap_lead_ms_.clear();
+        pf2_overlaps_ = 0;
+        active_pose_time_ = 0;
+        retained_pose_time_ = 0;
+        pf2_last_end_time_ = 0;
+        time_invalid_run_ = 0;
+        pf2_wait_return_ = {};
+        timing_session_serial_ = 0;
+        last_display_time_ = 0;
+        last_display_period_ = 0;
+        nominal_period_ = 0;
+        last_should_render_ = false;
+        located_origin_ = pending_origin_ = queued_origin_ = active_origin_ = {};
+        pending_packet_serial_ = queued_packet_serial_ = active_packet_serial_ = 0;
+        retained_panel_valid_ = false;
     }
 
     // Everything of Shutdown() that belongs to the session: the bridge, the fence, the swapchains
