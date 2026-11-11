@@ -538,11 +538,17 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
   // Timed per pass index, so gputimes splits a frame's EFB passes (not by size: dynamic
   // resolution would intern a name per size).
   const auto profName = fmt::format("EFB pass {}", passIndex);
+  // An earlier pass of an immersive frame whose mono image nothing reads (StereoPassReplay::monoSkipped):
+  // only its eye passes and the copies taken from them.
+  const bool monoSkipped = passInfo.stereo.enabled && passInfo.stereo.monoSkipped;
   // A pass carries one occlusion query set: overdraw's capture, else the game's visibility queries.
-  wgpu::QuerySet occlusion =
-      overdraw::pass_begin(passIndex, passInfo.colorAttachments[SceneColorAttachmentIndex].size, passInfo.msaaSamples);
-  if (wgpu::QuerySet visibility = vis_query::detail::pass_begin(static_cast<bool>(occlusion))) {
-    occlusion = std::move(visibility);
+  wgpu::QuerySet occlusion;
+  if (!monoSkipped) {
+    occlusion = overdraw::pass_begin(passIndex, passInfo.colorAttachments[SceneColorAttachmentIndex].size,
+                                     passInfo.msaaSamples);
+    if (wgpu::QuerySet visibility = vis_query::detail::pass_begin(static_cast<bool>(occlusion))) {
+      occlusion = std::move(visibility);
+    }
   }
   const wgpu::RenderPassDescriptor renderPassDescriptor{
       .label = label.c_str(),
@@ -555,7 +561,7 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
 
   // An immersive frame's final pass on a headset that owns the display: nothing
   // reads its mono image (stereo_frame.hpp StereoPassReplay::skipMono).
-  if (!(passInfo.stereo.enabled && passInfo.stereo.skipMono)) {
+  if (!(passInfo.stereo.enabled && passInfo.stereo.skipMono) && !monoSkipped) {
     auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
     render_pass(pass, frame, passInfo);
     pass.End();
@@ -570,8 +576,10 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
       render_stereo_eye_pass(cmd, passInfo, passIndex, eye);
     }
   }
-  overdraw::pass_end();
-  vis_query::detail::pass_end();
+  if (!monoSkipped) {
+    overdraw::pass_end();
+    vis_query::detail::pass_end();
+  }
 
   if (passInfo.captureDepthSnapshot) {
     depth_peek::encode_frame_snapshot(cmd, passInfo.copySourceDepthView,
@@ -589,7 +597,7 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
       Log.warn("depth tex copy (format {}) from a {}x multisampled EFB is not supported; skipped",
                static_cast<int>(passInfo.resolveFormat), passInfo.msaaSamples);
     }
-  } else if (passInfo.resolveTarget) {
+  } else if (passInfo.resolveTarget && !monoSkipped) {
     const auto& dstSize = passInfo.resolveTarget->size;
     const bool needsConversion = tex_copy_conv::needs_conversion(passInfo.resolveFormat);
     // A probe face is a layer of a cube texture, which only the blit addresses.
@@ -712,7 +720,7 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
     }
   }
 
-  if (passInfo.snapshotColorDst) {
+  if (passInfo.snapshotColorDst && !monoSkipped) {
     const webgpu::gpu_prof::Zone zone{cmd, "Pass snapshot"};
     const wgpu::TexelCopyTextureInfo src{
         .texture = passInfo.copySourceTexture,
@@ -727,7 +735,7 @@ void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& passInfo,
     };
     cmd.CopyTextureToTexture(&src, &dst, &size);
   }
-  if (passInfo.snapshotDepthDst) {
+  if (passInfo.snapshotDepthDst && !monoSkipped) {
     tex_copy_conv::snapshot_depth(cmd, passInfo.copySourceDepthView, passInfo.msaaSamples, passInfo.snapshotDepthDst);
   }
 }

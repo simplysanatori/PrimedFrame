@@ -88,6 +88,19 @@ struct FrameRecorder {
   bool suppressRenderWorker = false;
   uint8_t stereoRoute = AURORA_STEREO_ROUTE_WORLD;
   bool finalPassMonoUnneeded = false;
+  // PF2_MONO_SKIP (decide_mono_skip): this frame may leave out the mono image of EFB passes that
+  // only the eyes need; monoEfbStale: a pass since the mono EFB was last cleared whole was left
+  // out, so its mono contents are not what the game drew; monoChainStart: that clear's pass.
+  bool monoSkipArmed = false;
+  bool monoEfbStale = false;
+  bool sealingFinalPass = false;
+  uint32_t monoChainStart = 0;
+  uint32_t monoSkipCooldown = 0;
+  // Passes whose mono image something read (a copy the eyes share, an encoder task, the final
+  // pass shown as mono), as [first pass of its clear chain, pass]: this frame's, and the last
+  // frame's, which this frame keeps in mono.
+  std::vector<std::pair<uint32_t, uint32_t>> monoNeeds;
+  std::vector<std::pair<uint32_t, uint32_t>> monoNeedsPrev;
   stereo_replay::HeadLockedPlane headLockedPlane;
   StereoPlacement3D placement3D;
   StereoScreenTexMtx stereoScreenTexMtx;
@@ -128,6 +141,10 @@ std::atomic_bool g_stereoDiagnostics{frame_stats_forced()};
 // stereo statistics lines (log_stereo_frame_stats), while diagnostics are on.
 std::atomic<uint64_t> g_eyeUniformNs{0};
 std::atomic<uint32_t> g_eyeUniformDraws{0};
+// decide_mono_skip, between two statistics lines: mono passes left out, and passes whose mono
+// image was read after an earlier pass of its chain had been left out (a stale read).
+std::atomic<uint32_t> g_monoSkippedPasses{0};
+std::atomic<uint32_t> g_monoStaleReads{0};
 } // namespace
 
 namespace perf {
@@ -189,7 +206,7 @@ void log_stereo_frame_stats(const FramePacket& frame) {
   for (const auto& pass : frame.renderPasses) {
     efbPasses += pass.efb ? 1 : 0;
     eyePasses += pass.stereo.enabled ? 1 : 0;
-    monoSkipped += pass.stereo.enabled && pass.stereo.skipMono ? 1 : 0;
+    monoSkipped += pass.stereo.enabled && (pass.stereo.skipMono || pass.stereo.monoSkipped) ? 1 : 0;
     foveated += pass.stereo.enabled && pass.stereo.foveated ? 1 : 0;
     copies += pass.resolveTarget ? 1 : 0;
     eyeCopies += pass.stereo.copyTargets[0] ? 1 : 0;
@@ -224,6 +241,11 @@ void log_stereo_frame_stats(const FramePacket& frame) {
            fifoKb, drainWaitMs, drainCalls, encodeMs, submitMs, uploads.lastVertSize / 1024,
            uploads.lastIndexSize / 1024, uploads.lastUniformSize / 1024, uploads.lastStorageSize / 1024,
            uploads.lastTextureUploadSize / 1024);
+  if (const uint32_t skipped = g_monoSkippedPasses.exchange(0, std::memory_order_relaxed),
+      stale = g_monoStaleReads.exchange(0, std::memory_order_relaxed);
+      skipped != 0 || stale != 0) {
+    Log.info("mono skip: {} mono EFB passes left out, {} stale mono reads over the last 600 frames", skipped, stale);
+  }
   // The FIFO processor's buckets, in ticks calibrated over the window since the
   // last line (the first line, with no window yet, shows zeros).
   static uint64_t sLastTick = perf::tick();
@@ -953,17 +975,92 @@ void log_pass(const FramePacket& frame, const RenderPass& p) {
     draws += cmd.type == CommandType::Draw || cmd.type == CommandType::CustomDraw;
   }
   Log.info("pass f{} '{}' {}x{} msaa{} draws{} cload{} cstore{} dclear{} dstore{} resolve{} {}x{}+{},{} fmt{} probe{} "
-           "snapC{} snapD{} discardable{}",
+           "snapC{} snapD{} discardable{} stereo{} monoOnly{} eyeCopy{} monoSkipped{} skipMono{}",
            frame.frameId, p.label, c.size.width, c.size.height, p.msaaSamples, draws,
            c.clear ? "C" : "L", static_cast<int>(c.storeOp), p.clearDepth,
            static_cast<int>(p.depthStoreOp), static_cast<bool>(p.resolveTarget), p.resolveRect.width,
            p.resolveRect.height, p.resolveRect.x, p.resolveRect.y, static_cast<int>(p.resolveFormat), p.probeFace,
-           static_cast<bool>(p.snapshotColorDst), static_cast<bool>(p.snapshotDepthDst), p.discardable);
+           static_cast<bool>(p.snapshotColorDst), static_cast<bool>(p.snapshotDepthDst), p.discardable,
+           p.stereo.enabled, p.stereo.monoOnly, static_cast<bool>(p.stereo.copyTargets[0]), p.stereo.monoSkipped,
+           p.stereo.skipMono);
+}
+
+bool mono_skip_enabled() noexcept {
+  static const bool enabled = [] {
+    const char* value = std::getenv("PF2_MONO_SKIP");
+    return value != nullptr && value[0] == '1';
+  }();
+  return enabled;
+}
+
+// Something reads the mono image of `passIndex` (and so of every pass since the mono EFB was last
+// cleared whole): the next frame keeps that chain in mono. If a pass of it was already left out,
+// this frame's read is stale; mono skipping then rests a while.
+void note_mono_need(uint32_t passIndex) {
+  if (!mono_skip_enabled()) {
+    return;
+  }
+  g_recorder.monoNeeds.emplace_back(g_recorder.monoChainStart, passIndex);
+  if (g_recorder.monoEfbStale) {
+    g_monoStaleReads.fetch_add(1, std::memory_order_relaxed);
+    g_recorder.monoSkipCooldown = 45;
+    g_recorder.monoSkipArmed = false;
+  }
+}
+
+// PF2_MONO_SKIP=1: an immersive frame on a headset (or a mirror) that shows only the eyes draws
+// each EFB pass into the mono EFB just for its copy, and the eyes take that copy again from their
+// own images (stereo_shadow.hpp). When nothing else reads the mono image of a pass, leave it out.
+// Readers: a copy the eyes share (a world shadow, ROUTE_SKIP), a pass not replayed per eye, a
+// probe face, a depth snapshot, an HDR scene pass, an encoder task that reads the EFB, the final
+// pass when it is shown or captured as mono. Those keep their pass and every pass since the mono
+// EFB was last cleared whole; as passes are encoded while the frame is still recorded, a reader
+// found after a pass of its chain was left out only shows up in the next frame (monoNeedsPrev).
+void decide_mono_skip(FramePacket& frame, uint32_t passIndex) {
+  auto& pass = frame.renderPasses[passIndex];
+  if (!mono_skip_enabled() || !pass.efb || pass.discardable || !frame.stereo.immersive) {
+    return;
+  }
+  const auto& color = pass.colorAttachments[SceneColorAttachmentIndex];
+  const bool colorClear =
+      color.loadOp == wgpu::LoadOp::Clear || (color.loadOp == wgpu::LoadOp::Undefined && color.clear);
+  const bool depthClear = !pass.hasDepth || pass.depthLoadOp == wgpu::LoadOp::Clear ||
+                          (pass.depthLoadOp == wgpu::LoadOp::Undefined && pass.clearDepth);
+  const bool stencilClear = !pass.hasStencil || pass.stencilLoadOp == wgpu::LoadOp::Clear;
+  if (colorClear && depthClear && stencilClear) {
+    g_recorder.monoEfbStale = false;
+    g_recorder.monoChainStart = passIndex;
+  }
+  if (g_recorder.sealingFinalPass) {
+    if (!(pass.stereo.enabled && pass.stereo.skipMono)) {
+      note_mono_need(passIndex);
+    }
+    return;
+  }
+  const bool eyesOnly = pass.stereo.enabled && !pass.stereo.monoOnly && pass.probeFace < 0 &&
+                        !pass.captureDepthSnapshot && !g_recorder.hdrScene &&
+                        (!pass.resolveTarget || pass.stereo.copyTargets[0]);
+  if (!eyesOnly) {
+    note_mono_need(passIndex);
+    return;
+  }
+  if (!g_recorder.monoSkipArmed) {
+    return;
+  }
+  for (const auto& [first, last] : g_recorder.monoNeedsPrev) {
+    if (passIndex >= first && passIndex <= last) {
+      return;
+    }
+  }
+  pass.stereo.monoSkipped = true;
+  g_recorder.monoEfbStale = true;
+  g_monoSkippedPasses.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Without dispatch the op is only recorded; enqueue_op hands it to the render worker later.
 uint32_t enqueue_pass(FramePacket& frame, uint32_t passIndex, bool dispatch) {
   stereo_seal_pass(frame, passIndex);
+  decide_mono_skip(frame, passIndex);
   if (!frame.renderPasses[passIndex].discardable) {
     ++g_recorder.renderPassCount;
   }
@@ -1351,6 +1448,18 @@ void set_stereo_draw_route(uint8_t route) noexcept { g_recorder.stereoRoute = ro
 bool recording_multiview() noexcept { return g_recorder.active() && g_recorder.frame().stereo.multiview; }
 
 void set_final_pass_mono_unneeded(bool unneeded) noexcept { g_recorder.finalPassMonoUnneeded = unneeded; }
+
+void arm_mono_skip(bool hostShowsEyesOnly) noexcept {
+  g_recorder.monoNeedsPrev.swap(g_recorder.monoNeeds);
+  g_recorder.monoNeeds.clear();
+  g_recorder.monoEfbStale = false;
+  g_recorder.monoChainStart = 0;
+  if (g_recorder.monoSkipCooldown > 0) {
+    --g_recorder.monoSkipCooldown;
+  }
+  g_recorder.monoSkipArmed = mono_skip_enabled() && hostShowsEyesOnly && g_recorder.active() &&
+                             g_recorder.frame().stereo.immersive && g_recorder.monoSkipCooldown == 0;
+}
 
 void set_stereo_diagnostics(bool enabled) noexcept {
   g_stereoDiagnostics.store(enabled || frame_stats_forced(), std::memory_order_relaxed);
@@ -2154,6 +2263,9 @@ bool record_encoder_task_between(EncoderTaskId type, const void* payload, size_t
   const bool hold = depth == DepthAfter::IfUnread;
   const auto sealedPass = g_recorder.currentRenderPass;
   const auto passOp = enqueue_pass(frame, sealedPass, !hold);
+  if (prevPass.efb && frame.stereo.immersive && encoder_task_reads_efb(type)) {
+    note_mono_need(sealedPass);
+  }
 
   const auto taskIndex = static_cast<uint32_t>(frame.encoderTasks.size());
   auto& task = frame.encoderTasks.emplace_back(EncoderTask{.type = type});
@@ -2291,7 +2403,9 @@ void finish() {
     discard_dead_stores(pass, true, true);
     // Honoured only if sealing gives the pass its eye passes (encoding.cpp).
     pass.stereo.skipMono = finalPassMonoUnneeded;
+    g_recorder.sealingFinalPass = true;
     enqueue_pass(frame, g_recorder.currentRenderPass);
+    g_recorder.sealingFinalPass = false;
     if (g_stereoDiagnostics.load(std::memory_order_relaxed)) {
       log_stereo_frame_stats(frame);
     }

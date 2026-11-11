@@ -415,6 +415,18 @@ std::optional<RegisteredDrawType> find_runtime_draw_type(DrawTypeId id) {
   return RegisteredDrawType{.draw = slot->draw, .userdata = slot->userdata};
 }
 
+bool encoder_task_reads_efb(EncoderTaskId id) {
+  std::lock_guard lock{g_runtimeTypeMutex};
+  const auto* slot = find_runtime_encoder_task_type_locked(id);
+  if (slot == nullptr) {
+    return false;
+  }
+  // These render into targets of their own from recorded geometry or textures, never from the EFB
+  // (recording.cpp: an immersive frame may then still skip the mono passes around them).
+  return slot->label != "Shadow Map" && slot->label != "Actor Shadow Map" && slot->label != "PBR Cube Blend" &&
+         slot->label != "VFX Atlas";
+}
+
 std::optional<RegisteredEncoderTaskType> find_runtime_encoder_task_type(EncoderTaskId id) {
   std::lock_guard lock{g_runtimeTypeMutex};
   const auto* slot = find_runtime_encoder_task_type_locked(id);

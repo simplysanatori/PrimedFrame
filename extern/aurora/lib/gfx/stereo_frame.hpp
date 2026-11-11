@@ -133,6 +133,10 @@ struct StereoPassReplay {
   // copy follows it) on a headset that owns the display, so nothing reads its mono
   // image (recording.cpp finish(), stereo_host::headset_owns_display).
   bool skipMono = false;
+  // An earlier EFB pass of an immersive frame whose mono image nothing reads (PF2_MONO_SKIP,
+  // recording.cpp decide_mono_skip): its copy is taken per eye only, so neither the mono pass
+  // nor its mono copy is encoded. Unlike skipMono, the eyes keep their depth for the next pass.
+  bool monoSkipped = false;
   // The eye passes run under a fragment density map (stereo_foveation.hpp).
   bool foveated = false;
   // Both eyes in one Vulkan multiview render pass, into these views of the eye
