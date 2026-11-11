@@ -27,7 +27,7 @@ run() { if [ -n "${PF_BUILD_LOCK-x}" ] && [ "${PF_BUILD_LOCK-x}" != "" ]; then e
 if [ ! -f "$B/build.ninja" ] || [ "$PF_RECONFIGURE" = 1 ]; then
   run cmake -S "$SRC" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE="${PF_BUILD_TYPE:-RelWithDebInfo}" \
     -DCMAKE_C_COMPILER="$PB/gcc" -DCMAKE_CXX_COMPILER="$PB/g++" \
-    '-DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath,$ORIGIN/lib -Wl,--enable-new-dtags' \
+    "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath,'\$ORIGIN/lib' -Wl,--enable-new-dtags" \
     -DAURORA_DAWN_PROVIDER=package -DAURORA_DAWN_LINKAGE=static \
     -DAURORA_DAWN_PACKAGE_URL="$DAWN" -DAURORA_DAWN_PACKAGE_SHA256="$(sha256sum "$DAWN" | cut -d' ' -f1)" \
     -DAURORA_SDL3_PROVIDER=vendor -DAURORA_SDL3_LINKAGE=static \
