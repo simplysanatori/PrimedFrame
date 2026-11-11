@@ -113,6 +113,10 @@ constexpr const char* kPatchedDawnScript = "tools/build-linux-dawn.sh";
 // waits for that value before xrReleaseSwapchainImage. A watcher thread records each set's time
 // from that signal to its completion (the "GPU per set" figure of the [pf2] line). Without
 // timeline semaphores the release drains the queue instead (correct, slower).
+//
+// PF2_DEV_GPU_LOAD_MB=<MB> (development only, for the mock): the signal's submission also fills
+// that many MB of a scratch buffer first, so every eye set costs the GPU that much more (a fixed
+// extra cost per set, measured in the [pf2] line's gpu/set like the rest).
 class GpuFence {
 public:
     enum class Mode { Off, Timeline, Drain };
@@ -137,6 +141,18 @@ public:
         PF2_DEVICE_FN(vkCreateSemaphore);
         PF2_DEVICE_FN(vkDestroySemaphore);
         PF2_DEVICE_FN(vkWaitSemaphores);
+        PF2_DEVICE_FN(vkCreateBuffer);
+        PF2_DEVICE_FN(vkDestroyBuffer);
+        PF2_DEVICE_FN(vkGetBufferMemoryRequirements);
+        PF2_DEVICE_FN(vkAllocateMemory);
+        PF2_DEVICE_FN(vkFreeMemory);
+        PF2_DEVICE_FN(vkBindBufferMemory);
+        PF2_DEVICE_FN(vkCreateCommandPool);
+        PF2_DEVICE_FN(vkDestroyCommandPool);
+        PF2_DEVICE_FN(vkAllocateCommandBuffers);
+        PF2_DEVICE_FN(vkBeginCommandBuffer);
+        PF2_DEVICE_FN(vkEndCommandBuffer);
+        PF2_DEVICE_FN(vkCmdFillBuffer);
 #undef PF2_DEVICE_FN
         if (vkGetDeviceQueue_ == nullptr || vkQueueSubmit_ == nullptr || vkQueueWaitIdle_ == nullptr) {
             return mode_ = Mode::Off;
@@ -158,7 +174,10 @@ public:
                     failed_ = false;
                     signaled_ = completed_ = 0;
                     gpu_ms_.clear();
+                    exclusive_ms_.clear();
+                    last_done_ns_ = 0;
                 }
+                StartDevLoad(family);
                 watcher_ = std::thread([this] { Watch(); });
                 return mode_ = Mode::Timeline;
             }
@@ -180,8 +199,12 @@ public:
             vkDestroySemaphore_(device_, semaphore_, nullptr);
         }
         semaphore_ = VK_NULL_HANDLE;
+        StopDevLoad();
         mode_ = Mode::Off;
     }
+
+    // PF2_DEV_GPU_LOAD_MB: the MB each set's signal fills first (0: none).
+    unsigned DevLoadMb() const noexcept { return load_cb_ != VK_NULL_HANDLE ? load_mb_ : 0u; }
 
     Mode CurrentMode() const noexcept { return mode_; }
 
@@ -204,6 +227,10 @@ public:
         timeline.signalSemaphoreValueCount = 1;
         timeline.pSignalSemaphoreValues = &value;
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, &timeline};
+        if (load_cb_ != VK_NULL_HANDLE) {
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &load_cb_;
+        }
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &semaphore_;
         VkResult result;
@@ -226,6 +253,11 @@ public:
     // XR thread, before releasing a set's images: true once the set that signalled `value` finished
     // (0: drain Dawn's queue instead). False on a timeout or a failure.
     bool Wait(uint64_t value, std::chrono::milliseconds timeout) {
+        return WaitUntil(value, std::chrono::steady_clock::now() + timeout);
+    }
+
+    // As Wait, up to a point in time (timeline mode; drain mode waits for the queue regardless).
+    bool WaitUntil(uint64_t value, std::chrono::steady_clock::time_point deadline) {
         if (mode_ == Mode::Off) {
             return true;
         }
@@ -236,7 +268,7 @@ public:
             return idle;
         }
         std::unique_lock lock(mutex_);
-        return cv_.wait_for(lock, timeout, [&] { return completed_ >= value || failed_ || stop_; }) &&
+        return cv_.wait_until(lock, deadline, [&] { return completed_ >= value || failed_ || stop_; }) &&
                completed_ >= value;
     }
 
@@ -245,6 +277,15 @@ public:
         std::lock_guard lock(mutex_);
         out.insert(out.end(), gpu_ms_.begin(), gpu_ms_.end());
         gpu_ms_.clear();
+    }
+
+    // Each set's own GPU time since the last call: from its signal, or from the previous set's
+    // completion when that came later (time spent queued behind the previous set's work is not
+    // this set's).
+    void TakeExclusiveMs(std::vector<float>& out) {
+        std::lock_guard lock(mutex_);
+        out.insert(out.end(), exclusive_ms_.begin(), exclusive_ms_.end());
+        exclusive_ms_.clear();
     }
 
 private:
@@ -281,18 +322,120 @@ private:
                 cv_.notify_all();
                 return;
             }
+            const int64_t signaled_at = signal_ns_[next % kRing];
             if (gpu_ms_.size() < 4096) {
-                gpu_ms_.push_back(static_cast<float>(static_cast<double>(now - signal_ns_[next % kRing]) / 1.0e6));
+                gpu_ms_.push_back(static_cast<float>(static_cast<double>(now - signaled_at) / 1.0e6));
             }
+            if (exclusive_ms_.size() < 4096) {
+                exclusive_ms_.push_back(
+                    static_cast<float>(static_cast<double>(now - std::max(signaled_at, last_done_ns_)) / 1.0e6));
+            }
+            last_done_ns_ = now;
             completed_ = next++;
             cv_.notify_all();
         }
+    }
+
+    // PF2_DEV_GPU_LOAD_MB: a scratch buffer and one command buffer that fills it (recorded once,
+    // submitted with every signal).
+    void StartDevLoad(uint32_t family) {
+        const char* env = std::getenv("PF2_DEV_GPU_LOAD_MB");
+        const long mb = env != nullptr ? std::strtol(env, nullptr, 10) : 0;
+        if (mb <= 0 || mb > 4096 || vkCreateBuffer_ == nullptr || vkAllocateMemory_ == nullptr ||
+            vkCreateCommandPool_ == nullptr || vkAllocateCommandBuffers_ == nullptr || vkCmdFillBuffer_ == nullptr ||
+            vkBeginCommandBuffer_ == nullptr || vkEndCommandBuffer_ == nullptr || vkBindBufferMemory_ == nullptr ||
+            vkGetBufferMemoryRequirements_ == nullptr) {
+            return;
+        }
+        constexpr VkDeviceSize kChunk = 64ull << 20;
+        const VkDeviceSize total = static_cast<VkDeviceSize>(mb) << 20;
+        VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer_info.size = std::min(total, kChunk);
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer_(device_, &buffer_info, nullptr, &load_buffer_) != VK_SUCCESS) {
+            load_buffer_ = VK_NULL_HANDLE;
+            return;
+        }
+        VkMemoryRequirements req{};
+        vkGetBufferMemoryRequirements_(device_, load_buffer_, &req);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = req.size;
+        alloc.memoryTypeIndex = 0;
+        while (alloc.memoryTypeIndex < 32 && (req.memoryTypeBits & (1u << alloc.memoryTypeIndex)) == 0) {
+            ++alloc.memoryTypeIndex;
+        }
+        VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool_info.queueFamilyIndex = family;
+        VkCommandBufferAllocateInfo cb_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cb_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cb_info.commandBufferCount = 1;
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+        if (alloc.memoryTypeIndex >= 32 || vkAllocateMemory_(device_, &alloc, nullptr, &load_memory_) != VK_SUCCESS ||
+            vkBindBufferMemory_(device_, load_buffer_, load_memory_, 0) != VK_SUCCESS ||
+            vkCreateCommandPool_(device_, &pool_info, nullptr, &load_pool_) != VK_SUCCESS) {
+            StopDevLoad();
+            return;
+        }
+        cb_info.commandPool = load_pool_;
+        if (vkAllocateCommandBuffers_(device_, &cb_info, &load_cb_) != VK_SUCCESS ||
+            vkBeginCommandBuffer_(load_cb_, &begin) != VK_SUCCESS) {
+            load_cb_ = VK_NULL_HANDLE;
+            StopDevLoad();
+            return;
+        }
+        for (VkDeviceSize done = 0; done < total; done += buffer_info.size) {
+            vkCmdFillBuffer_(load_cb_, load_buffer_, 0, std::min(buffer_info.size, total - done),
+                             static_cast<uint32_t>(done >> 20));
+        }
+        if (vkEndCommandBuffer_(load_cb_) != VK_SUCCESS) {
+            load_cb_ = VK_NULL_HANDLE;
+            StopDevLoad();
+            return;
+        }
+        load_mb_ = static_cast<unsigned>(mb);
+    }
+
+    void StopDevLoad() {
+        if (device_ == VK_NULL_HANDLE) return;
+        if (load_pool_ != VK_NULL_HANDLE && vkDestroyCommandPool_ != nullptr) {
+            vkDestroyCommandPool_(device_, load_pool_, nullptr);
+        }
+        if (load_buffer_ != VK_NULL_HANDLE && vkDestroyBuffer_ != nullptr) {
+            vkDestroyBuffer_(device_, load_buffer_, nullptr);
+        }
+        if (load_memory_ != VK_NULL_HANDLE && vkFreeMemory_ != nullptr) {
+            vkFreeMemory_(device_, load_memory_, nullptr);
+        }
+        load_pool_ = VK_NULL_HANDLE;
+        load_cb_ = VK_NULL_HANDLE;
+        load_buffer_ = VK_NULL_HANDLE;
+        load_memory_ = VK_NULL_HANDLE;
+        load_mb_ = 0;
     }
 
     Mode mode_ = Mode::Off;
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue queue_ = VK_NULL_HANDLE;
     VkSemaphore semaphore_ = VK_NULL_HANDLE;
+    PFN_vkCreateBuffer vkCreateBuffer_ = nullptr;
+    PFN_vkDestroyBuffer vkDestroyBuffer_ = nullptr;
+    PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements_ = nullptr;
+    PFN_vkAllocateMemory vkAllocateMemory_ = nullptr;
+    PFN_vkFreeMemory vkFreeMemory_ = nullptr;
+    PFN_vkBindBufferMemory vkBindBufferMemory_ = nullptr;
+    PFN_vkCreateCommandPool vkCreateCommandPool_ = nullptr;
+    PFN_vkDestroyCommandPool vkDestroyCommandPool_ = nullptr;
+    PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers_ = nullptr;
+    PFN_vkBeginCommandBuffer vkBeginCommandBuffer_ = nullptr;
+    PFN_vkEndCommandBuffer vkEndCommandBuffer_ = nullptr;
+    PFN_vkCmdFillBuffer vkCmdFillBuffer_ = nullptr;
+    VkBuffer load_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory load_memory_ = VK_NULL_HANDLE;
+    VkCommandPool load_pool_ = VK_NULL_HANDLE;
+    VkCommandBuffer load_cb_ = VK_NULL_HANDLE;
+    unsigned load_mb_ = 0;
     PFN_vkGetDeviceQueue vkGetDeviceQueue_ = nullptr;
     PFN_vkQueueSubmit vkQueueSubmit_ = nullptr;
     PFN_vkQueueWaitIdle vkQueueWaitIdle_ = nullptr;
@@ -308,6 +451,8 @@ private:
     bool stop_ = false;
     std::array<int64_t, kRing> signal_ns_{};
     std::vector<float> gpu_ms_;
+    std::vector<float> exclusive_ms_;
+    int64_t last_done_ns_ = 0;
 };
 
 // "p50/p95/max" of a window's samples, for the [pf2] line.
@@ -332,10 +477,10 @@ std::string SampleStat(std::vector<float>& values) {
 // time). The pacing thread looks at it at most every 50 ms and aims the end at
 //   after[:us]  -> vsync + update end p95 + us (default 300),
 //   before[:us] -> vsync + update start p50 - us (default 1500),
-// of the vsync at or before the wake-up. Without a fresh grid (none, older than 0.5 s, period 1 %
-// off xrWaitFrame's) the end waits PF2_END_DELAY_US after the wake-up, else the offset the lock
-// last used at this refresh rate (vr_end_phase.txt in the user folder), else half the display
-// period: at 90 Hz 5.6 ms after the wake-up, past the Frame's update window (3.0-5.3 ms after the
+// of the vsync at or before the wake-up. Without a fresh grid (none, older than 0.5 s, or
+// xrWaitFrame's period not 1-4 times the grid's within 1 %) the end waits PF2_END_DELAY_US after
+// the wake-up, else the offset the lock last used at this refresh rate (vr_end_phase.txt in the
+// user folder), else half the display's true period (never xrWaitFrame's doubled one): at 90 Hz 5.6 ms after the wake-up, past the Frame's update window (3.0-5.3 ms after the
 // vsync) and next to where the lock ends (about 5.2 ms). Not later: the next packet is located
 // only after this end and the game must hand it over before the next wake-up, so an end at 0.75
 // of the period left the game 2.8 ms and cost the mock 15-20 fps; a fixed 4000 us ended inside
@@ -432,26 +577,49 @@ public:
         log_(line);
     }
 
+    // The display's own refresh period: the compositor grid's when `nominal_ns` (the session's
+    // refresh period as xrWaitFrame reported it on time, DisplayPeriod below) is a whole multiple of
+    // it, else `nominal_ns`. Never xrWaitFrame's current period, which SteamVR doubles (22.2 ms at
+    // 90 Hz) while the app misses refreshes.
+    int64_t TruePeriod(int64_t nominal_ns) const {
+        if (have_ && period_ns_ > 0 && nominal_ns > 0 && Multiple(nominal_ns, period_ns_) > 0) return period_ns_;
+        return nominal_ns;
+    }
+
+    // k when `period` is k (1..4) times `base` within 1 %, else 0.
+    static int Multiple(int64_t period, int64_t base) {
+        if (base <= 0 || period <= 0) return 0;
+        const int64_t k = std::llround(static_cast<double>(period) / static_cast<double>(base));
+        return k >= 1 && k <= 4 && std::llabs(period - k * base) * 100 <= period ? static_cast<int>(k) : 0;
+    }
+
     // When to release and end this cycle's frame. wake: xrWaitFrame's return; period: its display
-    // period. Never later than one period after the wake-up less 1 ms (the next refresh's wake-up).
-    Clock::time_point Target(Clock::time_point wake, int64_t period_ns) {
+    // period; nominal: the session's refresh period (see TruePeriod). Never later than one true
+    // period after the wake-up less 1 ms (the next refresh's wake-up). A grid whose period divides
+    // xrWaitFrame's (SteamVR reports 2 or more periods after a missed refresh) still locks: the end
+    // stays on the display's own grid, so the next frame can be on time again (ending half of the
+    // doubled period after the wake-up instead kept the game at half rate).
+    Clock::time_point Target(Clock::time_point wake, int64_t period_ns, int64_t nominal_ns) {
+        const Clock::time_point now = Clock::now();
+        if (mode_ == Mode::After || mode_ == Mode::Before) Refresh(now);
+        const int64_t true_ns = TruePeriod(nominal_ns > 0 ? nominal_ns : period_ns);
         const Clock::time_point deadline =
-            wake + std::chrono::nanoseconds(std::max<int64_t>(period_ns - 1000000, 0));
+            wake + std::chrono::nanoseconds(std::max<int64_t>(true_ns - 1000000, 0));
         vsync_ns_ = 0;
-        Clock::time_point target = wake + std::chrono::microseconds(FallbackUs(period_ns));
+        Clock::time_point target = wake + std::chrono::microseconds(FallbackUs(true_ns));
         if (mode_ == Mode::After || mode_ == Mode::Before) {
-            const Clock::time_point now = Clock::now();
-            Refresh(now);
             const int64_t now_ns = now.time_since_epoch().count();
-            const bool fresh = have_ && now_ns - written_ns_ < 500000000 && period_ns_ > 0 &&
-                               std::llabs(period_ns_ - period_ns) * 100 <= period_ns;
+            const int multiple = Multiple(period_ns, period_ns_);
+            const bool fresh = have_ && now_ns - written_ns_ < 500000000 && multiple > 0;
+            if (fresh && multiple > 1) ++multiple_frames_;
             if (fresh != locked_ || !announced_) {
                 log_(std::string("end phase: ") +
                      (fresh ? "locked to the compositor grid (" + SourceName() + ")"
-                            : "fallback " + std::to_string(FallbackUs(period_ns)) + " us after the wake-up, " +
+                            : "fallback " + std::to_string(FallbackUs(true_ns)) + " us after the wake-up, " +
                                   FallbackName() + " (" +
-                                  (have_ ? (now_ns - written_ns_ >= 500000000 ? "grid older than 0.5 s"
-                                                                              : "grid period differs from xrWaitFrame's")
+                                  (have_ ? (now_ns - written_ns_ >= 500000000
+                                                ? "grid older than 0.5 s"
+                                                : "grid period not a whole multiple of xrWaitFrame's")
                                          : "no grid from " + SourceName()) +
                                   ")"));
                 locked_ = fresh;
@@ -499,17 +667,17 @@ public:
             std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(i), v.end());
             return v[i];
         };
-        char line[480];
+        char line[560];
         std::snprintf(line, sizeof line,
                       "end phase: 10 s, %u frames (%u on the fallback, %u capped at the next wake-up); end after "
-                      "wake-up p5 %.2f p50 %.2f p95 %.2f ms; after vsync p50 %.2f p95 %.2f, minus update start p50 "
+                      "wake-up p5 %.2f p50 %.2f p95 %.2f ms (%u locked while xrWaitFrame's period was a multiple of the grid's); after vsync p50 %.2f p95 %.2f, minus update start p50 "
                       "%+.2f p95 %+.2f, minus update end p95: p50 %+.2f p95 %+.2f (grid start %.2f end %.2f/%.2f "
                       "p50/p95)",
-                      frames_, fallback_frames_, capped_, q(e_, 0.05), q(e_, 0.5), q(e_, 0.95), q(vs_, 0.5),
+                      frames_, fallback_frames_, capped_, q(e_, 0.05), q(e_, 0.5), q(e_, 0.95), multiple_frames_, q(vs_, 0.5),
                       q(vs_, 0.95), q(us_, 0.5), q(us_, 0.95), q(ue_, 0.5), q(ue_, 0.95), us50_ / 1e6, ue50_ / 1e6,
                       ue95_ / 1e6);
         log_(line);
-        frames_ = fallback_frames_ = capped_ = 0;
+        frames_ = fallback_frames_ = capped_ = multiple_frames_ = 0;
         vs_.clear(), us_.clear(), ue_.clear(), e_.clear();
     }
 
@@ -626,7 +794,7 @@ private:
     int64_t vsync_pub_ = 0, period_ns_ = 0, us50_ = 0, ue50_ = 0, ue95_ = 0, written_ns_ = 0;
     int64_t vsync_ns_ = 0;
     Clock::time_point summary_at_{};
-    uint32_t frames_ = 0, fallback_frames_ = 0, capped_ = 0;
+    uint32_t frames_ = 0, fallback_frames_ = 0, capped_ = 0, multiple_frames_ = 0;
     std::vector<double> vs_, us_, ue_, e_;
 };
 
@@ -634,6 +802,9 @@ private:
 
 class OpenXRVulkanDirectBackend::Impl final {
 public:
+    // The steady clock, as the end phase's.
+    using Clock = std::chrono::steady_clock;
+
     explicit Impl(OpenXRLogCallback logger) : logger_(std::move(logger)) {}
 
     ~Impl() { Shutdown(); }
@@ -1082,36 +1253,62 @@ public:
         return true;
     }
 
-    bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer) {
+    // `overlap` (PF2_OVERLAP, render-first pacing on the pacing thread): locates, arms and publishes
+    // the next packet (PrepareOverlapPacket) while this frame is still open, when waiting for this
+    // frame's end would leave the next one too little time (OverlapLocateAt).
+    bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer, const std::function<void()>& overlap = {}) {
         if (!frame_active_ || runtime_ == nullptr || frame.xr_frame.serial != active_frame_serial_) {
             return Fail("FinishFrame received a stale or inactive OpenXR frame token");
         }
         bool submission_unsafe = false;
         bool submission_done = false;
         uint64_t gpu_value = 0;
+        int64_t submitted_ns = 0;
         {
             std::lock_guard lock(submission_mutex_);
             const SubmissionResult* result = FindResultLocked(SubmissionToken(frame));
             submission_unsafe = result != nullptr && result->unsafe;
             submission_done = result != nullptr && result->success;
             gpu_value = result != nullptr ? result->gpu_value : 0;
+            submitted_ns = result != nullptr ? result->at_ns : 0;
         }
         if (submission_unsafe) {
             AbandonAcquiredSwapchains();
             Fail("Aurora's Vulkan stereo submission failed after GPU work may have been queued");
         }
-        if (submission_done) {
-            // PF2_RELEASE_FENCE: not before the GPU finished writing the images.
-            WaitGpu(gpu_value);
-        }
+        NoteOverlapSamples(active_packet_serial_, submitted_ns);
         // PF2_END_PHASE / PF2_END_DELAY_US: the release and the end together, at a phase of the
         // refresh; the layer keeps the display time and poses it was rendered for.
         const auto wake = pf2_wait_return_;
         end_phase_.NoteFrame(active_frame_.predicted_display_period);
         const bool phased = end_phase_.Enabled() && wake.time_since_epoch().count() != 0 &&
                             active_frame_.predicted_display_period > 0;
+        const Clock::time_point target =
+            phased ? end_phase_.Target(wake, active_frame_.predicted_display_period, nominal_period_)
+                   : Clock::time_point{};
+        // PF2_OVERLAP: the next packet before this frame's end, when it is due before it.
+        const Clock::time_point locate_at = overlap && phased ? OverlapLocateAt(target) : Clock::time_point::max();
+        bool overlapped = false;
+        const auto run_overlap = [&] {
+            overlapped = true;
+            const Clock::time_point now = Clock::now();
+            ++pf2_overlaps_;
+            if (diagnostics::Enabled()) {
+                pf2_overlap_lead_ms_.push_back(
+                    static_cast<float>(std::chrono::duration<double, std::milli>(target - now).count()));
+            }
+            overlap();
+        };
+        if (submission_done) {
+            // PF2_RELEASE_FENCE: not before the GPU finished writing the images.
+            WaitGpu(gpu_value, locate_at, run_overlap);
+        }
+        if (!overlapped && locate_at < target) {
+            std::this_thread::sleep_until(locate_at);
+            run_overlap();
+        }
         if (phased) {
-            std::this_thread::sleep_until(end_phase_.Target(wake, active_frame_.predicted_display_period));
+            std::this_thread::sleep_until(target);
             if (diagnostics::Enabled()) {
                 end_phase_.NoteEnd(std::chrono::steady_clock::now(), wake);
             }
@@ -1250,9 +1447,12 @@ public:
         // pending packet.
         const auto& pair = pending_packet_serial_ != 0 ? retained_swapchains_ : eye_swapchains_;
         packet.xr_frame.serial = next_packet_serial_++;
-        packet.xr_frame.predicted_display_time =
-            last_display_time_ + static_cast<XrDuration>(periods_ahead) * last_display_period_;
-        packet.xr_frame.predicted_display_period = last_display_period_;
+        // The display's own period, not xrWaitFrame's: after a missed refresh SteamVR reports 2 or
+        // more periods, which located the poses that much further ahead (and stepped the game that
+        // much at a time) although the next frame can be on time again.
+        const XrDuration period = DisplayPeriod();
+        packet.xr_frame.predicted_display_time = last_display_time_ + static_cast<XrDuration>(periods_ahead) * period;
+        packet.xr_frame.predicted_display_period = period;
         packet.xr_frame.should_render = last_should_render_;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             packet.render_width[eye] = EyeWidth(pair, eye);
@@ -1271,11 +1471,61 @@ public:
             pf2_locate_ms_.push_back(static_cast<float>(
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pf2_wait_return_).count()));
         }
+        NoteLocated(packet.xr_frame.serial);
         if (!packet.xr_frame.views_valid) {
             return OpenXRBeginStatus::Ready;
         }
         located_origin_ = CurrentPoseOrigin();
         return OpenXRBeginStatus::Ready;
+    }
+
+    // PF2_OVERLAP: the next packet while this packet's compositor frame is still open (FinishFrame
+    // runs this through its `overlap` callback). The poses are located for the same display time
+    // the next plain cycle would have used (the last xrWaitFrame's, here this frame's, plus
+    // PF2_AHEAD_PERIODS true periods), only earlier; the images come from the other swapchain pair
+    // and the packet queues behind this frame's (it becomes the pending packet at its end), as a
+    // pipelined packet does. Nothing is prepared (the packet expects no submission) while the eyes
+    // resize, a pair has fewer than two images, a packet is already queued or there is nothing to
+    // render; then the next cycle prepares its packet after the end, as before.
+    OpenXRBeginStatus PrepareOverlapPacket(const OpenXRPresentation& presentation, OpenXRBackendFrame& packet) {
+        packet = {};
+        packet.presentation = presentation;
+        if (!bound_ || runtime_ == nullptr || !frame_active_ || active_packet_serial_ == 0 ||
+            pending_packet_serial_ != 0 || queued_packet_serial_ != 0 || !last_should_render_ ||
+            !SupportsPipelining() || EyesResizing() || !runtime_->IsSessionRunning() || runtime_->ShouldExit() ||
+            timing_session_serial_ != runtime_->SessionRunSerial()) {
+            return OpenXRBeginStatus::Ready;
+        }
+        const int ahead = pf2::Get().ahead_periods;
+        const XrDuration period = DisplayPeriod();
+        packet.xr_frame.serial = next_packet_serial_++;
+        packet.xr_frame.predicted_display_time =
+            last_display_time_ + static_cast<XrDuration>(ahead >= 0 ? ahead : 2) * period;
+        packet.xr_frame.predicted_display_period = period;
+        packet.xr_frame.should_render = true;
+        for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
+            packet.render_width[eye] = EyeWidth(retained_swapchains_, eye);
+            packet.render_height[eye] = EyeHeight(retained_swapchains_, eye);
+        }
+        if (!runtime_->LocateViewsAt(packet.xr_frame.predicted_display_time, packet.xr_frame)) {
+            Fail("xrLocateViews failed for an overlapped packet");
+            return OpenXRBeginStatus::Error;
+        }
+        if (diagnostics::Enabled() && pf2_wait_return_.time_since_epoch().count() != 0) {
+            pf2_locate_ms_.push_back(static_cast<float>(
+                std::chrono::duration<double, std::milli>(Clock::now() - pf2_wait_return_).count()));
+        }
+        NoteLocated(packet.xr_frame.serial);
+        if (!packet.xr_frame.views_valid) {
+            return OpenXRBeginStatus::Ready;
+        }
+        located_origin_ = CurrentPoseOrigin();
+        const OpenXRBeginStatus status = PrepareTargets(packet, retained_swapchains_, retained_panel_swapchain_);
+        if (status == OpenXRBeginStatus::Ready) {
+            queued_packet_serial_ = packet.xr_frame.serial;
+            queued_origin_ = located_origin_;
+        }
+        return status;
     }
 
     // The located packet's images and Aurora's targets: on the writable pair with nothing
@@ -1489,6 +1739,7 @@ public:
         DestroySwapchains();
         pending_packet_serial_ = 0;
         last_display_period_ = 0;
+        nominal_period_ = 0;
         // Its handles belong to the session.
         passthrough_.Destroy();
         if (owns_session_ && runtime_ != nullptr) {
@@ -1566,11 +1817,29 @@ private:
         return ReleaseAcquired(retained_swapchains_, retained_panel_swapchain_);
     }
 
+    // The display's true refresh period: the compositor grid's when it divides the session's,
+    // else the session's (never xrWaitFrame's doubled period after a missed refresh).
+    XrDuration DisplayPeriod() const {
+        const XrDuration nominal = nominal_period_ > 0 ? nominal_period_ : last_display_period_;
+        return end_phase_.Enabled() ? end_phase_.TruePeriod(nominal) : nominal;
+    }
+
     void NoteDisplayTiming(const OpenXRFrame& frame) noexcept {
         last_display_time_ = frame.predicted_display_time;
         last_display_period_ = frame.predicted_display_period;
         last_should_render_ = frame.should_render;
+        if (timing_session_serial_ != runtime_->SessionRunSerial()) {
+            nominal_period_ = 0;
+        }
         timing_session_serial_ = runtime_->SessionRunSerial();
+        // The session's refresh period: the shortest xrWaitFrame reported, kept while later ones are
+        // whole multiples of it (missed refreshes), replaced by any other (a new refresh rate).
+        if (const int64_t p = frame.predicted_display_period; p > 0) {
+            if (nominal_period_ <= 0 || p < nominal_period_ - nominal_period_ / 100 ||
+                EndPhaseLock::Multiple(p, nominal_period_) == 0) {
+                nominal_period_ = p;
+            }
+        }
         pf2_wait_return_ = std::chrono::steady_clock::now();
     }
 
@@ -1591,8 +1860,32 @@ private:
         return OpenXRBeginStatus::Ready;
     }
 
-    // fresh: the retained layer was completed for this call rather than repeated.
+    // fresh: the retained layer was completed for this call rather than repeated. An xrEndFrame
+    // that SteamVR refuses with XR_ERROR_TIME_INVALID (seen once right after VISIBLE at session
+    // start) is a dropped frame, not the session's end: logged (the first, then every 100th) and
+    // tolerated unless 90 frames in a row are refused.
     bool EndRetainedFrame(bool fresh) {
+        const bool ended = EndRetainedFrameOnce(fresh);
+        if (ended) {
+            time_invalid_run_ = 0;
+            return true;
+        }
+        if (runtime_ == nullptr || runtime_->LastError().result != XR_ERROR_TIME_INVALID) {
+            return false;
+        }
+        ++time_invalid_total_;
+        ++time_invalid_run_;
+        if (time_invalid_total_ == 1 || time_invalid_total_ % 100 == 0) {
+            std::ostringstream message;
+            message << "xrEndFrame refused the display time (XR_ERROR_TIME_INVALID): frame dropped ("
+                    << time_invalid_total_ << " so far, " << time_invalid_run_ << " in a row; end display time "
+                    << pf2_last_end_time_ << ", the frame's predicted " << active_frame_.predicted_display_time << ")";
+            Log(OpenXRLogLevel::Warning, message.str());
+        }
+        return time_invalid_run_ < 90;
+    }
+
+    bool EndRetainedFrameOnce(bool fresh) {
         if (!runtime_->IsSessionRunning()) {
             return true;
         }
@@ -1622,9 +1915,20 @@ private:
         const auto& frame = retained_frame_;
         // PF2_AHEAD_PERIODS: a fresh layer ends with the display time its poses were located for.
         OpenXRFrame end_frame = active_frame_;
+        // Only a time SteamVR can take: once the session's period is known, after the last end's
+        // time, and within 1.25 periods of this frame's predicted one (a packet located before a
+        // stall or before the waits that kept the compositor fed meanwhile is not). Otherwise the
+        // frame keeps xrWaitFrame's time, as without PF2_AHEAD_PERIODS.
         if (fresh && pf2::Get().ahead_periods >= 0 && retained_pose_time_ > 0) {
-            NoteEndOverride(retained_pose_time_ - active_frame_.predicted_display_time);
-            end_frame.predicted_display_time = retained_pose_time_;
+            const XrDuration period = DisplayPeriod();
+            const XrDuration delta = retained_pose_time_ - active_frame_.predicted_display_time;
+            if (nominal_period_ > 0 && period > 0 && retained_pose_time_ > pf2_last_end_time_ &&
+                std::llabs(delta) <= period + period / 4) {
+                NoteEndOverride(delta);
+                end_frame.predicted_display_time = retained_pose_time_;
+            } else {
+                ++pf2_end_kept_;
+            }
         }
         if (frame.presentation.mode == OpenXRFrameMode::VirtualScreen) {
             XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -2040,7 +2344,8 @@ private:
             }
             self->awaiting_token_ = 0;
             self->submission_results_[1] = self->submission_results_[0];
-            self->submission_results_[0] = {token, success, !success, gpu_value};
+            self->submission_results_[0] = {token, success, !success, gpu_value,
+                                            std::chrono::steady_clock::now().time_since_epoch().count()};
         }
         self->submission_cv_.notify_all();
     }
@@ -2053,6 +2358,8 @@ private:
         bool unsafe = false;
         // PF2_RELEASE_FENCE: the timeline value that completes after the set's GPU work (0: none).
         uint64_t gpu_value = 0;
+        // When Aurora's submission reported it (steady clock ns; PF2_OVERLAP's CPU estimate).
+        int64_t at_ns = 0;
     };
 
     const SubmissionResult* FindResultLocked(uint64_t token) const noexcept {
@@ -2126,6 +2433,9 @@ private:
                     << (mode == GpuFence::Mode::Timeline ? "on a timeline semaphore"
                         : mode == GpuFence::Mode::Drain  ? "by draining the queue (no timeline semaphores)"
                                                          : "UNAVAILABLE (no Vulkan queue functions)");
+            if (fence_.DevLoadMb() > 0) {
+                message << "; PF2_DEV_GPU_LOAD_MB=" << fence_.DevLoadMb() << ": each set also fills that many MB (dev load)";
+            }
         }
         if (packed_) {
             message << "; packed " << eye_swapchains_[0].width << 'x' << eye_swapchains_[0].height
@@ -2151,16 +2461,31 @@ private:
     }
 
     // PF2_RELEASE_FENCE: waits (up to 100 ms) for the GPU work of the set that signalled `value`.
-    void WaitGpu(uint64_t value) {
+    // With `at` before that, `at_fn` runs at `at` if the GPU is still busy then (PF2_OVERLAP); its
+    // time does not count as fence wait.
+    void WaitGpu(uint64_t value, Clock::time_point at = Clock::time_point::max(),
+                 const std::function<void()>& at_fn = {}) {
         if (fence_.CurrentMode() == GpuFence::Mode::Off) {
             return;
         }
-        const auto start = std::chrono::steady_clock::now();
-        const bool done = diagnostics::Measure(diagnostics::Stage::FenceWait,
-                                               [&] { return fence_.Wait(value, std::chrono::milliseconds(100)); });
+        const auto start = Clock::now();
+        bool done = false;
+        Clock::duration hook_time{};
+        if (at_fn && at < start + std::chrono::milliseconds(100)) {
+            done = diagnostics::Measure(diagnostics::Stage::FenceWait, [&] { return fence_.WaitUntil(value, at); });
+            if (!done) {
+                const auto hook_start = Clock::now();
+                at_fn();
+                hook_time = Clock::now() - hook_start;
+            }
+        }
+        if (!done) {
+            done = diagnostics::Measure(diagnostics::Stage::FenceWait,
+                                        [&] { return fence_.Wait(value, std::chrono::milliseconds(100)); });
+        }
         if (diagnostics::Enabled()) {
             pf2_fence_ms_.push_back(static_cast<float>(
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+                std::chrono::duration<double, std::milli>(Clock::now() - start - hook_time).count()));
         }
         if (!done) {
             ++pf2_fence_timeouts_;
@@ -2194,8 +2519,9 @@ private:
         if (!diagnostics::Enabled() || shown.predicted_display_period <= 0) {
             return;
         }
-        const double periods = static_cast<double>(pose_time - shown.predicted_display_time) /
-                               static_cast<double>(shown.predicted_display_period);
+        const XrDuration period = DisplayPeriod() > 0 ? DisplayPeriod() : shown.predicted_display_period;
+        const double periods =
+            static_cast<double>(pose_time - shown.predicted_display_time) / static_cast<double>(period);
         const long rounded = std::lround(periods);
         const size_t bucket = rounded <= -1 ? 0 : rounded == 0 ? 1 : rounded == 1 ? 2 : rounded == 2 ? 3 : 4;
         ++pf2_lead_[bucket];
@@ -2211,6 +2537,57 @@ private:
         if (pf2_last_end_time_ != 0 && retained_pose_time_ <= pf2_last_end_time_) {
             ++pf2_end_backwards_;
         }
+    }
+
+    // ---- PF2_OVERLAP ---------------------------------------------------------------------------
+
+    void NoteLocated(uint64_t serial) {
+        located_ns_[serial % located_ns_.size()] = {serial, Clock::now().time_since_epoch().count()};
+    }
+
+    // Per finished packet: its CPU time (located to Aurora's submission: the game's step, draw,
+    // encode and submit) and the GPU time of the sets finished since (each set's own, without the
+    // time it queued behind the previous set's).
+    void NoteOverlapSamples(uint64_t serial, int64_t submitted_ns) {
+        const auto& located = located_ns_[serial % located_ns_.size()];
+        if (serial != 0 && located.first == serial && submitted_ns > located.second) {
+            PushSample(cpu_ms_, static_cast<float>(static_cast<double>(submitted_ns - located.second) / 1e6));
+        }
+        std::vector<float> gpu;
+        fence_.TakeExclusiveMs(gpu);
+        for (const float ms : gpu) {
+            PushSample(gpu_own_ms_, ms);
+            if (diagnostics::Enabled() && pf2_gpu_own_ms_.size() < 4096) pf2_gpu_own_ms_.push_back(ms);
+        }
+    }
+
+    static void PushSample(std::vector<float>& ring, float value) {
+        constexpr size_t kWindow = 45;  // half a second at 90 Hz
+        if (ring.size() >= kWindow) ring.erase(ring.begin());
+        ring.push_back(value);
+    }
+
+    // The 90th percentile of a window.
+    static float P90(std::vector<float> values) {
+        const size_t i = values.size() * 9 / 10;
+        std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(i), values.end());
+        return values[i];
+    }
+
+    // When the next packet must be located for its eyes to be finished by its own end, one true
+    // period after this frame's (`target`): that end less the recent CPU and GPU times (90th
+    // percentiles of the last half second) and PF2_OVERLAP's margin. Later than this frame's end
+    // (the usual case with time to spare) changes nothing: the next cycle locates after the end,
+    // as without PF2_OVERLAP.
+    Clock::time_point OverlapLocateAt(Clock::time_point target) const {
+        const long margin_us = pf2::Get().overlap_margin_us;
+        if (margin_us <= 0 || cpu_ms_.size() < 16 || gpu_own_ms_.size() < 16) {
+            return Clock::time_point::max();
+        }
+        const double need_ms = static_cast<double>(P90(cpu_ms_)) + static_cast<double>(P90(gpu_own_ms_)) +
+                               static_cast<double>(margin_us) / 1000.0;
+        const auto period = std::chrono::nanoseconds(DisplayPeriod());
+        return target + period - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(need_ms));
     }
 
     // The [pf2] line, once a second with MP_VR_LOG=1 (on the pacing thread, after xrEndFrame).
@@ -2233,7 +2610,9 @@ private:
         line << "[pf2] packed=" << (packed_ ? 1 : 0) << " fence=" << (fence_.CurrentMode() != GpuFence::Mode::Off ? 1 : 0)
              << " ahead=" << pf2::Get().ahead_periods << " | fence-wait ms p50/p95/max " << SampleStat(pf2_fence_ms_)
              << " timeouts " << pf2_fence_timeouts_ << " | gpu/set ms " << SampleStat(gpu) << " (" << gpu.size()
-             << " sets) | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
+             << " sets), own " << SampleStat(pf2_gpu_own_ms_) << " | early locate " << pf2_overlaps_
+             << " (before the end ms p50/p95/max " << SampleStat(pf2_overlap_lead_ms_) << "; cpu p90 "
+             << (cpu_ms_.empty() ? 0.0f : P90(cpu_ms_)) << ") | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
              << " +1:" << pf2_lead_[2] << " +2:" << pf2_lead_[3] << " more:" << pf2_lead_[4];
         // Simulation steps against fresh layers: fewer steps than layers means layers between steps
         // show interpolated (or repeated) game states.
@@ -2257,12 +2636,16 @@ private:
         pf2_locate_ms_.clear();
         if (pf2::Get().ahead_periods >= 0) {
             line << " | ended at pose time: same as frame " << pf2_end_exact_ << ", moved " << pf2_end_moved_
-                 << ", not after the previous end " << pf2_end_backwards_;
+                 << ", not after the previous end " << pf2_end_backwards_ << ", kept the frame's time "
+                 << pf2_end_kept_;
         }
         diagnostics::detail::Info(line.str());
         pf2_fence_ms_.clear();
+        pf2_gpu_own_ms_.clear();
+        pf2_overlap_lead_ms_.clear();
+        pf2_overlaps_ = 0;
         pf2_lead_ = {};
-        pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = 0;
+        pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = pf2_end_kept_ = 0;
     }
 
     bool Fail(std::string message) {
@@ -2296,6 +2679,18 @@ private:
     std::chrono::steady_clock::time_point pf2_window_start_{};
     std::vector<float> pf2_fence_ms_;
     std::vector<float> pf2_locate_ms_;
+    // PF2_OVERLAP: recent CPU and own GPU times per packet, locate times by serial, [pf2] figures.
+    std::vector<float> cpu_ms_;
+    std::vector<float> gpu_own_ms_;
+    std::array<std::pair<uint64_t, int64_t>, 8> located_ns_{};
+    std::vector<float> pf2_gpu_own_ms_;
+    std::vector<float> pf2_overlap_lead_ms_;
+    uint32_t pf2_overlaps_ = 0;
+    // Fresh layers that kept xrWaitFrame's display time (EndRetainedFrame), and xrEndFrame calls
+    // refused with XR_ERROR_TIME_INVALID (all, and in a row).
+    uint32_t pf2_end_kept_ = 0;
+    uint64_t time_invalid_total_ = 0;
+    uint32_t time_invalid_run_ = 0;
     std::chrono::steady_clock::time_point pf2_wait_return_{};
     uint32_t pf2_fresh_layers_ = 0;
     uint64_t pf2_fence_timeouts_ = 0;
@@ -2364,6 +2759,8 @@ private:
     uint64_t timing_session_serial_ = 0;
     XrTime last_display_time_ = 0;
     XrDuration last_display_period_ = 0;
+    // The session's refresh period (NoteDisplayTiming), and the display's true one (DisplayPeriod).
+    XrDuration nominal_period_ = 0;
     bool last_should_render_ = false;
     uint64_t active_frame_serial_ = 0;
     OpenXRFrame active_frame_{};
@@ -2397,6 +2794,14 @@ bool OpenXRVulkanDirectBackend::TryCancelPendingFrame(OpenXRBackendFrame& frame)
 bool OpenXRVulkanDirectBackend::RepeatFrame(const OpenXRBackendFrame& frame) { return m_impl->RepeatFrame(frame); }
 bool OpenXRVulkanDirectBackend::FinishFrame(OpenXRBackendFrame& frame, bool submit_layer) {
     return m_impl->FinishFrame(frame, submit_layer);
+}
+bool OpenXRVulkanDirectBackend::FinishFrame(OpenXRBackendFrame& frame, bool submit_layer,
+                                            const std::function<void()>& overlap) {
+    return m_impl->FinishFrame(frame, submit_layer, overlap);
+}
+OpenXRBeginStatus OpenXRVulkanDirectBackend::PrepareOverlapPacket(const OpenXRPresentation& presentation,
+                                                                  OpenXRBackendFrame& packet) {
+    return m_impl->PrepareOverlapPacket(presentation, packet);
 }
 OpenXRBeginStatus OpenXRVulkanDirectBackend::PreparePacket(const OpenXRPresentation& presentation,
                                                            OpenXRBackendFrame& packet) {
