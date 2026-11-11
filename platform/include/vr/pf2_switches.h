@@ -76,6 +76,9 @@
 //                         it (PF2_AHEAD_PERIODS after the last xrWaitFrame), only located earlier,
 //                         by as much as needed. Linux default: on; 0/off: the next packet only
 //                         after the end (a CPU + GPU budget of one period). [pf2]: "early locate".
+//   PF2_STALL_REPEAT=<periods> | 0  render-first pacing: when the game hands over no eyes for that
+//                         many display periods (a room load), the last layer is repeated at every
+//                         refresh until it does (Linux default 2; 0: only after 50 ms, as before).
 //   PF2_DEV_GPU_LOAD_MB=<MB>  tests only: each eye set also fills that many MB on the GPU.
 //   PF2_DEV_STALL=<ms>@<s>  tests only: the game thread stalls <ms> every <s> s at a packet pickup.
 //   PF2_HZ=<hz>           the refresh rate the game asks the headset for (72..144), over the
@@ -118,6 +121,8 @@ struct Switches {
     bool idle_after_seal = false;
     // PF2_OVERLAP: the margin in us (0: off).
     long overlap_margin_us = 0;
+    // PF2_STALL_REPEAT: periods (0: after 50 ms only).
+    int stall_repeat_periods = 0;
     // PF2_DEV_STALL: 0 off.
     int dev_stall_ms = 0;
     int dev_stall_every_s = 10;
@@ -239,6 +244,11 @@ inline const Switches& Get() {
             s.overlap_margin_us = std::string(overlap) == "on"                   ? 1500
                                   : end != overlap && us >= 0 && us <= 8000 ? us
                                                                             : 0;
+        }
+        s.stall_repeat_periods = kFrameDefaults ? 2 : 0;
+        if (const char* repeat = get("PF2_STALL_REPEAT")) {
+            const long n = std::strtol(repeat, nullptr, 10);
+            s.stall_repeat_periods = n >= 0 && n <= 4 ? static_cast<int>(n) : 0;
         }
         if (const char* stall = get("PF2_DEV_STALL")) {
             int ms = 0, every = 10;
