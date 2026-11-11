@@ -15,7 +15,7 @@
 #   PRIMEDFRAME_VR_WAIT   seconds to wait for SteamVR to accept the keys (default 20)
 #   PRIMEDFRAME_STEAMVR_DIR  SteamVR's folder with vrcmd (default /opt/steamvr/bin/linuxarm64)
 # Everything the session does is logged in $PRIMEDFRAME_HOME/sessions/<time>/ (launch.log, steamvr-keys.txt,
-# stdout.log, stderr.log, the game's own log); sessions/latest points at the newest. steam-frame/collect-logs.sh
+# stdout.log, stderr.log, gpu-mhz.tsv, the game's own log); sessions/latest points at the newest. steam-frame/collect-logs.sh
 # packs them for a bug report.
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 DATA=${PRIMEDFRAME_HOME:-$HOME/.local/share/PrimedFrame/v2}
@@ -137,6 +137,11 @@ cd "$HERE" || exit 1
 log "starting ${CMD[*]}"
 "${CMD[@]}" > "$SESS/stdout.log" 2> "$SESS/stderr.log" &
 GAME_PID=$!
+# GPU clock once a second while the session runs (gpu-mhz.tsv: unix time, MHz), for frame-rate reports
+GPUF=/sys/class/devfreq/3d00000.gpu/cur_freq
+if [ -r "$GPUF" ]; then
+  ( while kill -0 $$ 2>/dev/null; do printf '%s\t%s\n' "$(date +%s)" "$(( $(cat "$GPUF") / 1000000 ))"; sleep 1; done ) >> "$SESS/gpu-mhz.tsv" 2>/dev/null &
+fi
 wait "$GAME_PID"
 RC=$?
 GAME_PID=
