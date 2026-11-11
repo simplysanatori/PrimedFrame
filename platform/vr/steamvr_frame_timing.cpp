@@ -6,6 +6,7 @@
 #include "vr/steamvr_frame_timing.h"
 
 #include "port_paths.h"
+#include "vr/openxr_diagnostics.h"
 
 #include <dlfcn.h>
 #include <pthread.h>
@@ -177,6 +178,76 @@ void SetState(State state, const std::string& why) {
 }
 
 // One poll's grid, as vrtiming.py's publish_phase made it.
+// SteamVR's own view of the app, once a second with MP_VR_LOG=1 (the "[steamvr]" line): the
+// compositor frames since the last line by how often each app frame was presented, mispresented
+// and dropped ones, reprojection reasons, the frames SteamVR predicted further ahead and throttled
+// (reprojection flags 0xF0 and 0xF00: what puts the app at half rate), and the app timings it
+// measures (pre-submit and total render GPU, the client's frame interval, when the app's new
+// frame was ready, its submit's CPU), which its throttling decisions are made from.
+struct ClientView {
+    uint32_t last_index = 0;
+    std::chrono::steady_clock::time_point since{};
+    uint32_t frames = 0, mispresented = 0, dropped = 0;
+    uint32_t presents[4] = {}, reproj_cpu = 0, reproj_gpu = 0, async = 0, motion = 0;
+    uint32_t predict[3] = {}, throttle[3] = {};
+    std::vector<float> pre_gpu, total_gpu, interval, ready, submit, comp_gpu;
+
+    void Add(const FrameTiming* f, uint32_t n) {
+        const auto now = std::chrono::steady_clock::now();
+        if (since == std::chrono::steady_clock::time_point{}) since = now;
+        for (uint32_t i = 0; i < n; ++i) {
+            const FrameTiming& t = f[i];
+            if (t.size != sizeof(FrameTiming) || t.frame_index == 0 ||
+                (last_index != 0 && static_cast<int32_t>(t.frame_index - last_index) <= 0)) {
+                continue;
+            }
+            last_index = t.frame_index;
+            ++frames;
+            ++presents[std::min<uint32_t>(t.presents, 3)];
+            mispresented += t.mispresented;
+            dropped += t.dropped;
+            const uint32_t flags = t.reprojection_flags;
+            reproj_cpu += (flags & 0x01) != 0;
+            reproj_gpu += (flags & 0x02) != 0;
+            async += (flags & 0x04) != 0;
+            motion += (flags & 0x08) != 0;
+            ++predict[std::min<uint32_t>((flags >> 4) & 0xF, 2)];
+            ++throttle[std::min<uint32_t>((flags >> 8) & 0xF, 2)];
+            pre_gpu.push_back(t.pre_submit_gpu);
+            total_gpu.push_back(t.total_render_gpu);
+            interval.push_back(t.client_frame_interval);
+            ready.push_back(t.new_frame_ready);
+            submit.push_back(t.submit_frame);
+            comp_gpu.push_back(t.compositor_render_gpu);
+        }
+        if (now - since < std::chrono::seconds(1) || frames == 0) return;
+        since = now;
+        const auto q = [](std::vector<float>& v) {
+            if (v.empty()) return std::string("-");
+            std::sort(v.begin(), v.end());
+            char b[48];
+            std::snprintf(b, sizeof b, "%.2f/%.2f", v[v.size() / 2], v[std::min(v.size() - 1, v.size() * 95 / 100)]);
+            return std::string(b);
+        };
+        char line[640];
+        std::snprintf(line, sizeof line,
+                      "[steamvr] %u compositor frames: app frame shown 0x %u 1x %u 2x %u 3+x %u, mispresented %u, "
+                      "dropped %u, reprojected cpu %u gpu %u async %u motion %u, predicted +0 %u +1 %u +2.. %u, "
+                      "throttled 0 %u 1 %u 2.. %u | app ms p50/p95: pre-submit gpu %s, total render gpu %s, client "
+                      "interval %s, new frame ready %s, submit %s; compositor gpu %s",
+                      frames, presents[0], presents[1], presents[2], presents[3], mispresented, dropped, reproj_cpu,
+                      reproj_gpu, async, motion, predict[0], predict[1], predict[2], throttle[0], throttle[1],
+                      throttle[2], q(pre_gpu).c_str(), q(total_gpu).c_str(), q(interval).c_str(), q(ready).c_str(),
+                      q(submit).c_str(), q(comp_gpu).c_str());
+        diagnostics::detail::Info(line);
+        frames = mispresented = dropped = reproj_cpu = reproj_gpu = async = motion = 0;
+        std::fill(std::begin(presents), std::end(presents), 0u);
+        std::fill(std::begin(predict), std::end(predict), 0u);
+        std::fill(std::begin(throttle), std::end(throttle), 0u);
+        pre_gpu.clear(), total_gpu.clear(), interval.clear(), ready.clear(), submit.clear(), comp_gpu.clear();
+    }
+};
+
 struct GridMaker {
     int64_t vsync = 0;
     std::vector<double> periods;
@@ -301,6 +372,7 @@ void Run() {
 
     std::vector<FrameTiming> buf(kFrames);
     GridMaker maker;
+    ClientView view;
     auto saved_at = std::chrono::steady_clock::now();
     bool first = true;
     uint32_t empty_polls = 0;
@@ -308,6 +380,9 @@ void Run() {
         std::memset(buf.data(), 0, sizeof(FrameTiming) * buf.size());
         buf[0].size = sizeof(FrameTiming);
         const uint32_t n = timings(buf.data(), kFrames);
+        if (diagnostics::Enabled()) {
+            view.Add(buf.data(), std::min(n, kFrames));
+        }
         Grid grid;
         if (maker.Make(buf.data(), std::min(n, kFrames), since_vsync, grid)) {
             {

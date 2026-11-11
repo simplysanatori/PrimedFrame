@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -76,6 +77,7 @@
 //                         by as much as needed. Linux default: on; 0/off: the next packet only
 //                         after the end (a CPU + GPU budget of one period). [pf2]: "early locate".
 //   PF2_DEV_GPU_LOAD_MB=<MB>  tests only: each eye set also fills that many MB on the GPU.
+//   PF2_DEV_STALL=<ms>@<s>  tests only: the game thread stalls <ms> every <s> s at a packet pickup.
 //   PF2_HZ=<hz>           the refresh rate the game asks the headset for (72..144), over the
 //                         vr_display_refresh_rate setting; that setting's 0 (runtime default) asks
 //                         SteamVR for 90 on Linux.
@@ -116,6 +118,9 @@ struct Switches {
     bool idle_after_seal = false;
     // PF2_OVERLAP: the margin in us (0: off).
     long overlap_margin_us = 0;
+    // PF2_DEV_STALL: 0 off.
+    int dev_stall_ms = 0;
+    int dev_stall_every_s = 10;
     // PF2_HZ: 0 unset.
     int hz = 0;
     std::string alpha_trace;
@@ -234,6 +239,13 @@ inline const Switches& Get() {
             s.overlap_margin_us = std::string(overlap) == "on"                   ? 1500
                                   : end != overlap && us >= 0 && us <= 8000 ? us
                                                                             : 0;
+        }
+        if (const char* stall = get("PF2_DEV_STALL")) {
+            int ms = 0, every = 10;
+            if (std::sscanf(stall, "%d@%d", &ms, &every) >= 1 && ms > 0 && ms <= 2000 && every >= 1) {
+                s.dev_stall_ms = ms;
+                s.dev_stall_every_s = every;
+            }
         }
         if (const char* hz = get("PF2_HZ")) {
             const long v = std::strtol(hz, nullptr, 10);

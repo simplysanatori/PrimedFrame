@@ -931,6 +931,17 @@ private:
         if (self == nullptr || output == nullptr) {
             return false;
         }
+#if defined(__linux__) && !defined(__ANDROID__)
+        // PF2_DEV_STALL=<ms>@<s> (tests only): the game thread stalls <ms> every <s> seconds here,
+        // as a room load does, before it picks up the next packet.
+        if (const auto& stall = pf2::Get(); stall.dev_stall_ms > 0 && self->published_.load() != nullptr) {
+            static auto next = std::chrono::steady_clock::now() + std::chrono::seconds(stall.dev_stall_every_s);
+            if (std::chrono::steady_clock::now() >= next) {
+                next = std::chrono::steady_clock::now() + std::chrono::seconds(stall.dev_stall_every_s);
+                std::this_thread::sleep_for(std::chrono::milliseconds(stall.dev_stall_ms));
+            }
+        }
+#endif
         // The packet storage is reused by the XR thread. Claim and copy it
         // under one short lock so cancellation cannot begin the next packet
         // while this callback is preempted between exchange and copy.
