@@ -808,6 +808,19 @@ bool OpenXRRuntime::RequestExitSession() {
     return Check(xrRequestExitSession(m_session), "xrRequestExitSession");
 }
 
+bool OpenXRRuntime::PrepareSessionRecreate() {
+    ClearError();
+    if (HasSession()) {
+        return Fail(XR_ERROR_CALL_ORDER_INVALID, "PrepareSessionRecreate",
+                    "the previous session was not destroyed");
+    }
+    if (m_instance_loss_pending) {
+        return false;
+    }
+    m_session_loss_pending = false;
+    return true;
+}
+
 void OpenXRRuntime::ObserveResult(XrResult result) noexcept {
     if (result == XR_SESSION_LOSS_PENDING) {
         if (!m_session_loss_pending) {
