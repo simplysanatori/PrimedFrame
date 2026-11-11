@@ -1008,6 +1008,11 @@ public:
             return Fail("Dawn's Vulkan GPU is not the OpenXR runtime's");
         }
         aurora_format_ = static_cast<VkFormat>(format);
+        return BindSession(runtime, handles);
+    }
+
+    // The session on Dawn's device, its swapchains and the bridge (BindAurora, RecreateSession).
+    bool BindSession(OpenXRRuntime& runtime, const AuroraDawnVulkanHandles& handles) {
         XrGraphicsBindingVulkan2KHR binding{XR_TYPE_GRAPHICS_BINDING_VULKAN2_KHR};
         binding.instance = static_cast<VkInstance>(handles.instance);
         binding.physicalDevice = static_cast<VkPhysicalDevice>(handles.physicalDevice);
@@ -1695,6 +1700,55 @@ public:
         if (shutdown_unsafe_) {
             return false;
         }
+        if (!ReleaseSession()) {
+            return false;
+        }
+        if (hooks_installed_) {
+            aurora_vulkan_direct_configure(nullptr);
+            hooks_installed_ = false;
+        }
+        vk_instance_ = VK_NULL_HANDLE;
+        instance_api_version_ = 0;
+        timeline_semaphores_ = false;
+        bound_ = false;
+        requirements_queried_ = false;
+        runtime_ = nullptr;
+        return true;
+    }
+
+    // Session recovery (OpenXRIntegration::RecoverSessionOnProducer): the runtime ended the
+    // session early, so it is released like Shutdown() does and a new one is created on the same
+    // Dawn device. Dawn's instance, device and hooks stay as they are. On the game thread with
+    // Aurora's worker idle, like Shutdown().
+    bool RecreateSession(OpenXRRuntime& runtime) {
+        ClearError();
+        if (!bound_ || runtime_ != &runtime || shutdown_unsafe_) {
+            return Fail("OpenXR Vulkan backend has no session to recreate");
+        }
+        if (!ReleaseSession()) {
+            return false;
+        }
+        bound_ = false;
+        if (!runtime.PrepareSessionRecreate()) {
+            return Fail("OpenXR instance is lost; a new session needs a new instance");
+        }
+        {
+            std::lock_guard lock(submission_mutex_);
+            shutting_down_ = false;
+            awaiting_token_ = 0;
+            submission_results_ = {};
+        }
+        AuroraDawnVulkanHandles handles{};
+        int64_t format = 0;
+        if (!aurora_vulkan_direct_get_handles(&handles, &format) || handles.instance != vk_instance_) {
+            return Fail("Aurora no longer reports the Dawn Vulkan device the session was made on");
+        }
+        return BindSession(runtime, handles);
+    }
+
+    // Everything of Shutdown() that belongs to the session: the bridge, the fence, the swapchains
+    // and the session itself. False when Dawn's queue could not be drained.
+    bool ReleaseSession() {
         {
             std::lock_guard lock(submission_mutex_);
             shutting_down_ = true;
@@ -1749,16 +1803,6 @@ public:
         if (runtime_ != nullptr) {
             runtime_->SetGraphicsQueueGuard(nullptr, nullptr);
         }
-        if (hooks_installed_) {
-            aurora_vulkan_direct_configure(nullptr);
-            hooks_installed_ = false;
-        }
-        vk_instance_ = VK_NULL_HANDLE;
-        instance_api_version_ = 0;
-        timeline_semaphores_ = false;
-        bound_ = false;
-        requirements_queried_ = false;
-        runtime_ = nullptr;
         return true;
     }
 
@@ -2826,6 +2870,7 @@ OpenXRBeginStatus OpenXRVulkanDirectBackend::ArmPacket(OpenXRBackendFrame& packe
 bool OpenXRVulkanDirectBackend::SupportsPipelining() const { return m_impl->SupportsPipelining(); }
 bool OpenXRVulkanDirectBackend::EyesResizing() const { return m_impl->EyesResizing(); }
 bool OpenXRVulkanDirectBackend::Shutdown() { return m_impl->Shutdown(); }
+bool OpenXRVulkanDirectBackend::RecreateSession(OpenXRRuntime& runtime) { return m_impl->RecreateSession(runtime); }
 bool OpenXRVulkanDirectBackend::IsBound() const { return m_impl->IsBound(); }
 bool OpenXRVulkanDirectBackend::PanelLayerAvailable() const { return m_impl->PanelLayerAvailable(); }
 const OpenXRVulkanGraphicsRequirements& OpenXRVulkanDirectBackend::GraphicsRequirements() const {
