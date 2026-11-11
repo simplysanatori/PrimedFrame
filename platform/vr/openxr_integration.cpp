@@ -815,11 +815,24 @@ private:
     // headsets clock their cores by this: a Quest 3 held the game thread at CPU level 4
     // (2.2 GHz of a possible 2.36) and the GPU at level 3 with the runtime's own choice. A
     // refusal is logged and changes nothing; desktop runtimes rarely offer the extension.
+    // Asked at every session start. SteamVR (the Frame, 2026-11) does not offer
+    // XR_EXT_performance_settings (its OpenXR runtime lists XR_FB_display_refresh_rate and
+    // XR_META_performance_metrics, which only reports), so there the setting cannot reach the
+    // GPU clock: said once per session instead of silently doing nothing.
     void ApplyPerformanceLevel() {
-        if (runtime_ == nullptr || set_performance_level_ == nullptr || !runtime_->HasSession()) {
+        if (runtime_ == nullptr || !runtime_->HasSession()) {
             return;
         }
         const std::string requested = GetVrSettings().performance_level;
+        if (set_performance_level_ == nullptr) {
+            if (requested != "default") {
+                PORTVR_LOG() << "OpenXR: performance level \"" << requested
+                             << "\" not requested: the runtime has no XR_EXT_performance_settings "
+                                "(no supported way to ask it for higher CPU/GPU clocks)"
+                             << std::endl;
+            }
+            return;
+        }
         XrPerfSettingsLevelEXT level = XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT;
         if (requested == "default") {
             return;
