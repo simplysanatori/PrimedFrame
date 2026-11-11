@@ -6,6 +6,8 @@
 # It fails, and writes no release, unless every check passes: check-bundle.sh against all four SteamOS builds in
 # tools/host-sonames, the audit (glibc symbols up to 2.39, nothing unbundled), and the glibc 2.39 loader tests.
 #   steam-frame/release.sh [--no-build]
+#   RELEASE_PREBUILT=<dir> steam-frame/release.sh   use the binaries already in <dir> (for example the desktop's
+#                       pf-remote-build.sh --portable output): no compile, everything else (strip, bundle, checks) runs
 # Environment:
 #   PF_RELEASE_OUT       where everything goes (default ~/Games/PrimedFrame/v2/release-out)
 #   PF_BUILD_DIR         build folder (default <repo>/build-portable; see build.sh for its other variables)
@@ -17,7 +19,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$(cd "$HERE/.." && pwd)
 VERSION=$(head -n 1 "$HERE/VERSION")
 OUT=${PF_RELEASE_OUT:-$HOME/Games/PrimedFrame/v2/release-out}
-B=${PF_BUILD_DIR:-$SRC/build-portable}
+B=${RELEASE_PREBUILT:-${PF_BUILD_DIR:-$SRC/build-portable}}
 KIT=${PF_KIT:-$HOME/Games/frame-portable}
 SYSROOT=${PF_GLIBC239_SYSROOT:-$KIT/sysroot-glibc2.39}
 NAME=primedframe-$VERSION-linux-arm64
@@ -28,7 +30,7 @@ fail() { echo "release: $*" >&2; exit 1; }
 if [ -e "$HOME/.cache/headset-in-use" ]; then fail "the headset is in use ($HOME/.cache/headset-in-use): no builds now"; fi
 
 # ---- 1. build (under the shared build lock; build.sh takes it) ----------------------------------------------------
-if [ "${1:-}" != --no-build ]; then
+if [ "${1:-}" != --no-build ] && [ -z "${RELEASE_PREBUILT:-}" ]; then
   mem=$(awk '/MemAvailable/ { print int($2 / 1024) }' /proc/meminfo)
   [ "$mem" -ge 2048 ] || fail "only $mem MB of memory available (need 2048): not building now"
   PF_BUILD_DIR=$B "$HERE/build.sh"
