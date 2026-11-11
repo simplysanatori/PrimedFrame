@@ -1860,8 +1860,32 @@ private:
         return OpenXRBeginStatus::Ready;
     }
 
-    // fresh: the retained layer was completed for this call rather than repeated.
+    // fresh: the retained layer was completed for this call rather than repeated. An xrEndFrame
+    // that SteamVR refuses with XR_ERROR_TIME_INVALID (seen once right after VISIBLE at session
+    // start) is a dropped frame, not the session's end: logged (the first, then every 100th) and
+    // tolerated unless 90 frames in a row are refused.
     bool EndRetainedFrame(bool fresh) {
+        const bool ended = EndRetainedFrameOnce(fresh);
+        if (ended) {
+            time_invalid_run_ = 0;
+            return true;
+        }
+        if (runtime_ == nullptr || runtime_->LastError().result != XR_ERROR_TIME_INVALID) {
+            return false;
+        }
+        ++time_invalid_total_;
+        ++time_invalid_run_;
+        if (time_invalid_total_ == 1 || time_invalid_total_ % 100 == 0) {
+            std::ostringstream message;
+            message << "xrEndFrame refused the display time (XR_ERROR_TIME_INVALID): frame dropped ("
+                    << time_invalid_total_ << " so far, " << time_invalid_run_ << " in a row; end display time "
+                    << pf2_last_end_time_ << ", the frame's predicted " << active_frame_.predicted_display_time << ")";
+            Log(OpenXRLogLevel::Warning, message.str());
+        }
+        return time_invalid_run_ < 90;
+    }
+
+    bool EndRetainedFrameOnce(bool fresh) {
         if (!runtime_->IsSessionRunning()) {
             return true;
         }
@@ -1891,9 +1915,20 @@ private:
         const auto& frame = retained_frame_;
         // PF2_AHEAD_PERIODS: a fresh layer ends with the display time its poses were located for.
         OpenXRFrame end_frame = active_frame_;
+        // Only a time SteamVR can take: once the session's period is known, after the last end's
+        // time, and within 1.25 periods of this frame's predicted one (a packet located before a
+        // stall or before the waits that kept the compositor fed meanwhile is not). Otherwise the
+        // frame keeps xrWaitFrame's time, as without PF2_AHEAD_PERIODS.
         if (fresh && pf2::Get().ahead_periods >= 0 && retained_pose_time_ > 0) {
-            NoteEndOverride(retained_pose_time_ - active_frame_.predicted_display_time);
-            end_frame.predicted_display_time = retained_pose_time_;
+            const XrDuration period = DisplayPeriod();
+            const XrDuration delta = retained_pose_time_ - active_frame_.predicted_display_time;
+            if (nominal_period_ > 0 && period > 0 && retained_pose_time_ > pf2_last_end_time_ &&
+                std::llabs(delta) <= period + period / 4) {
+                NoteEndOverride(delta);
+                end_frame.predicted_display_time = retained_pose_time_;
+            } else {
+                ++pf2_end_kept_;
+            }
         }
         if (frame.presentation.mode == OpenXRFrameMode::VirtualScreen) {
             XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -2601,7 +2636,8 @@ private:
         pf2_locate_ms_.clear();
         if (pf2::Get().ahead_periods >= 0) {
             line << " | ended at pose time: same as frame " << pf2_end_exact_ << ", moved " << pf2_end_moved_
-                 << ", not after the previous end " << pf2_end_backwards_;
+                 << ", not after the previous end " << pf2_end_backwards_ << ", kept the frame's time "
+                 << pf2_end_kept_;
         }
         diagnostics::detail::Info(line.str());
         pf2_fence_ms_.clear();
@@ -2609,7 +2645,7 @@ private:
         pf2_overlap_lead_ms_.clear();
         pf2_overlaps_ = 0;
         pf2_lead_ = {};
-        pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = 0;
+        pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = pf2_end_kept_ = 0;
     }
 
     bool Fail(std::string message) {
@@ -2650,6 +2686,11 @@ private:
     std::vector<float> pf2_gpu_own_ms_;
     std::vector<float> pf2_overlap_lead_ms_;
     uint32_t pf2_overlaps_ = 0;
+    // Fresh layers that kept xrWaitFrame's display time (EndRetainedFrame), and xrEndFrame calls
+    // refused with XR_ERROR_TIME_INVALID (all, and in a row).
+    uint32_t pf2_end_kept_ = 0;
+    uint64_t time_invalid_total_ = 0;
+    uint32_t time_invalid_run_ = 0;
     std::chrono::steady_clock::time_point pf2_wait_return_{};
     uint32_t pf2_fresh_layers_ = 0;
     uint64_t pf2_fence_timeouts_ = 0;
