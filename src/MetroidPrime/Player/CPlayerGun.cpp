@@ -6,6 +6,8 @@
 #include "port_shot_aim.h"
 #include "port_synthetic_effect.h"
 #ifdef TARGET_PC
+#include "vr/vr_autofire.h"
+#include "vr/vr_pad.h"
 #include "vr/vr_view.h"
 #include "vr/vr_model_mirror.h"
 #endif
@@ -1662,6 +1664,9 @@ void CPlayerGun::ProcessNormalState(int releasedStates, int pressedStates, CStat
     UpdateNormalShotCycle(dt, mgr);
 #ifdef TARGET_PC
     PortStartRapidCharge();
+    if (mPortAutoFire) {
+      mPortRapidCharge = false; // the repeat comes from the cooldown, not the quick-shot burst
+    }
 #endif
     return;
   }
@@ -2731,6 +2736,14 @@ void CPlayerGun::UpdateWeaponFire(float dt, CPlayerState& playerState, CStateMan
   uint releasedStates = oldFiring & (oldFiring ^ fireButtonStates);
   uint pressedStates = fireButtonStates & (oldFiring ^ fireButtonStates);
   x2f0_pressedFireButtonStates = pressedStates;
+#ifdef TARGET_PC
+  {
+    // Port: Auto Fire's mode is picked at the press (the shoulder toggle) and kept to the release.
+    PortVr::AutoFire::Latch latch{mPortAutoFire};
+    mPortAutoFire = latch.Update((pressedStates & 0x1) != 0, (fireButtonStates & 0x1) != 0,
+                                 PortVr::VrAutoFireActive());
+  }
+#endif
   const CPlayer::EPlayerMorphBallState morphState = mgr.GetPlayer()->GetMorphballTransitionState();
   bool chargeRequested = x32c_chargePhase != kCP_NotCharging;
 
@@ -2743,7 +2756,12 @@ void CPlayerGun::UpdateWeaponFire(float dt, CPlayerState& playerState, CStateMan
       if (x390_cooldown >= coolDown) {
         x390_cooldown = coolDown;
         if (morphState == CPlayer::kMS_Unmorphed &&
+#ifdef TARGET_PC
+            // Port: Auto Fire repeats the shot, charge beam or not, at the beam's own cooldown.
+            (playerState.ItemEnabled(CPlayerState::kIT_ChargeBeam) || mPortAutoFire) &&
+#else
             playerState.ItemEnabled(CPlayerState::kIT_ChargeBeam) &&
+#endif
             player.GetGunHolsterState() == CPlayer::kGH_Drawn &&
 #ifdef TARGET_PC
             (player.GetGrappleState() == CPlayer::kGS_None || PortDebug::GrappleShoot()) &&
@@ -2850,6 +2868,9 @@ void CPlayerGun::UpdateWeaponFire(float dt, CPlayerState& playerState, CStateMan
           }
         } else {
           if (playerState.ItemEnabled(CPlayerState::kIT_ChargeBeam) &&
+#ifdef TARGET_PC
+              !mPortAutoFire && // Port: Auto Fire never charges
+#endif
               x33c_phazonBeamState == kPBS_Inactive)
             ProcessChargeState(releasedStates, pressedStates, mgr, dt);
           else

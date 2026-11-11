@@ -513,6 +513,9 @@ private:
   void PortStartRapidCharge();
   bool PortRapidChargeShot(float dt, CStateManager& mgr);
   bool mPortRapidCharge;
+  // Auto Fire (the Steam Frame shoulder's toggle, vr_autofire.h), latched at the trigger's press and
+  // dropped at its release: the held trigger repeats the beam's shots at its cooldown, never charges.
+  bool mPortAutoFire = false;
   // Phazon Beam cheat: it was on last frame (so turning it off releases the beam), and the
   // beam picked while in the Phazon Beam, switched to once the exit morph is done (-1: none).
   bool mPortPhazonCheat = false;
