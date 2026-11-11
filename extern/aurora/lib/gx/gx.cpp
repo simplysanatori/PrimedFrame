@@ -1297,6 +1297,7 @@ void shutdown() noexcept {
   sShadowRecvPipelineLayout = {};
   sShadowPipelineLayout = {};
   sSlotSamplers.fill({});
+  sEmptySampler = {};
   {
     std::lock_guard lock{sBindGroupLayoutMutex};
     sUniformBindGroupLayouts.clear();
