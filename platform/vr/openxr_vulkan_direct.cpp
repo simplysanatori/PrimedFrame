@@ -17,6 +17,10 @@
 #include "vr/openxr_eye_resize.h"
 #include "vr/openxr_passthrough.h"
 #include "vr/pf2_switches.h"
+#if defined(__linux__) && !defined(__ANDROID__)
+#define PF2_STEAMVR_READER 1
+#include "vr/steamvr_frame_timing.h"
+#endif
 #include "vr/vr_settings.h"
 
 #include <aurora/vulkan_direct_interop.h>
@@ -319,48 +323,110 @@ std::string SampleStat(std::vector<float>& values) {
 }
 
 // PF2_END_PHASE / PF2_END_DELAY_US (KartFrame lane X): when in SteamVR's refresh each eye set is
-// released and its frame ended. Without either switch both happen right after xrWaitFrame returns
-// (and the release fence), which on the Frame lands on the compositor's update edge, a phase that
-// drifts per launch. dev/tools/vrtiming.py publishes the compositor grid (64 bytes, atomic rename;
-// format in its header): 'KFP1', count, newest vsync and period (CLOCK_MONOTONIC ns, the
-// steady_clock here), update start p5/p50 and end p50/p95 (ns after the vsync), write time. The
-// pacing thread re-reads it at most every 50 ms and aims the end at
+// released and its frame ended. Without either both happen right after xrWaitFrame returns (and
+// the release fence), which on the Frame lands on the compositor's update edge, a phase that
+// drifts per launch. The compositor grid (newest vsync and period, CLOCK_MONOTONIC ns = the
+// steady_clock here; update start p5/p50 and end p50/p95, ns after the vsync) comes from the
+// game's own SteamVR timing reader (steamvr_frame_timing.h), or with PF2_PHASE_FILE set from that
+// 64-byte record (dev/tools/vrtiming.py: 'KFP1', count, vsync, period, the four percentiles, write
+// time). The pacing thread looks at it at most every 50 ms and aims the end at
 //   after[:us]  -> vsync + update end p95 + us (default 300),
 //   before[:us] -> vsync + update start p50 - us (default 1500),
-// of the vsync at or before the wake-up. Without a fresh grid (missing, older than 0.5 s, period
-// 1 % off xrWaitFrame's) the end waits PF2_END_DELAY_US after the wake-up, or 4000 us. Every 10 s
-// a summary line: where the ends landed against the vsync and the published update window.
+// of the vsync at or before the wake-up. Without a fresh grid (none, older than 0.5 s, period 1 %
+// off xrWaitFrame's) the end waits PF2_END_DELAY_US after the wake-up, else the offset the lock
+// last used at this refresh rate (vr_end_phase.txt in the user folder), else 0.75 of the display
+// period: past the Frame's update window (3.0-5.3 ms after the vsync at 90 Hz), before the next.
+// Every 10 s (MP_VR_LOG=1) a summary line: where the ends landed against the vsync and the window.
 class EndPhaseLock {
 public:
     enum class Mode { Off, Delay, After, Before };
+    enum class Source { None, Reader, File };
     using Clock = std::chrono::steady_clock;
     using LogFn = std::function<void(const std::string&)>;
 
-    void Configure(const pf2::Switches& switches, LogFn log) {
+    void Configure(const pf2::Switches& switches, const std::string& runtime_name, LogFn log) {
         log_ = std::move(log);
-        fallback_us_ = switches.end_delay_us > 0 ? switches.end_delay_us : 4000;
+        mode_ = Mode::Off;
+        source_ = Source::None;
+        have_ = locked_ = announced_ = started_ = false;
+        first_frame_ = Clock::time_point{};
+        fixed_us_ = switches.end_delay_us;
+        learned_hz_ = 0;
         if (switches.end_phase.empty()) {
             if (switches.end_delay_us > 0) {
                 mode_ = Mode::Delay;
-                log_("end phase: PF2_END_DELAY_US=" + std::to_string(fallback_us_) +
+                log_("end phase: PF2_END_DELAY_US=" + std::to_string(fixed_us_) +
                      ": each eye set released and its frame ended that long after xrWaitFrame returned");
             }
             return;
         }
+        bool steamvr = runtime_name.find("SteamVR") != std::string::npos;
+#ifdef PF2_STEAMVR_READER
+        steamvr = steamvr || steamvr_timing::SteamVrClientLoaded();
+#endif
+        if (switches.end_phase_default && !steamvr) {
+            off_reason_ = "the runtime ('" + runtime_name + "') is not SteamVR";
+            return;
+        }
         mode_ = switches.end_phase == "after" ? Mode::After : Mode::Before;
         offset_us_ = switches.end_phase_us >= 0 ? switches.end_phase_us : (mode_ == Mode::After ? 300 : 1500);
-        const char* path = std::getenv("PF2_PHASE_FILE");
-        const char* run = std::getenv("XDG_RUNTIME_DIR");
-        const char* home = std::getenv("HOME");
-        path_ = path != nullptr && *path != '\0' ? std::string(path)
-                : run != nullptr && *run != '\0'  ? std::string(run) + "/primedframe2-phase.bin"
-                                                  : std::string(home != nullptr ? home : ".") + "/.cache/primedframe2-phase.bin";
-        log_("end phase: PF2_END_PHASE=" + switches.end_phase + ": each eye set released and its frame ended at vsync + " +
+        if (const char* path = std::getenv("PF2_PHASE_FILE"); path != nullptr && *path != '\0') {
+            source_ = Source::File;
+            path_ = path;
+        } else if (switches.timing_reader) {
+#ifdef PF2_STEAMVR_READER
+            source_ = Source::Reader;
+            steamvr_timing::Start(log_);
+#endif
+        }
+        log_("end phase: " + switches.end_phase + (switches.end_phase_default ? " (default)" : " (PF2_END_PHASE)") +
+             ": each eye set released and its frame ended at vsync + " +
              (mode_ == Mode::After ? "update end p95 + " : "update start p50 - ") + std::to_string(offset_us_) +
-             " us from the compositor grid in " + path_ + " (dev/tools/vrtiming.py); without a fresh grid " +
-             std::to_string(fallback_us_) + " us after the wake-up");
+             " us of SteamVR's compositor grid from " + SourceName() + "; without a grid " + FallbackName());
     }
     bool Enabled() const { return mode_ != Mode::Off; }
+
+    // Each finished frame, phased or not: the start line once the end-phase state is known (the
+    // first lock, or 3 s without one).
+    void NoteFrame(int64_t period_ns) {
+        if (started_ || period_ns <= 0) return;
+        const Clock::time_point now = Clock::now();
+        if (first_frame_ == Clock::time_point{}) first_frame_ = now;
+        if (!locked_ && now - first_frame_ < std::chrono::seconds(3) && mode_ != Mode::Off && mode_ != Mode::Delay) {
+            return;
+        }
+        started_ = true;
+        const double hz = 1e9 / static_cast<double>(period_ns);
+        const auto& switches = pf2::Get();
+        char head[96];
+        std::snprintf(head, sizeof head, "PF2 start: display %.1f Hz (period %.2f ms)", hz, period_ns / 1e6);
+        std::string line = head;
+        line += "; sim ";
+        if (!switches.sim_lock) {
+            line += "on the wall clock (PF2_SIM_LOCK off)";
+        } else if (pf2::SimLockStride(hz) == 1) {
+            line += "locked, 1 step per packet (up to PF2_SIM_LOCK_MAX_HZ=" + std::to_string(switches.sim_lock_max_hz) +
+                    ")";
+        } else {
+            line += "locked, 1 step of 2 periods per 2 packets (above PF2_SIM_LOCK_MAX_HZ=" +
+                    std::to_string(switches.sim_lock_max_hz) + ")";
+        }
+        line += "; end phase ";
+        switch (mode_) {
+        case Mode::Off:
+            line += off_reason_.empty() ? "off" : "off (" + off_reason_ + ")";
+            break;
+        case Mode::Delay:
+            line += "fixed delay " + std::to_string(fixed_us_) + " us";
+            break;
+        default:
+            line += std::string(mode_ == Mode::After ? "after" : "before") + " +" + std::to_string(offset_us_) +
+                    " us, " + (locked_ ? "LOCKED to the compositor grid" : "NOT locked (fallback " + FallbackName() + ")") +
+                    ", grid from " + SourceName();
+            break;
+        }
+        log_(line);
+    }
 
     // When to release and end this cycle's frame. wake: xrWaitFrame's return; period: its display
     // period. Never later than one period after the wake-up less 1 ms (the next refresh's wake-up).
@@ -368,7 +434,7 @@ public:
         const Clock::time_point deadline =
             wake + std::chrono::nanoseconds(std::max<int64_t>(period_ns - 1000000, 0));
         vsync_ns_ = 0;
-        Clock::time_point target = wake + std::chrono::microseconds(fallback_us_);
+        Clock::time_point target = wake + std::chrono::microseconds(FallbackUs(period_ns));
         if (mode_ == Mode::After || mode_ == Mode::Before) {
             const Clock::time_point now = Clock::now();
             Refresh(now);
@@ -377,11 +443,12 @@ public:
                                std::llabs(period_ns_ - period_ns) * 100 <= period_ns;
             if (fresh != locked_ || !announced_) {
                 log_(std::string("end phase: ") +
-                     (fresh ? "locked to the compositor grid"
-                            : "fixed delay " + std::to_string(fallback_us_) + " us after the wake-up (" +
+                     (fresh ? "locked to the compositor grid (" + SourceName() + ")"
+                            : "fallback " + std::to_string(FallbackUs(period_ns)) + " us after the wake-up, " +
+                                  FallbackName() + " (" +
                                   (have_ ? (now_ns - written_ns_ >= 500000000 ? "grid older than 0.5 s"
                                                                               : "grid period differs from xrWaitFrame's")
-                                         : "no grid at " + path_) +
+                                         : "no grid from " + SourceName()) +
                                   ")"));
                 locked_ = fresh;
                 announced_ = true;
@@ -389,14 +456,15 @@ public:
             if (locked_) {
                 const int64_t wake_ns = wake.time_since_epoch().count();
                 // The vsync at or before the wake-up (SteamVR returns about 0.4 ms after it; 1 ms of
-                // slack for the published grid's error). A late wake-up keeps its vsync, so its target
-                // may already have passed.
+                // slack for the grid's error). A late wake-up keeps its vsync, so its target may
+                // already have passed.
                 const double k =
                     std::floor(static_cast<double>(wake_ns - vsync_pub_ + 1000000) / static_cast<double>(period_ns_));
                 vsync_ns_ = vsync_pub_ + static_cast<int64_t>(k * static_cast<double>(period_ns_));
                 const int64_t at = mode_ == Mode::After ? vsync_ns_ + ue95_ + offset_us_ * 1000
                                                         : vsync_ns_ + us50_ - offset_us_ * 1000;
                 target = Clock::time_point(Clock::duration(at));
+                Learn(target - wake, period_ns);
             }
         }
         if (target > deadline) {
@@ -429,9 +497,9 @@ public:
         };
         char line[480];
         std::snprintf(line, sizeof line,
-                      "end phase: 10 s, %u frames (%u on the fixed delay, %u capped at the next wake-up); end after "
+                      "end phase: 10 s, %u frames (%u on the fallback, %u capped at the next wake-up); end after "
                       "wake-up p5 %.2f p50 %.2f p95 %.2f ms; after vsync p50 %.2f p95 %.2f, minus update start p50 "
-                      "%+.2f p95 %+.2f, minus update end p95: p50 %+.2f p95 %+.2f (published start %.2f end %.2f/%.2f "
+                      "%+.2f p95 %+.2f, minus update end p95: p50 %+.2f p95 %+.2f (grid start %.2f end %.2f/%.2f "
                       "p50/p95)",
                       frames_, fallback_frames_, capped_, q(e_, 0.05), q(e_, 0.5), q(e_, 0.95), q(vs_, 0.5),
                       q(vs_, 0.95), q(us_, 0.5), q(us_, 0.95), q(ue_, 0.5), q(ue_, 0.95), us50_ / 1e6, ue50_ / 1e6,
@@ -442,9 +510,80 @@ public:
     }
 
 private:
+    std::string SourceName() const {
+        switch (source_) {
+        case Source::Reader:
+#ifdef PF2_STEAMVR_READER
+            return "the in-process SteamVR timing reader (" + steamvr_timing::Describe() + ")";
+#else
+            return "nowhere";
+#endif
+        case Source::File:
+            return path_ + " (PF2_PHASE_FILE)";
+        default:
+            return "nowhere (PF2_TIMING_READER=0)";
+        }
+    }
+
+    std::string FallbackName() const {
+        if (fixed_us_ > 0) return "PF2_END_DELAY_US=" + std::to_string(fixed_us_);
+        if (learned_us_ > 0) return "the offset learned at " + std::to_string(learned_hz_) + " Hz";
+        return "0.75 of the display period";
+    }
+
+    // The end's delay after the wake-up without a grid.
+    long FallbackUs(int64_t period_ns) {
+        if (fixed_us_ > 0) return fixed_us_;
+        const int hz = static_cast<int>(std::lround(1e9 / static_cast<double>(std::max<int64_t>(period_ns, 1))));
+        if (hz != learned_hz_) {
+            learned_hz_ = hz;
+#ifdef PF2_STEAMVR_READER
+            learned_us_ = steamvr_timing::LearnedOffsetUs(hz);
+#endif
+            // Only a value inside the period's useful part.
+            if (learned_us_ * 1000 < period_ns / 5 || learned_us_ * 1000 > period_ns - 1000000) learned_us_ = 0;
+        }
+        return learned_us_ > 0 ? learned_us_ : static_cast<long>(period_ns * 3 / 4 / 1000);
+    }
+
+    // The locked offsets after the wake-up: their median every 900 frames is kept for runs
+    // without a grid.
+    void Learn(Clock::duration offset, int64_t period_ns) {
+        const long us = static_cast<long>(std::chrono::duration_cast<std::chrono::microseconds>(offset).count());
+        if (us <= 0 || us * 1000 >= period_ns) return;
+        learn_.push_back(us);
+        if (learn_.size() < 900) return;
+        std::nth_element(learn_.begin(), learn_.begin() + 450, learn_.end());
+        const long median = learn_[450];
+        learn_.clear();
+#ifdef PF2_STEAMVR_READER
+        steamvr_timing::NoteLockedOffset(static_cast<int>(std::lround(1e9 / static_cast<double>(period_ns))), median);
+#else
+        (void)median;
+#endif
+    }
+
     void Refresh(Clock::time_point now) {
         if (now - read_at_ < std::chrono::milliseconds(50)) return;
         read_at_ = now;
+        if (source_ == Source::Reader) {
+#ifdef PF2_STEAMVR_READER
+            steamvr_timing::Grid grid;
+            if (!steamvr_timing::Latest(grid)) {
+                have_ = false;
+                return;
+            }
+            vsync_pub_ = grid.vsync_ns;
+            period_ns_ = grid.period_ns;
+            us50_ = grid.update_start_p50;
+            ue50_ = grid.update_end_p50;
+            ue95_ = grid.update_end_p95;
+            written_ns_ = grid.written_ns;
+            have_ = true;
+#endif
+            return;
+        }
+        if (source_ != Source::File) return;
         unsigned char b[64];
         std::FILE* file = std::fopen(path_.c_str(), "rb");
         if (file == nullptr) return;
@@ -463,14 +602,21 @@ private:
     }
 
     Mode mode_ = Mode::Off;
+    Source source_ = Source::None;
     LogFn log_;
     long offset_us_ = 0;
-    long fallback_us_ = 4000;
+    long fixed_us_ = 0;
+    long learned_us_ = 0;
+    int learned_hz_ = 0;
+    std::vector<long> learn_;
     std::string path_;
+    std::string off_reason_;
     Clock::time_point read_at_{};
+    Clock::time_point first_frame_{};
     bool have_ = false;
     bool locked_ = false;
     bool announced_ = false;
+    bool started_ = false;
     int64_t vsync_pub_ = 0, period_ns_ = 0, us50_ = 0, ue50_ = 0, ue95_ = 0, written_ns_ = 0;
     int64_t vsync_ns_ = 0;
     Clock::time_point summary_at_{};
@@ -955,6 +1101,7 @@ public:
         // PF2_END_PHASE / PF2_END_DELAY_US: the release and the end together, at a phase of the
         // refresh; the layer keeps the display time and poses it was rendered for.
         const auto wake = pf2_wait_return_;
+        end_phase_.NoteFrame(active_frame_.predicted_display_period);
         const bool phased = end_phase_.Enabled() && wake.time_since_epoch().count() != 0 &&
                             active_frame_.predicted_display_period > 0;
         if (phased) {
@@ -1980,7 +2127,8 @@ private:
                        "is blitted into its half, so multiview stays as set)";
         }
         Log(OpenXRLogLevel::Info, message.str());
-        end_phase_.Configure(switches, [this](const std::string& line) { Log(OpenXRLogLevel::Info, line); });
+        end_phase_.Configure(switches, runtime_ != nullptr ? runtime_->RuntimeInfo().runtime_name : std::string(),
+                             [this](const std::string& line) { Log(OpenXRLogLevel::Info, line); });
     }
 
     // PF2_RELEASE_FENCE: waits (up to 100 ms) for the GPU work of the set that signalled `value`.
