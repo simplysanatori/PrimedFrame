@@ -1,0 +1,17 @@
+#!/bin/bash
+# gcc / g++ for the portable release build (steam-frame/release.sh points CMake at the gcc and g++
+# symlinks next to this file): it compiles as the host's compiler does, but a link step uses a glibc 2.39
+# tree (PF_GLIBC239_SYSROOT: glibc, libm and GCC 15's runtime, laid out like an Arm64 root), so the programs
+# ask for no glibc symbol newer than 2.39, the oldest SteamOS (the others have 2.43, whose newer symbol
+# versions would not load there). The host's /usr/lib stays on the search path, after the glibc tree,
+# for the libraries the build links but does not bring (Qt, which is packed with the release).
+self=$(dirname "$(readlink -f "$0")")
+name=$(basename "$0")
+case $name in pf-g++ | g++ | c++) tool=g++ ;; *) tool=gcc ;; esac
+real=$(PATH=${PATH//"$self:"/} command -v "$tool") || { echo "$name: $tool not found" >&2; exit 1; }
+link=1
+for a in "$@"; do case $a in -c | -S | -E | -M | -MM | -MD | --version | -v | -### | -print-* | -dumpmachine | -dumpversion) link=0 ;; esac; done
+if [ "$link" = 1 ] && [ -n "$PF_GLIBC239_SYSROOT" ]; then
+    exec "$real" "$@" --sysroot="$PF_GLIBC239_SYSROOT" -L/usr/lib -Wl,-rpath-link,/usr/lib
+fi
+exec "$real" "$@"
