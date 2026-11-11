@@ -66,6 +66,10 @@ void finish();
 // For the next finish(): nothing will read the final pass's mono image, so an
 // immersive frame renders that pass into the eyes only (StereoPassReplay::skipMono).
 void set_final_pass_mono_unneeded(bool unneeded) noexcept;
+// Frame begin, after set_frame_stereo (PF2_MONO_SKIP): whether the host shows this frame's eyes
+// only (a headset that owns the display or a mirror of the eyes, no screenshot or depth snapshot
+// pending), so that EFB passes whose mono image nothing reads may be left out of it.
+void arm_mono_skip(bool hostShowsEyesOnly) noexcept;
 // Logs what an immersive frame asks of the eyes every 600 frames (passes, copies,
 // draws); the host's VR diagnostics switch (aurora_set_stereo_motion_logging).
 void set_stereo_diagnostics(bool enabled) noexcept;

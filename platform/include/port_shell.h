@@ -28,6 +28,8 @@ bool Defer(Type type, const CAABox& bounds, std::function<void()> draw);
 // Drops the queue (start of CStateManager::DrawWorld), so a shell queued outside it never draws a
 // frame late.
 void Clear();
+// Whether a shell is queued for this frame's Flush.
+bool HasQueued();
 
 // Draws the queued shells (CStateManager::DrawWorld, after the sorted geometry) and empties the
 // queue. Without this frame's scene copy it draws none of them.

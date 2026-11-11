@@ -97,6 +97,8 @@ bool Defer(Type type, const CAABox& bounds, std::function<void()> draw) {
 
 void Clear() { sPending.clear(); }
 
+bool HasQueued() { return !sPending.empty(); }
+
 void Flush() {
   std::vector<Pending> pending = std::move(sPending);
   sPending.clear();
@@ -122,3 +124,5 @@ bool DrawNow(Type type, const CAABox& bounds, const std::function<void()>& draw)
   return true;
 }
 } // namespace PortShell
+
+bool PortShellPending() { return PortShell::HasQueued(); }

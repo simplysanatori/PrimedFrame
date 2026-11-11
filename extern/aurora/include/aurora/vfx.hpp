@@ -373,6 +373,11 @@ void draw_indexed_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t 
 // silhouettes, RenderPauseScreenElements, flags 1); draws recorded after it read the new one, its
 // top level alone.
 void capture_scene(bool again = false);
+// PF2_SCENE_COPY_SKIP=1: this frame shows only the headset's eyes (an immersive frame whose mono
+// image nothing shows or reads), whose passes replay no vfx draw, so the scene and visor copies
+// only the mono image would read can be left out. Game thread, set at frame begin.
+bool eyes_only_frame() noexcept;
+void set_eyes_only_frame(bool eyesOnly) noexcept;
 // Remastered's RenderVisorEffects, after the post and the camera filters: copies the display output
 // (half size, no mips, decoded to linear) and makes the draws recorded until end_visor_effects visor
 // effects, which read that copy and write linear light encoded, with no exposure, tone or fog. False
