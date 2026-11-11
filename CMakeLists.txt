@@ -610,8 +610,10 @@ if(MP_ENABLE_OPENXR)
         # (tools/build-linux-dawn.sh). As on Windows, Vulkan is reached through the
         # runtime's and Dawn's loaders, so only the headers are needed.
         target_sources(metroid_prime_port PRIVATE
-            platform/vr/openxr_vulkan_direct.cpp)
-        target_link_libraries(metroid_prime_port PRIVATE Vulkan::Headers)
+            platform/vr/openxr_vulkan_direct.cpp
+            # SteamVR's compositor timing for the end-phase lock, read in-process.
+            platform/vr/steamvr_frame_timing.cpp)
+        target_link_libraries(metroid_prime_port PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
     endif()
     target_link_libraries(metroid_prime_port PRIVATE ${MP_OPENXR_TARGET})
 endif()
