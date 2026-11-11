@@ -28,6 +28,10 @@
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptWaypoint.hpp"
 #include "MetroidPrime/TCastTo.hpp"
+#ifdef TARGET_PC
+#include "MetroidPrime/PortRate.hpp"
+#include "port_debug.h"
+#endif
 #include "MetroidPrime/Weapons/CGameProjectile.hpp"
 #include "MetroidPrime/Weapons/CIceImpact.hpp"
 #include "WorldFormat/CMetroidAreaCollider.hpp"
@@ -988,7 +992,13 @@ void CWallCrawlerSwarm::UpdateBoid(CAreaCollisionCache& cache, CStateManager& mg
         boid.x7c_6_remainingLaunchNotOnSurfaceFrames--;
       }
     }
+#ifdef TARGET_PC
+    // Counted per boid update; 30 of them at 60 Hz. The packed count stays, the threshold
+    // scales with the tick (at most 240 counts at 480 Hz, inside its 8 bits).
+  } else if (PortRate::TicksReach(boid.x7c_24_framesNotOnSurface, 30.f, PortDebug::TickFrames())) {
+#else
   } else if (boid.x7c_24_framesNotOnSurface >= 30) {
+#endif
     boid.x80_24_active = false;
   } else {
     const float radius = 2.f * x374_boidRadius;
