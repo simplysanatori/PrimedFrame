@@ -7,8 +7,12 @@
 #include <cstdlib>
 #include <string>
 
-// Steam Frame headset A/B switches (PrimedFrame 2.0), read once from the environment. All are off
-// when unset, and the frame loop then behaves exactly as without them.
+// Steam Frame headset switches (PrimedFrame 2.0), read once from the environment.
+//
+// On Linux (the Steam Frame build) the setup the headset tests settled on ("H5-5": packed stereo,
+// release fence, ahead 1, the simulation locked to the display, the end at the compositor's phase)
+// is the default with no variable set; each switch below overrides it, and 0 (or "off") turns it
+// off. Elsewhere (Windows, the Quest) all are off when unset, as before.
 //
 //   PF2_STEREO_PACKED=1   both eyes side by side in ONE swapchain per eye set (one acquire, one
 //                         release; projection views pick their halves by imageRect), at most 3456
@@ -21,26 +25,29 @@
 //                         Aurora's, under Dawn's queue lock; the release waits for it). SteamVR
 //                         shows a released image at once, finished or not.
 //   PF2_AHEAD_PERIODS=<n> render-first packets locate their poses n display periods past the last
-//                         compositor frame (default 2; pipelined packets n + 1, default 3), and the
-//                         frame showing a fresh packet is ended with exactly the display time those
-//                         poses were located for.
+//                         compositor frame (Linux default 1, else 2; "off": the built-in 2;
+//                         pipelined packets n + 1), and the frame showing a fresh packet is ended
+//                         with exactly the display time those poses were located for.
 //   PF2_LATE_LOCATE=<ms>  in immersive play each packet locates (and publishes) its poses ms later
 //                         (1..8; 0/unset: at once) for the same display slot, so they are that much
 //                         fresher, taken from the idle time in xrWaitFrame after the eyes are done.
 //                         Too much moves the eyes past their slot ([pf2] pose lead <=-1). The
 //                         [pf2] line's "locate after wait" shows where the locate landed.
-//   PF2_END_PHASE=after[:us] | before[:us]
+//   PF2_END_PHASE=after[:us] | before[:us] | off
 //                         each eye set is released and its frame ended at a phase of SteamVR's
 //                         compositor refresh instead of right after xrWaitFrame returns (KartFrame
 //                         lane X): after = vsync + compositor update end p95 + us (default 300),
-//                         before = vsync + update start p50 - us (default 1500). The grid comes
-//                         from dev/tools/vrtiming.py (PF2_END_PHASE set in its environment), a
-//                         64-byte record at PF2_PHASE_FILE (default
-//                         $XDG_RUNTIME_DIR/primedframe2-phase.bin); without a fresh grid the end
-//                         waits PF2_END_DELAY_US, or 4000 us. Log lines start "end phase:".
+//                         before = vsync + update start p50 - us (default 1500). Linux default:
+//                         after, when the runtime is SteamVR. The grid comes from the game's own
+//                         SteamVR timing reader (steamvr_frame_timing.h), or from a 64-byte record
+//                         at PF2_PHASE_FILE when that is set (dev/tools/vrtiming.py). Without a
+//                         grid the end waits the offset the lock last used at this refresh rate
+//                         (saved in the user folder), or 0.75 of the display period. Log lines
+//                         start "end phase:".
 //   PF2_END_DELAY_US=<n>  release and end each eye set n us (1..12000) after xrWaitFrame returned
 //                         (after the release fence; the layer keeps its display time and poses),
 //                         bounded by the next refresh. Alone, or as PF2_END_PHASE's fallback.
+//   PF2_TIMING_READER=0   no in-process SteamVR timing reader (the end phase then uses its fallback).
 //   PF2_ALPHA_DISPLAY=1   the game's interpolation between simulation steps advances by the
 //                         packets' display times instead of the wall clock at draw pickup, so each
 //                         layer shows the game state for the moment it is seen.
@@ -48,13 +55,31 @@
 //                         of the display period (as 1.0 locked Dolphin to the display): no
 //                         interpolation, no 0- or 2-step layers from wall-clock jitter. A packet
 //                         whose display time moved k periods (a missed refresh) takes k steps
-//                         (at most 0.25 s), so the game keeps real time; without a new packet
-//                         (a stall) the wall clock steps it as before.
+//                         (at most 0.25 s, and no more than the tick budget lets run), so the game
+//                         keeps real time; without a new packet (a stall) the wall clock steps it
+//                         at the display rate. Linux default: on.
+//   PF2_SIM_LOCK_MAX_HZ=<hz>  the highest refresh rate the lock steps once per packet (default 96;
+//                         the game's per-tick logic is checked up to 90 steps a second). Above it
+//                         the lock takes one step of two periods per two packets (60 steps a second
+//                         at 120 Hz); 120 (or more) allows one step per packet at 120 Hz (a test).
+//   PF2_IDLE_AFTER_SEAL=0 in the headset the resource loader's per-frame idle runs before the frame
+//                         is sealed (EndScene), as on a flat screen; default: after it, so a slow
+//                         load step delays the next frame, not the one already drawn.
+//   PF2_HZ=<hz>           the refresh rate the game asks the headset for (72..144), over the
+//                         vr_display_refresh_rate setting; that setting's 0 (runtime default) asks
+//                         SteamVR for 90 on Linux.
 //   PF2_ALPHA_TRACE=<f>   tests only: one line per headset draw (serial, display time, steps, alpha).
 //   PF2_LABEL=<text>      shown for 3 s in the headset when the session starts (the toast panel).
 //   PF2_FRAME_STAMP=1     tests only (xrmock MOCK_XR_STAMP): each eye image carries the display
 //                         time its poses were located for in a 64x15 block in its top left corner.
 namespace PortVr::pf2 {
+
+// The Steam Frame build: the H5-5 setup is the default (see above).
+#if defined(__linux__) && !defined(__ANDROID__)
+inline constexpr bool kFrameDefaults = true;
+#else
+inline constexpr bool kFrameDefaults = false;
+#endif
 
 struct Switches {
     bool packed = false;
@@ -68,11 +93,21 @@ struct Switches {
     // "" (off), "after" or "before", and its offset in us (-1: the mode's default).
     std::string end_phase;
     long end_phase_us = -1;
+    // The end phase is the Linux default, not PF2_END_PHASE: it applies on SteamVR only.
+    bool end_phase_default = false;
     // 0: off.
     long end_delay_us = 0;
+    bool timing_reader = true;
     bool alpha_display = false;
     bool sim_lock = false;
+    // PF2_SIM_LOCK_MAX_HZ: one step per packet up to this rate, one per two packets above.
+    int sim_lock_max_hz = 96;
+    bool idle_after_seal = false;
+    // PF2_HZ: 0 unset.
+    int hz = 0;
     std::string alpha_trace;
+    // The PF2_* variables that were set, as given ("PF2_X=v ...").
+    std::string env;
 
     bool AnySet() const noexcept {
         return packed || fence || ahead_periods >= 0 || late_locate_ms > 0 || stamp || !label.empty() ||
@@ -81,22 +116,27 @@ struct Switches {
     }
 
     std::string Describe() const {
-        if (!AnySet()) {
-            return "PF2 switches: none set";
-        }
         std::string text = "PF2 switches:";
-        if (packed) text += " PF2_STEREO_PACKED=1";
-        if (fence) text += " PF2_RELEASE_FENCE=1";
-        if (ahead_periods >= 0) text += " PF2_AHEAD_PERIODS=" + std::to_string(ahead_periods);
-        if (late_locate_ms > 0) text += " PF2_LATE_LOCATE=" + std::to_string(late_locate_ms);
-        if (!end_phase.empty())
-            text += " PF2_END_PHASE=" + end_phase + (end_phase_us >= 0 ? ":" + std::to_string(end_phase_us) : "");
-        if (end_delay_us > 0) text += " PF2_END_DELAY_US=" + std::to_string(end_delay_us);
-        if (alpha_display) text += " PF2_ALPHA_DISPLAY=1";
-        if (sim_lock) text += " PF2_SIM_LOCK=1";
-        if (!alpha_trace.empty()) text += " PF2_ALPHA_TRACE=" + alpha_trace;
-        if (stamp) text += " PF2_FRAME_STAMP=1";
-        if (!label.empty()) text += " PF2_LABEL=\"" + label + "\"";
+        text += packed ? " packed" : " per-eye";
+        text += fence ? " fence" : " no-fence";
+        text += " ahead=" + (ahead_periods >= 0 ? std::to_string(ahead_periods) : std::string("built-in"));
+        if (late_locate_ms > 0) text += " late-locate=" + std::to_string(late_locate_ms) + "ms";
+        text += sim_lock ? " sim-lock(1 step/packet to " + std::to_string(sim_lock_max_hz) + " Hz)" : " sim-wallclock";
+        if (alpha_display) text += " alpha-display";
+        if (!end_phase.empty()) {
+            text += " end-phase=" + end_phase + (end_phase_us >= 0 ? ":" + std::to_string(end_phase_us) : "") +
+                    (end_phase_default ? "(SteamVR)" : "");
+        } else {
+            text += " end-phase=off";
+        }
+        if (end_delay_us > 0) text += " end-delay=" + std::to_string(end_delay_us) + "us";
+        if (!timing_reader) text += " no-timing-reader";
+        text += idle_after_seal ? " idle-after-seal" : " idle-before-seal";
+        if (hz > 0) text += " hz=" + std::to_string(hz);
+        if (stamp) text += " stamp";
+        if (!alpha_trace.empty()) text += " alpha-trace";
+        text += kFrameDefaults ? " (Frame defaults" : " (defaults off";
+        text += env.empty() ? "; no PF2_* set)" : "; set: " + env + ")";
         return text;
     }
 };
@@ -104,28 +144,42 @@ struct Switches {
 inline const Switches& Get() {
     static const Switches switches = [] {
         Switches s;
-        const auto flag = [](const char* name) {
-            const char* value = std::getenv(name);
-            return value != nullptr && value[0] == '1';
+        const auto note = [&s](const char* name, const char* value) {
+            if (!s.env.empty()) s.env += ' ';
+            s.env += std::string(name) + "=" + value;
         };
-        s.packed = flag("PF2_STEREO_PACKED");
-        s.fence = flag("PF2_RELEASE_FENCE");
-        s.stamp = flag("PF2_FRAME_STAMP");
-        if (const char* ahead = std::getenv("PF2_AHEAD_PERIODS"); ahead != nullptr && *ahead != '\0') {
+        const auto get = [&note](const char* name) -> const char* {
+            const char* value = std::getenv(name);
+            if (value == nullptr || *value == '\0') return nullptr;
+            note(name, value);
+            return value;
+        };
+        // Unset: the default; 1 on; 0/off (anything else) off.
+        const auto flag = [&](const char* name, bool fallback) {
+            const char* value = get(name);
+            return value == nullptr ? fallback : value[0] == '1' || std::string(value) == "on";
+        };
+        s.packed = flag("PF2_STEREO_PACKED", kFrameDefaults);
+        s.fence = flag("PF2_RELEASE_FENCE", kFrameDefaults);
+        s.stamp = flag("PF2_FRAME_STAMP", false);
+        s.ahead_periods = kFrameDefaults ? 1 : -1;
+        if (const char* ahead = get("PF2_AHEAD_PERIODS")) {
             char* end = nullptr;
             const long n = std::strtol(ahead, &end, 10);
             if (end != ahead && n >= 0 && n <= 8) {
                 s.ahead_periods = static_cast<int>(n);
+            } else if (std::string(ahead) == "off") {
+                s.ahead_periods = -1;
             }
         }
-        if (const char* late = std::getenv("PF2_LATE_LOCATE"); late != nullptr && *late != '\0') {
+        if (const char* late = get("PF2_LATE_LOCATE")) {
             char* end = nullptr;
             const long ms = std::strtol(late, &end, 10);
             if (end != late && ms >= 1 && ms <= 8) {
                 s.late_locate_ms = static_cast<int>(ms);
             }
         }
-        if (const char* phase = std::getenv("PF2_END_PHASE"); phase != nullptr && *phase != '\0') {
+        if (const char* phase = get("PF2_END_PHASE")) {
             const std::string v(phase);
             const std::string word = v.substr(0, v.find(':'));
             if (word == "after" || word == "before") {
@@ -138,16 +192,33 @@ inline const Switches& Get() {
                     }
                 }
             }
+        } else if (kFrameDefaults) {
+            s.end_phase = "after";
+            s.end_phase_default = true;
         }
-        if (const char* delay = std::getenv("PF2_END_DELAY_US"); delay != nullptr && *delay != '\0') {
+        if (const char* delay = get("PF2_END_DELAY_US")) {
             char* end = nullptr;
             const long us = std::strtol(delay, &end, 10);
             if (end != delay && us >= 1 && us <= 12000) {
                 s.end_delay_us = us;
             }
         }
-        s.alpha_display = flag("PF2_ALPHA_DISPLAY");
-        s.sim_lock = flag("PF2_SIM_LOCK");
+        s.timing_reader = flag("PF2_TIMING_READER", true);
+        s.alpha_display = flag("PF2_ALPHA_DISPLAY", false);
+        s.sim_lock = flag("PF2_SIM_LOCK", kFrameDefaults);
+        if (const char* max = get("PF2_SIM_LOCK_MAX_HZ")) {
+            const long hz = std::strtol(max, nullptr, 10);
+            if (hz >= 30 && hz <= 240) {
+                s.sim_lock_max_hz = static_cast<int>(hz);
+            }
+        }
+        s.idle_after_seal = flag("PF2_IDLE_AFTER_SEAL", kFrameDefaults);
+        if (const char* hz = get("PF2_HZ")) {
+            const long v = std::strtol(hz, nullptr, 10);
+            if (v >= 60 && v <= 144) {
+                s.hz = static_cast<int>(v);
+            }
+        }
         if (const char* trace = std::getenv("PF2_ALPHA_TRACE"); trace != nullptr) {
             s.alpha_trace = trace;
         }
@@ -160,6 +231,12 @@ inline const Switches& Get() {
         return s;
     }();
     return switches;
+}
+
+// PF2_SIM_LOCK's rate guard: the packets per simulation step at a display rate, 1 up to
+// PF2_SIM_LOCK_MAX_HZ (default 96), else 2 (each step then covers two periods).
+inline int SimLockStride(double display_hz) {
+    return display_hz <= static_cast<double>(Get().sim_lock_max_hz) + 0.5 ? 1 : 2;
 }
 
 // The game's simulation steps (CGraphics::TickSimTime), counted for the [pf2] line: steps and
