@@ -59,6 +59,8 @@ public:
     // PrepareOverlapPacket (which queues it behind this frame, as ArmPacket does) and publishes it.
     bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer, const std::function<void()>& overlap);
     OpenXRBeginStatus PrepareOverlapPacket(const OpenXRPresentation& presentation, OpenXRBackendFrame& packet);
+    // The display's true refresh period (0 before the session's first xrWaitFrame).
+    int64_t DisplayPeriodNs() const;
 
     // Render-first pacing: PreparePacket acquires the images Aurora copies the eyes into while no
     // compositor frame is open; BeginFrameForPacket accepts only a completed packet, and

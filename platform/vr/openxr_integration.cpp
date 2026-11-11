@@ -1450,12 +1450,26 @@ private:
 
         // Aurora renders the eyes at its next seal. Meanwhile the compositor keeps showing the
         // retained layer; a 50 ms stall repeats it explicitly and withdraws the packet.
+        // PF2_STALL_REPEAT=<periods> (Linux default 2): a game-thread stall (a room load) longer than
+        // that repeats the retained layer at every refresh (each repeat ends right after its
+        // xrWaitFrame, with the layer's own poses) instead of leaving SteamVR without a frame for
+        // the whole stall, which it answered with seconds at half rate.
+        uint32_t wait_ms = 50;
+#if defined(__linux__) && !defined(__ANDROID__)
+        const int repeat_periods = pf2::Get().stall_repeat_periods;
+        if (repeat_periods > 0) {
+            const int64_t period_ns = backend_->DisplayPeriodNs();
+            if (period_ns > 0) {
+                wait_ms = static_cast<uint32_t>(std::clamp<int64_t>(repeat_periods * period_ns / 1000000, 4, 50));
+            }
+        }
+#endif
         OpenXRSubmissionStatus submission = OpenXRSubmissionStatus::Timeout;
         bool canceled_before_encode = false;
         const auto cancel_after = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
         while (!stop_.load(std::memory_order_acquire) && submission == OpenXRSubmissionStatus::Timeout) {
             submission = diagnostics::Measure(diagnostics::Stage::SubmissionWait, [&] {
-                return backend_->WaitForSubmission(packet, 50);
+                return backend_->WaitForSubmission(packet, wait_ms);
             });
             if (submission == OpenXRSubmissionStatus::Timeout) {
                 if (std::chrono::steady_clock::now() >= cancel_after) {
@@ -1472,6 +1486,12 @@ private:
                 if (!KeepAlive()) {
                     return false;
                 }
+#if defined(__linux__) && !defined(__ANDROID__)
+                // The next repeat waits for the next refresh in its own xrWaitFrame.
+                if (repeat_periods > 0) {
+                    wait_ms = 2;
+                }
+#endif
             }
         }
         diagnostics::Measure(diagnostics::Stage::Withdraw, [&] { WithdrawPublishedFrame(); });

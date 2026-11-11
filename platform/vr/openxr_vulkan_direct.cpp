@@ -1494,6 +1494,9 @@ public:
     // pipelined packet does. Nothing is prepared (the packet expects no submission) while the eyes
     // resize, a pair has fewer than two images, a packet is already queued or there is nothing to
     // render; then the next cycle prepares its packet after the end, as before.
+    // The display's true refresh period (DisplayPeriod), for the pacing thread.
+    XrDuration TrueDisplayPeriod() const { return DisplayPeriod(); }
+
     OpenXRBeginStatus PrepareOverlapPacket(const OpenXRPresentation& presentation, OpenXRBackendFrame& packet) {
         packet = {};
         packet.presentation = presentation;
@@ -2893,6 +2896,9 @@ bool OpenXRVulkanDirectBackend::FinishFrame(OpenXRBackendFrame& frame, bool subm
 bool OpenXRVulkanDirectBackend::FinishFrame(OpenXRBackendFrame& frame, bool submit_layer,
                                             const std::function<void()>& overlap) {
     return m_impl->FinishFrame(frame, submit_layer, overlap);
+}
+int64_t OpenXRVulkanDirectBackend::DisplayPeriodNs() const {
+    return m_impl->TrueDisplayPeriod();
 }
 OpenXRBeginStatus OpenXRVulkanDirectBackend::PrepareOverlapPacket(const OpenXRPresentation& presentation,
                                                                   OpenXRBackendFrame& packet) {
