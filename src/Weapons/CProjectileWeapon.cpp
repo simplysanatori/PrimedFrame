@@ -160,6 +160,9 @@ bool CProjectileWeapon::Update(float dt) {
   xd0_curTime += useDt;
   while (actualTime < xd0_curTime &&
          !close_enough(actualTime, xd0_curTime, 1.6666666666666667e-5)) {
+#ifdef TARGET_PC
+    xPortPrevLocalOffset = x80_localOffset;
+#endif
     if (xf4_curFrame < xe8_lifetime) {
       CParticleGlobals::SetEmitterTime(xf4_curFrame);
       CParticleGlobals::SetParticleLifetime(xe8_lifetime);
@@ -180,6 +183,14 @@ bool CProjectileWeapon::Update(float dt) {
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   x98_interpolationOffset =
       static_cast< float >(xd8_remainderTime) * (x80_previousLocalOffset - x80_localOffset);
+#elif defined(TARGET_PC)
+  // The newest frame is ahead of this tick by xd8 frames: draw the shot that far back toward
+  // the frame before it. Exactly 0 at 60 Hz (the time snaps to the frame above).
+  xPortInterpolating = xd8_remainderTime != 0.0;
+  if (xPortInterpolating) {
+    xPortInterpOffset =
+        static_cast< float >(xd8_remainderTime) * (xPortPrevLocalOffset - x80_localOffset);
+  }
 #endif
 
   if (xf4_curFrame < xe8_lifetime) {
@@ -204,7 +215,42 @@ void CProjectileWeapon::UpdateParticleFX() {
   for (int i = 0; i < xec_childSystemUpdateRate; ++i) {
     UpdateChildParticleSystems(1.f / 60.f);
   }
+#ifdef TARGET_PC
+  if (xec_childSystemUpdateRate == 0 && xPortInterpolating) {
+    PortPlaceAttachedSystems();
+  }
+#endif
 }
+
+#ifdef TARGET_PC
+// A tick that stepped no frame: keep the attached particle systems on the drawn position, as a
+// stepping tick does, without stepping them (the swooshes add a segment per update; left alone).
+void CProjectileWeapon::PortPlaceAttachedSystems() {
+  if (xf4_curFrame > xe8_lifetime) {
+    return;
+  }
+  if (xfc_APSMGen) {
+    if (x124_26_AP11) {
+      xfc_APSMGen->SetGlobalTranslation(GetTranslation());
+    } else {
+      xfc_APSMGen->SetTranslation(GetTranslation());
+    }
+    if (x124_25_APSO) {
+      xfc_APSMGen->SetOrientation(GetTransform());
+    }
+  }
+  if (x100_APS2Gen) {
+    if (x124_27_AP21) {
+      x100_APS2Gen->SetGlobalTranslation(GetTranslation());
+    } else {
+      x100_APS2Gen->SetTranslation(GetTranslation());
+    }
+    if (x124_25_APSO) {
+      x100_APS2Gen->SetOrientation(GetTransform());
+    }
+  }
+}
+#endif
 
 const CTransform4f CProjectileWeapon::GetTransform() const {
   return x14_localToWorldXf * x44_localXf;
@@ -218,7 +264,11 @@ const CVector3f CProjectileWeapon::GetTranslation() const {
              (x80_localOffset + x98_interpolationOffset + x44_localXf * x8c_projOffset) +
          x74_worldOffset;
 #else
+#ifdef TARGET_PC
+  return x14_localToWorldXf * (PortLocalOffset() + x44_localXf * x8c_projOffset) + x74_worldOffset;
+#else
   return x14_localToWorldXf * (x80_localOffset + x44_localXf * x8c_projOffset) + x74_worldOffset;
+#endif
 #endif
 }
 
@@ -444,7 +494,11 @@ void CProjectileWeapon::Render() const {
         x80_localOffset + x98_interpolationOffset + (x44_localXf * x8c_projOffset) +
         xa4_localOffset2);
 #else
+#ifdef TARGET_PC
+        PortLocalOffset() + (x44_localXf * x8c_projOffset) + xa4_localOffset2);
+#else
         x80_localOffset + (x44_localXf * x8c_projOffset) + xa4_localOffset2);
+#endif
 #endif
     CTransform4f worldXf = CTransform4f::Translate(x74_worldOffset);
     CTransform4f scaleXf =
@@ -513,6 +567,9 @@ rstl::optional_object< TLockedToken< CGenDescription > > CProjectileWeapon::Coll
   x80_localOffset = x14_localToWorldXf.TransposeRotate(pos - x74_worldOffset) - x8c_projOffset;
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   x98_interpolationOffset = CVector3f::Zero();
+#elif defined(TARGET_PC)
+  xPortPrevLocalOffset = x80_localOffset;
+  xPortInterpolating = false;
 #endif
 
   if (deflected) {
