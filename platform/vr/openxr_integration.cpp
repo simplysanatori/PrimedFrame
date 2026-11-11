@@ -14,6 +14,9 @@
 #include "vr/openxr_diagnostics.h"
 #include "vr/openxr_screen_math.h"
 #include "vr/pf2_switches.h"
+#if defined(__linux__) && !defined(__ANDROID__)
+#include "vr/steamvr_frame_timing.h"
+#endif
 #include "vr/prime_vr_policy.h"
 #include "vr/virtual_screen_anchor.h"
 #include "vr/vr_log.h"
@@ -812,11 +815,24 @@ private:
     // headsets clock their cores by this: a Quest 3 held the game thread at CPU level 4
     // (2.2 GHz of a possible 2.36) and the GPU at level 3 with the runtime's own choice. A
     // refusal is logged and changes nothing; desktop runtimes rarely offer the extension.
+    // Asked at every session start. SteamVR (the Frame, 2026-11) does not offer
+    // XR_EXT_performance_settings (its OpenXR runtime lists XR_FB_display_refresh_rate and
+    // XR_META_performance_metrics, which only reports), so there the setting cannot reach the
+    // GPU clock: said once per session instead of silently doing nothing.
     void ApplyPerformanceLevel() {
-        if (runtime_ == nullptr || set_performance_level_ == nullptr || !runtime_->HasSession()) {
+        if (runtime_ == nullptr || !runtime_->HasSession()) {
             return;
         }
         const std::string requested = GetVrSettings().performance_level;
+        if (set_performance_level_ == nullptr) {
+            if (requested != "default") {
+                PORTVR_LOG() << "OpenXR: performance level \"" << requested
+                             << "\" not requested: the runtime has no XR_EXT_performance_settings "
+                                "(no supported way to ask it for higher CPU/GPU clocks)"
+                             << std::endl;
+            }
+            return;
+        }
         XrPerfSettingsLevelEXT level = XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT;
         if (requested == "default") {
             return;
@@ -838,10 +854,29 @@ private:
     // frame with interpolated presentation, so any rate the headset offers moves
     // smoothly; each costs one draw of the game and both eyes per display frame.
     // 0 leaves the runtime's choice, 72 Hz on a Quest unless its system says otherwise.
+    // PrimedFrame (Linux): PF2_HZ asks for its rate over the setting, and the setting's 0 asks
+    // SteamVR for 90 Hz, the rate the game's timing is tuned to (PF2_SIM_LOCK, the end phase).
     void ApplyDisplayRefreshRate() {
-        const float wanted = display_refresh_rate_.load(std::memory_order_relaxed);
-        applied_display_refresh_rate_ = wanted;
+        const float setting = display_refresh_rate_.load(std::memory_order_relaxed);
+        applied_display_refresh_rate_ = setting;
+        float wanted = setting;
+        const char* why = "the vr_display_refresh_rate setting";
+#if defined(__linux__) && !defined(__ANDROID__)
+        if (pf2::Get().hz > 0) {
+            wanted = static_cast<float>(pf2::Get().hz);
+            why = "PF2_HZ";
+        } else if (!(setting > 0.0f) && runtime_ != nullptr &&
+                   (runtime_->RuntimeInfo().runtime_name.find("SteamVR") != std::string::npos ||
+                    steamvr_timing::SteamVrClientLoaded())) {
+            wanted = 90.0f;
+            why = "the default on SteamVR (setting 0)";
+        }
+#endif
         if (runtime_ == nullptr || !runtime_->HasSession() || request_display_refresh_rate_ == nullptr) {
+            if (runtime_ != nullptr && runtime_->HasSession() && wanted > 0.0f) {
+                PORTVR_LOG() << "OpenXR: display refresh rate " << wanted << " Hz wanted (" << why
+                             << ") but the runtime has no XR_FB_display_refresh_rate" << std::endl;
+            }
             return;
         }
         if (!(wanted > 0.0f)) {
@@ -882,7 +917,7 @@ private:
         for (size_t i = 0; i < rates.size(); ++i) {
             offered << (i == 0 ? "" : ", ") << rates[i];
         }
-        PORTVR_LOG() << "OpenXR: display refresh rate " << chosen << " Hz (asked for " << wanted
+        PORTVR_LOG() << "OpenXR: display refresh rate " << chosen << " Hz (asked for " << wanted << " by " << why
                      << ", offered " << (rates.empty() ? std::string("unknown") : offered.str()) << ") "
                      << (XR_SUCCEEDED(result) ? "requested" : "refused") << " (" << result << ")"
                      << std::endl;
