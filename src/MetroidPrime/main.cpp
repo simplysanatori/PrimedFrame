@@ -214,15 +214,29 @@ static float sPf2LastAlpha = -2.f;
 static uint64_t sPf2LockSerial = 0;
 static int64_t sPf2LockDisplay = 0;
 static bool sPf2Locked = false;
+// The display periods moved but not yet stepped (a stride of 2), and the lock's step period
+// (display period x stride; 0 before the first locked packet).
+static int sPf2LockCarry = 0;
+static double sPf2LockPeriod = 0.0;
 
-// PF2_SIM_LOCK: the steps for this frame (one per display period the new packet's display time
-// moved, normally exactly 1) and their period, or -1 when the lock does not step this frame (off,
-// no headset, no new packet: the wall clock then steps the game).
+// PF2_SIM_LOCK: the steps for this frame and their period, or -1 when the lock does not step
+// this frame (off, no headset, no new packet: the wall clock then steps the game, at the lock's
+// step period once there is one, so the display rate stays the simulation rate).
+// Rate guard (pf2::SimLockStride): one step per packet up to PF2_SIM_LOCK_MAX_HZ (default 96),
+// above it one step of two periods per two packets. A packet whose display time moved k periods
+// (missed refreshes, a hitch) adds k: at most 0.25 s of steps, and UpdateTicks' tick budget
+// (max(2 step periods, 1/30 s) of tick work) drops what does not fit, so a long stall slows the
+// game instead of spiralling.
 static int Pf2SimLockSteps(double& period) {
   sPf2Locked = false;
   if (!PortVr::pf2::Get().sim_lock || !PortVr::OpenXRIsRunning()) {
     sPf2LockDisplay = 0;
+    sPf2LockPeriod = 0.0;
+    sPf2LockCarry = 0;
     return -1;
+  }
+  if (sPf2LockPeriod > 0.0) {
+    period = sPf2LockPeriod;
   }
   PortVr::OpenXRFrameRequest request;
   if (!PortVr::OpenXRLatestFrameRequest(request) || request.predicted_display_time <= 0 ||
@@ -231,15 +245,23 @@ static int Pf2SimLockSteps(double& period) {
   }
   sPf2LockSerial = request.serial;
   const double displayPeriod = static_cast< double >(request.predicted_display_period) * 1e-9;
-  int steps = 1;
+  const int stride = PortVr::pf2::SimLockStride(1.0 / displayPeriod);
+  int moved = 1;
   if (sPf2LockDisplay != 0) {
-    const double moved =
+    const double periods =
         static_cast< double >(request.predicted_display_time - sPf2LockDisplay) / request.predicted_display_period;
-    const int most = std::max(1, static_cast< int >(0.25 / displayPeriod));
-    steps = std::clamp(static_cast< int >(std::lround(moved)), 0, most);
+    const int most = std::max(stride, static_cast< int >(0.25 / displayPeriod));
+    moved = std::clamp(static_cast< int >(std::lround(periods)), 0, most);
   }
+  if (stride == 1) {
+    sPf2LockCarry = 0;
+  }
+  sPf2LockCarry += moved;
+  const int steps = sPf2LockCarry / stride;
+  sPf2LockCarry %= stride;
   sPf2LockDisplay = request.predicted_display_time;
-  period = displayPeriod;
+  period = displayPeriod * stride;
+  sPf2LockPeriod = period;
   sPf2Locked = true;
   return steps;
 }
@@ -700,6 +722,11 @@ bool CGameArchitectureSupport::UpdateTicks() {
   } else {
     ticks = x7c_tickClock.Advance(tickElapsed, gpMain->GetScreenFading() || PortDebug::Turbo(),
                                   PortDebug::FrameLimitEnabled());
+    // PF2_SIM_LOCK: the wall clock stepped the game without a new packet, so the next packet
+    // starts afresh (one step) instead of counting those periods again.
+    if (ticks > 0 && sPf2LockPeriod > 0.0) {
+      sPf2LockDisplay = 0;
+    }
   }
   // A frame within the clamp is covered by its one step; past it (a hitch)
   // the remainder is kept so the following frames catch up.
