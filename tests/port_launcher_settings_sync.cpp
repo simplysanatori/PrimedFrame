@@ -55,7 +55,7 @@ struct LauncherSettingsSyncTest {
 
     QPushButton* updateButton = nullptr;
     for (auto* button : window.findChildren<QPushButton*>()) {
-      if (button->text() == QStringLiteral("Check for updates...")) updateButton = button;
+      if (button->text() == QStringLiteral("Check for Updates...")) updateButton = button;
     }
     Check(updateButton && updateButton->isEnabled(), "updates available without a selected disc");
     Check(QFile::exists(QStringLiteral(":/update-windows.ps1")), "self-update helper is embedded in launcher");
