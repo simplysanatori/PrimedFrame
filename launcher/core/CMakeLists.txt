@@ -4,6 +4,7 @@ add_library(primedgun_launcher_core STATIC
     cannon_textures.cpp
     dds_preview.cpp
     disc_probe.cpp
+    frame_start.cpp
     launcher_keys.cpp
     port_settings_file.cpp
     primedgun_import.cpp
