@@ -113,6 +113,10 @@ constexpr const char* kPatchedDawnScript = "tools/build-linux-dawn.sh";
 // waits for that value before xrReleaseSwapchainImage. A watcher thread records each set's time
 // from that signal to its completion (the "GPU per set" figure of the [pf2] line). Without
 // timeline semaphores the release drains the queue instead (correct, slower).
+//
+// PF2_DEV_GPU_LOAD_MB=<MB> (development only, for the mock): the signal's submission also fills
+// that many MB of a scratch buffer first, so every eye set costs the GPU that much more (a fixed
+// extra cost per set, measured in the [pf2] line's gpu/set like the rest).
 class GpuFence {
 public:
     enum class Mode { Off, Timeline, Drain };
@@ -137,6 +141,18 @@ public:
         PF2_DEVICE_FN(vkCreateSemaphore);
         PF2_DEVICE_FN(vkDestroySemaphore);
         PF2_DEVICE_FN(vkWaitSemaphores);
+        PF2_DEVICE_FN(vkCreateBuffer);
+        PF2_DEVICE_FN(vkDestroyBuffer);
+        PF2_DEVICE_FN(vkGetBufferMemoryRequirements);
+        PF2_DEVICE_FN(vkAllocateMemory);
+        PF2_DEVICE_FN(vkFreeMemory);
+        PF2_DEVICE_FN(vkBindBufferMemory);
+        PF2_DEVICE_FN(vkCreateCommandPool);
+        PF2_DEVICE_FN(vkDestroyCommandPool);
+        PF2_DEVICE_FN(vkAllocateCommandBuffers);
+        PF2_DEVICE_FN(vkBeginCommandBuffer);
+        PF2_DEVICE_FN(vkEndCommandBuffer);
+        PF2_DEVICE_FN(vkCmdFillBuffer);
 #undef PF2_DEVICE_FN
         if (vkGetDeviceQueue_ == nullptr || vkQueueSubmit_ == nullptr || vkQueueWaitIdle_ == nullptr) {
             return mode_ = Mode::Off;
@@ -158,7 +174,10 @@ public:
                     failed_ = false;
                     signaled_ = completed_ = 0;
                     gpu_ms_.clear();
+                    exclusive_ms_.clear();
+                    last_done_ns_ = 0;
                 }
+                StartDevLoad(family);
                 watcher_ = std::thread([this] { Watch(); });
                 return mode_ = Mode::Timeline;
             }
@@ -180,8 +199,12 @@ public:
             vkDestroySemaphore_(device_, semaphore_, nullptr);
         }
         semaphore_ = VK_NULL_HANDLE;
+        StopDevLoad();
         mode_ = Mode::Off;
     }
+
+    // PF2_DEV_GPU_LOAD_MB: the MB each set's signal fills first (0: none).
+    unsigned DevLoadMb() const noexcept { return load_cb_ != VK_NULL_HANDLE ? load_mb_ : 0u; }
 
     Mode CurrentMode() const noexcept { return mode_; }
 
@@ -204,6 +227,10 @@ public:
         timeline.signalSemaphoreValueCount = 1;
         timeline.pSignalSemaphoreValues = &value;
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO, &timeline};
+        if (load_cb_ != VK_NULL_HANDLE) {
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &load_cb_;
+        }
         submit.signalSemaphoreCount = 1;
         submit.pSignalSemaphores = &semaphore_;
         VkResult result;
@@ -226,6 +253,11 @@ public:
     // XR thread, before releasing a set's images: true once the set that signalled `value` finished
     // (0: drain Dawn's queue instead). False on a timeout or a failure.
     bool Wait(uint64_t value, std::chrono::milliseconds timeout) {
+        return WaitUntil(value, std::chrono::steady_clock::now() + timeout);
+    }
+
+    // As Wait, up to a point in time (timeline mode; drain mode waits for the queue regardless).
+    bool WaitUntil(uint64_t value, std::chrono::steady_clock::time_point deadline) {
         if (mode_ == Mode::Off) {
             return true;
         }
@@ -236,7 +268,7 @@ public:
             return idle;
         }
         std::unique_lock lock(mutex_);
-        return cv_.wait_for(lock, timeout, [&] { return completed_ >= value || failed_ || stop_; }) &&
+        return cv_.wait_until(lock, deadline, [&] { return completed_ >= value || failed_ || stop_; }) &&
                completed_ >= value;
     }
 
@@ -245,6 +277,15 @@ public:
         std::lock_guard lock(mutex_);
         out.insert(out.end(), gpu_ms_.begin(), gpu_ms_.end());
         gpu_ms_.clear();
+    }
+
+    // Each set's own GPU time since the last call: from its signal, or from the previous set's
+    // completion when that came later (time spent queued behind the previous set's work is not
+    // this set's).
+    void TakeExclusiveMs(std::vector<float>& out) {
+        std::lock_guard lock(mutex_);
+        out.insert(out.end(), exclusive_ms_.begin(), exclusive_ms_.end());
+        exclusive_ms_.clear();
     }
 
 private:
@@ -281,18 +322,120 @@ private:
                 cv_.notify_all();
                 return;
             }
+            const int64_t signaled_at = signal_ns_[next % kRing];
             if (gpu_ms_.size() < 4096) {
-                gpu_ms_.push_back(static_cast<float>(static_cast<double>(now - signal_ns_[next % kRing]) / 1.0e6));
+                gpu_ms_.push_back(static_cast<float>(static_cast<double>(now - signaled_at) / 1.0e6));
             }
+            if (exclusive_ms_.size() < 4096) {
+                exclusive_ms_.push_back(
+                    static_cast<float>(static_cast<double>(now - std::max(signaled_at, last_done_ns_)) / 1.0e6));
+            }
+            last_done_ns_ = now;
             completed_ = next++;
             cv_.notify_all();
         }
+    }
+
+    // PF2_DEV_GPU_LOAD_MB: a scratch buffer and one command buffer that fills it (recorded once,
+    // submitted with every signal).
+    void StartDevLoad(uint32_t family) {
+        const char* env = std::getenv("PF2_DEV_GPU_LOAD_MB");
+        const long mb = env != nullptr ? std::strtol(env, nullptr, 10) : 0;
+        if (mb <= 0 || mb > 4096 || vkCreateBuffer_ == nullptr || vkAllocateMemory_ == nullptr ||
+            vkCreateCommandPool_ == nullptr || vkAllocateCommandBuffers_ == nullptr || vkCmdFillBuffer_ == nullptr ||
+            vkBeginCommandBuffer_ == nullptr || vkEndCommandBuffer_ == nullptr || vkBindBufferMemory_ == nullptr ||
+            vkGetBufferMemoryRequirements_ == nullptr) {
+            return;
+        }
+        constexpr VkDeviceSize kChunk = 64ull << 20;
+        const VkDeviceSize total = static_cast<VkDeviceSize>(mb) << 20;
+        VkBufferCreateInfo buffer_info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        buffer_info.size = std::min(total, kChunk);
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        if (vkCreateBuffer_(device_, &buffer_info, nullptr, &load_buffer_) != VK_SUCCESS) {
+            load_buffer_ = VK_NULL_HANDLE;
+            return;
+        }
+        VkMemoryRequirements req{};
+        vkGetBufferMemoryRequirements_(device_, load_buffer_, &req);
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = req.size;
+        alloc.memoryTypeIndex = 0;
+        while (alloc.memoryTypeIndex < 32 && (req.memoryTypeBits & (1u << alloc.memoryTypeIndex)) == 0) {
+            ++alloc.memoryTypeIndex;
+        }
+        VkCommandPoolCreateInfo pool_info{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pool_info.queueFamilyIndex = family;
+        VkCommandBufferAllocateInfo cb_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        cb_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cb_info.commandBufferCount = 1;
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+        if (alloc.memoryTypeIndex >= 32 || vkAllocateMemory_(device_, &alloc, nullptr, &load_memory_) != VK_SUCCESS ||
+            vkBindBufferMemory_(device_, load_buffer_, load_memory_, 0) != VK_SUCCESS ||
+            vkCreateCommandPool_(device_, &pool_info, nullptr, &load_pool_) != VK_SUCCESS) {
+            StopDevLoad();
+            return;
+        }
+        cb_info.commandPool = load_pool_;
+        if (vkAllocateCommandBuffers_(device_, &cb_info, &load_cb_) != VK_SUCCESS ||
+            vkBeginCommandBuffer_(load_cb_, &begin) != VK_SUCCESS) {
+            load_cb_ = VK_NULL_HANDLE;
+            StopDevLoad();
+            return;
+        }
+        for (VkDeviceSize done = 0; done < total; done += buffer_info.size) {
+            vkCmdFillBuffer_(load_cb_, load_buffer_, 0, std::min(buffer_info.size, total - done),
+                             static_cast<uint32_t>(done >> 20));
+        }
+        if (vkEndCommandBuffer_(load_cb_) != VK_SUCCESS) {
+            load_cb_ = VK_NULL_HANDLE;
+            StopDevLoad();
+            return;
+        }
+        load_mb_ = static_cast<unsigned>(mb);
+    }
+
+    void StopDevLoad() {
+        if (device_ == VK_NULL_HANDLE) return;
+        if (load_pool_ != VK_NULL_HANDLE && vkDestroyCommandPool_ != nullptr) {
+            vkDestroyCommandPool_(device_, load_pool_, nullptr);
+        }
+        if (load_buffer_ != VK_NULL_HANDLE && vkDestroyBuffer_ != nullptr) {
+            vkDestroyBuffer_(device_, load_buffer_, nullptr);
+        }
+        if (load_memory_ != VK_NULL_HANDLE && vkFreeMemory_ != nullptr) {
+            vkFreeMemory_(device_, load_memory_, nullptr);
+        }
+        load_pool_ = VK_NULL_HANDLE;
+        load_cb_ = VK_NULL_HANDLE;
+        load_buffer_ = VK_NULL_HANDLE;
+        load_memory_ = VK_NULL_HANDLE;
+        load_mb_ = 0;
     }
 
     Mode mode_ = Mode::Off;
     VkDevice device_ = VK_NULL_HANDLE;
     VkQueue queue_ = VK_NULL_HANDLE;
     VkSemaphore semaphore_ = VK_NULL_HANDLE;
+    PFN_vkCreateBuffer vkCreateBuffer_ = nullptr;
+    PFN_vkDestroyBuffer vkDestroyBuffer_ = nullptr;
+    PFN_vkGetBufferMemoryRequirements vkGetBufferMemoryRequirements_ = nullptr;
+    PFN_vkAllocateMemory vkAllocateMemory_ = nullptr;
+    PFN_vkFreeMemory vkFreeMemory_ = nullptr;
+    PFN_vkBindBufferMemory vkBindBufferMemory_ = nullptr;
+    PFN_vkCreateCommandPool vkCreateCommandPool_ = nullptr;
+    PFN_vkDestroyCommandPool vkDestroyCommandPool_ = nullptr;
+    PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers_ = nullptr;
+    PFN_vkBeginCommandBuffer vkBeginCommandBuffer_ = nullptr;
+    PFN_vkEndCommandBuffer vkEndCommandBuffer_ = nullptr;
+    PFN_vkCmdFillBuffer vkCmdFillBuffer_ = nullptr;
+    VkBuffer load_buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory load_memory_ = VK_NULL_HANDLE;
+    VkCommandPool load_pool_ = VK_NULL_HANDLE;
+    VkCommandBuffer load_cb_ = VK_NULL_HANDLE;
+    unsigned load_mb_ = 0;
     PFN_vkGetDeviceQueue vkGetDeviceQueue_ = nullptr;
     PFN_vkQueueSubmit vkQueueSubmit_ = nullptr;
     PFN_vkQueueWaitIdle vkQueueWaitIdle_ = nullptr;
@@ -308,6 +451,8 @@ private:
     bool stop_ = false;
     std::array<int64_t, kRing> signal_ns_{};
     std::vector<float> gpu_ms_;
+    std::vector<float> exclusive_ms_;
+    int64_t last_done_ns_ = 0;
 };
 
 // "p50/p95/max" of a window's samples, for the [pf2] line.
@@ -2126,6 +2271,9 @@ private:
                     << (mode == GpuFence::Mode::Timeline ? "on a timeline semaphore"
                         : mode == GpuFence::Mode::Drain  ? "by draining the queue (no timeline semaphores)"
                                                          : "UNAVAILABLE (no Vulkan queue functions)");
+            if (fence_.DevLoadMb() > 0) {
+                message << "; PF2_DEV_GPU_LOAD_MB=" << fence_.DevLoadMb() << ": each set also fills that many MB (dev load)";
+            }
         }
         if (packed_) {
             message << "; packed " << eye_swapchains_[0].width << 'x' << eye_swapchains_[0].height
