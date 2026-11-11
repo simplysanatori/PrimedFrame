@@ -24,6 +24,11 @@
 //                         compositor frame (default 2; pipelined packets n + 1, default 3), and the
 //                         frame showing a fresh packet is ended with exactly the display time those
 //                         poses were located for.
+//   PF2_LATE_LOCATE=<ms>  in immersive play each packet locates (and publishes) its poses ms later
+//                         (1..8; 0/unset: at once) for the same display slot, so they are that much
+//                         fresher, taken from the idle time in xrWaitFrame after the eyes are done.
+//                         Too much moves the eyes past their slot ([pf2] pose lead <=-1). The
+//                         [pf2] line's "locate after wait" shows where the locate landed.
 //   PF2_LABEL=<text>      shown for 3 s in the headset when the session starts (the toast panel).
 //   PF2_FRAME_STAMP=1     tests only (xrmock MOCK_XR_STAMP): each eye image carries the display
 //                         time its poses were located for in a 64x15 block in its top left corner.
@@ -34,10 +39,14 @@ struct Switches {
     bool fence = false;
     // -1: unset (the built-in lead).
     int ahead_periods = -1;
+    // 0: off.
+    int late_locate_ms = 0;
     bool stamp = false;
     std::string label;
 
-    bool AnySet() const noexcept { return packed || fence || ahead_periods >= 0 || stamp || !label.empty(); }
+    bool AnySet() const noexcept {
+        return packed || fence || ahead_periods >= 0 || late_locate_ms > 0 || stamp || !label.empty();
+    }
 
     std::string Describe() const {
         if (!AnySet()) {
@@ -47,6 +56,7 @@ struct Switches {
         if (packed) text += " PF2_STEREO_PACKED=1";
         if (fence) text += " PF2_RELEASE_FENCE=1";
         if (ahead_periods >= 0) text += " PF2_AHEAD_PERIODS=" + std::to_string(ahead_periods);
+        if (late_locate_ms > 0) text += " PF2_LATE_LOCATE=" + std::to_string(late_locate_ms);
         if (stamp) text += " PF2_FRAME_STAMP=1";
         if (!label.empty()) text += " PF2_LABEL=\"" + label + "\"";
         return text;
@@ -68,6 +78,13 @@ inline const Switches& Get() {
             const long n = std::strtol(ahead, &end, 10);
             if (end != ahead && n >= 0 && n <= 8) {
                 s.ahead_periods = static_cast<int>(n);
+            }
+        }
+        if (const char* late = std::getenv("PF2_LATE_LOCATE"); late != nullptr && *late != '\0') {
+            char* end = nullptr;
+            const long ms = std::strtol(late, &end, 10);
+            if (end != late && ms >= 1 && ms <= 8) {
+                s.late_locate_ms = static_cast<int>(ms);
             }
         }
         if (const char* label = std::getenv("PF2_LABEL"); label != nullptr) {
