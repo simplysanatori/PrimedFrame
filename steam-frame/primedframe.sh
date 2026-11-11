@@ -37,6 +37,15 @@ CMD=("${START_CMD[@]}" "$@")
 # ---- environment for the program -----------------------------------------------------------------------------
 export MP_USER_PATH="$DATA/"                 # the game's data and its memory card (the program folder stays replaceable)
 export MP_VR_LOG=1
+# Valve's foveation layer blurs the distant HUD. Steam lists it explicitly in VK_INSTANCE_LAYERS, which
+# overrides DISABLE_VULKAN_FDM_INJECTION_LAYER, so drop it from that list too (PRIMEDFRAME_FDM=1 keeps it).
+if [ "${PRIMEDFRAME_FDM:-0}" != 1 ]; then
+  export DISABLE_VULKAN_FDM_INJECTION_LAYER=1
+  if [ -n "${VK_INSTANCE_LAYERS:-}" ]; then
+    VK_INSTANCE_LAYERS=$(printf '%s' "$VK_INSTANCE_LAYERS" | tr ':' '\n' | grep -v '^VK_LAYER_VALVE_fdm_injection$' | paste -sd: -)
+    if [ -n "$VK_INSTANCE_LAYERS" ]; then export VK_INSTANCE_LAYERS; else unset VK_INSTANCE_LAYERS; fi
+  fi
+fi
 export LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"   # the bundled Qt and libraries win over Steam's runtime
 # Steam adds nothing to this program's environment that needs removing (native Vulkan and OpenXR).
 
@@ -44,7 +53,7 @@ HZ=${PRIMEDFRAME_HZ:-90}; EYE=${PRIMEDFRAME_EYE:-1728}
 case "$HZ" in 72 | 80 | 90 | 96 | 108 | 120 | 144) ;; *) echo "primedframe: PRIMEDFRAME_HZ=$HZ is not a Frame mode (72 80 90 96 108 120 144), using 90" >&2; HZ=90 ;; esac
 case "$EYE" in [0-9][0-9][0-9][0-9]) ;; *) echo "primedframe: PRIMEDFRAME_EYE=$EYE is not a pixel size, using 1728" >&2; EYE=1728 ;; esac
 APPID=${PRIMEDFRAME_APPID:-$SteamAppId}
-KEYS=("preferredRefreshRate=$HZ" "motionSmoothingOverride=2" "resolutionOverride=$EYE")   # 2 = motion smoothing off
+KEYS=("preferredRefreshRate=$HZ" "motionSmoothingOverride=2" "resolutionOverride=$EYE" "framesToThrottle=0")   # 2 = motion smoothing off; 0 = no half-rate throttle (PrimedFrame 1.0 left 1 on this entry)
 
 # vrcmd read of one per-app key: prints the value, empty when unset or unreadable.
 vr_get() { env -u LD_PRELOAD timeout 5 "$VRCMD" --settings-int "steam.app.$APPID.$1" 2> /dev/null | sed -n "s/^steam\.app\.$APPID\.$1=//p" | head -n 1; }
