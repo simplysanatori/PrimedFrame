@@ -182,6 +182,10 @@ public:
     // the application rather than terminating it here.
     OpenXREventStatus PollEvents();
     bool RequestExitSession();
+    // After DestroySession() on a session the runtime ended or lost: clears the session-loss
+    // mark so CreateSession() may be called again on this instance. False when the instance
+    // itself is lost (a new instance would be needed).
+    bool PrepareSessionRecreate();
 
     // Graphics backends call OpenXR entry points directly for swapchain work.
     // Feed their results back here so positive loss-pending and negative
@@ -226,6 +230,7 @@ public:
         return m_exit_requested || m_session_loss_pending || m_instance_loss_pending;
     }
 
+    bool InstanceLossPending() const { return m_instance_loss_pending; }
     XrInstance Instance() const { return m_instance; }
     XrSystemId SystemId() const { return m_system_id; }
     XrSession Session() const { return m_session; }

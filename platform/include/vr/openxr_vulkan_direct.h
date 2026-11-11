@@ -80,6 +80,9 @@ public:
     // Call on the XR owner thread after Aurora's worker is idle and before aurora_shutdown().
     // False means Dawn's queue could not be drained: the caller retains the backend and runtime.
     bool Shutdown();
+    // The runtime ended the session early: release it and create a new one on the same Dawn
+    // device (Linux direct presentation). Same thread rules as Shutdown().
+    bool RecreateSession(OpenXRRuntime& runtime);
 
     bool IsBound() const;
     bool PanelLayerAvailable() const;

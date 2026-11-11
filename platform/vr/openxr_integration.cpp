@@ -674,6 +674,8 @@ public:
     void ServiceProducerFrameBoundary() noexcept {
         if (teardown_requested_.load(std::memory_order_acquire)) {
             Shutdown();
+        } else if (session_recovery_requested_.load(std::memory_order_acquire)) {
+            RecoverSessionOnProducer();
         }
     }
 
@@ -978,6 +980,9 @@ private:
         uint32_t presentation_log_count = 0;
         bool immersive_submission_logged = false;
         int last_pacing_mode = -1;
+        session_start_pending_ = true;
+        session_started_at_ = std::chrono::steady_clock::now();
+    pacing_loop:
         while (!stop_.load(std::memory_order_acquire) && !fatal) {
 #if defined(__ANDROID__)
             if (!worker_registered) {
@@ -996,6 +1001,10 @@ private:
             const uint64_t session_run_serial = runtime_->SessionRunSerial();
             if (session_run_serial != applied_session_run_serial_) {
                 applied_session_run_serial_ = session_run_serial;
+                if (session_start_pending_) {
+                    session_start_pending_ = false;
+                    session_started_at_ = std::chrono::steady_clock::now();
+                }
                 ResetTrackingOrigin();
                 diagnostics::OnSessionStarted();
                 // A runtime may drop the request when the session stops (the headset
@@ -1299,6 +1308,16 @@ private:
                        "an OpenXR projection layer"
                     << std::endl;
             }
+        }
+
+        if (!stop_.load(std::memory_order_acquire) &&
+            RecoverSession(fatal ? "an OpenXR frame call failed" +
+                                       (LastError().empty() ? std::string() : ": " + LastError())
+                                 : "the runtime ended the session (state " +
+                                       std::to_string(static_cast<int>(runtime_->SessionState())) + ")")) {
+            fatal = false;
+            consecutive_skips = 0;
+            goto pacing_loop;
         }
 
         SetInterpolationActive(false);
@@ -2233,6 +2252,134 @@ private:
         PORTVR_LOG() << "OpenXR: " << LastError() << std::endl;
     }
 
+    // The runtime ended the session within kSessionRecoveryWindow of its start and nobody asked
+    // for that (stop_ is not set): SteamVR does this when Steam reclassifies the launch while the
+    // game starts. Instead of leaving VR for the flat game, the session is ended, destroyed and
+    // created again, up to kMaxSessionRecoveries times with a growing pause, on the same Dawn
+    // device (the swapchains and the controller actions are made again). On the pacing thread;
+    // the creation itself runs on the game thread (RecoverSessionOnProducer), like a teardown,
+    // because Aurora's worker must be idle. False: the caller goes on with the usual teardown.
+    // An instance the runtime lost is not recreated: Dawn's Vulkan instance and device were
+    // made through that XrInstance (xrCreateVulkanInstanceKHR / DeviceKHR) before the game
+    // started drawing, and neither can be replaced without restarting Aurora.
+    template <typename Backend>
+    static constexpr bool kBackendCanRecreateSession =
+        requires(Backend& backend, OpenXRRuntime& runtime) { backend.RecreateSession(runtime); };
+    template <typename Backend>
+    static bool RecreateBackendSession(Backend& backend, OpenXRRuntime& runtime) {
+        if constexpr (kBackendCanRecreateSession<Backend>) {
+            return backend.RecreateSession(runtime);
+        } else {
+            return false;
+        }
+    }
+
+    bool RecoverSession(const std::string& why) {
+#if defined(__ANDROID__)
+        (void)why;
+        return false;
+#else
+        if constexpr (!kBackendCanRecreateSession<GraphicsBackend>) {
+            (void)why;
+            return false;
+        } else {
+            const auto up = std::chrono::steady_clock::now() - session_started_at_;
+            const double seconds = std::chrono::duration<double>(up).count();
+            if (up > kSessionRecoveryWindow) {
+                return false;
+            }
+            if (session_recoveries_ >= kMaxSessionRecoveries) {
+                PORTVR_LOG() << "[vr] session recovery: the OpenXR session ended " << seconds
+                             << " s after it started (" << why << ") and " << kMaxSessionRecoveries
+                             << " new sessions already failed the same way; continuing without VR"
+                             << std::endl;
+                return false;
+            }
+            if (runtime_->InstanceLossPending()) {
+                PORTVR_LOG() << "[vr] session recovery: the OpenXR session ended " << seconds
+                             << " s after it started (" << why
+                             << ") and the runtime lost the instance, which cannot be recreated in "
+                                "this process (Dawn's Vulkan device was made through it); "
+                                "continuing without VR"
+                             << std::endl;
+                return false;
+            }
+            const uint32_t attempt = ++session_recoveries_;
+            const auto backoff = std::chrono::milliseconds(1000 * attempt);
+            PORTVR_LOG() << "[vr] session recovery: the OpenXR session ended " << seconds
+                         << " s after it started (" << why << "); attempt " << attempt << " of "
+                         << kMaxSessionRecoveries << " to create a new session in " << backoff.count()
+                         << " ms" << std::endl;
+            WaitForStopOrDelay(backoff);
+            if (stop_.load(std::memory_order_acquire)) {
+                return false;
+            }
+            {
+                std::lock_guard lock(stop_mutex_);
+                session_recovery_done_ = false;
+                session_recovery_ok_ = false;
+            }
+            session_recovery_requested_.store(true, std::memory_order_release);
+            bool done = false;
+            bool ok = false;
+            {
+                std::unique_lock lock(stop_mutex_);
+                // The game thread services this between frames; if it does not within this time
+                // the game is not drawing, and the usual teardown follows.
+                done = stop_cv_.wait_for(lock, std::chrono::seconds(10), [this] {
+                    return session_recovery_done_ || stop_.load(std::memory_order_acquire);
+                });
+                ok = done && session_recovery_done_ && session_recovery_ok_;
+            }
+            session_recovery_requested_.store(false, std::memory_order_release);
+            if (!ok) {
+                PORTVR_LOG() << "[vr] session recovery: attempt " << attempt << " failed"
+                             << (done ? "" : " (the game did not service it)") << ": " << LastError()
+                             << "; continuing without VR" << std::endl;
+                return false;
+            }
+            PORTVR_LOG() << "[vr] session recovery: attempt " << attempt
+                         << " created a new OpenXR session; waiting for the runtime READY event"
+                         << std::endl;
+            applied_session_run_serial_ = 0;
+            session_was_active_ = false;
+            session_start_pending_ = true;
+            session_started_at_ = std::chrono::steady_clock::now();
+            return true;
+        }
+#endif
+    }
+
+    // The game thread's half of RecoverSession, at a frame boundary with the pacing thread waiting.
+    void RecoverSessionOnProducer() noexcept {
+        bool ok = false;
+        if constexpr (kBackendCanRecreateSession<GraphicsBackend>) {
+            if (backend_ != nullptr && runtime_ != nullptr) {
+                aurora_quiesce_frame_worker();
+                WithdrawPublishedFrame();
+                if (input_ != nullptr) {
+                    // Actions belong to the session and must go before it does.
+                    input_->Destroy();
+                }
+                ok = RecreateBackendSession(*backend_, *runtime_);
+                if (!ok) {
+                    SetError("OpenXR session recreation failed: " + backend_->LastError());
+                } else if (input_ != nullptr && !input_->Create(*runtime_)) {
+                    PORTVR_LOG() << "OpenXR controller input unavailable: " << input_->LastError()
+                                 << std::endl;
+                    input_.reset();
+                }
+            }
+        }
+        {
+            std::lock_guard lock(stop_mutex_);
+            session_recovery_ok_ = ok;
+            session_recovery_done_ = true;
+        }
+        session_recovery_requested_.store(false, std::memory_order_release);
+        stop_cv_.notify_all();
+    }
+
     // The runtime ended the session: Quit in the system menu, or the session was lost.
     // The desktop keeps playing in its window; on a standalone headset the app ends
     // with it (PacingThread), and that is no error.
@@ -2320,6 +2467,16 @@ private:
     bool last_immersive_ = false;
     uint64_t applied_session_run_serial_ = 0;
     bool session_was_active_ = false;
+    // Session recovery (RecoverSession): the window after a session's start in which the end of
+    // the session is not taken as the user's, and the attempts used.
+    static constexpr std::chrono::seconds kSessionRecoveryWindow{10};
+    static constexpr uint32_t kMaxSessionRecoveries = 3;
+    uint32_t session_recoveries_ = 0;
+    bool session_start_pending_ = false;
+    std::chrono::steady_clock::time_point session_started_at_{};
+    std::atomic<bool> session_recovery_requested_{false};
+    bool session_recovery_done_ = false;  // under stop_mutex_
+    bool session_recovery_ok_ = false;    // under stop_mutex_
     bool requested_ = false;
     bool prepared_ = false;
     bool provider_registered_ = false;
