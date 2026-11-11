@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 
@@ -77,6 +79,15 @@ inline const Switches& Get() {
         return s;
     }();
     return switches;
+}
+
+// The game's simulation steps (CGraphics::TickSimTime), counted for the [pf2] line: steps and
+// 1/600 s ticks since the last line, against the fresh layers shown meanwhile.
+inline std::atomic<uint32_t> g_sim_steps{0};
+inline std::atomic<uint32_t> g_sim_ticks{0};
+inline void NoteSimStep(uint32_t ticks) noexcept {
+    g_sim_steps.fetch_add(1, std::memory_order_relaxed);
+    g_sim_ticks.fetch_add(ticks, std::memory_order_relaxed);
 }
 
 // The widest packed swapchain image (two eyes): SteamVR downsamples images wider than 3458.
