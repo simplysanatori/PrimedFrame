@@ -215,7 +215,12 @@ private:
   struct CSpiderBallElectrictyManager {
     uint x0_effectIdx;
     uint x4_lifetime;
+#ifdef TARGET_PC
+    // Port: 60 Hz frame units, advanced by TickFrames() so a bolt lasts as long at any rate.
+    float x8_curFrame;
+#else
     uint x8_curFrame;
+#endif
     CSpiderBallElectrictyManager(uint effectIdx, uint lifetime)
     : x0_effectIdx(effectIdx), x4_lifetime(lifetime), x8_curFrame(0) {}
   };
