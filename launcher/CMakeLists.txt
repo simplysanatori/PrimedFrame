@@ -2,7 +2,7 @@
 # DolphinQt/MainWindow.cpp) beside metroid_prime_port.exe. It edits the game's
 # port_settings.ini and starts the game. Built with -DMP_BUILD_LAUNCHER=ON and
 # Qt 6.5 or later on CMAKE_PREFIX_PATH.
-set(PRIMEDGUN_LAUNCHER_VERSION "2.0.0-beta.8")
+set(PRIMEDGUN_LAUNCHER_VERSION "2.0.0")
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
 
@@ -49,6 +49,11 @@ if(MSVC)
 endif()
 target_compile_definitions(PrimedGun PRIVATE
     PRIMEDGUN_LAUNCHER_VERSION="${PRIMEDGUN_LAUNCHER_VERSION}")
+# The Steam Frame build (PrimedFrame): Linux branding, Play starts the game in
+# VR in place of the launcher, the updater only opens the releases page.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(PrimedGun PRIVATE PRIMEDFRAME_LINUX=1)
+endif()
 target_include_directories(PrimedGun PRIVATE
     ui
     ${PROJECT_SOURCE_DIR}/platform/include)

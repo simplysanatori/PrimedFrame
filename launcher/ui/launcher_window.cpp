@@ -24,6 +24,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -43,6 +44,11 @@
 #include <QVBoxLayout>
 
 #include <cstdlib>
+
+#if defined(PRIMEDFRAME_LINUX)
+#include "frame_start.h"
+#include <unistd.h>
+#endif
 
 namespace PrimedGunLauncher {
 namespace {
@@ -95,7 +101,11 @@ QString CardFolderFor(const LauncherPaths& paths, bool pal) {
 LauncherWindow::LauncherWindow()
     : m_paths(ResolvePaths()), m_ctx(m_model, m_paths, this),
       m_ini(m_paths.launcherIni, QSettings::IniFormat) {
+#if defined(PRIMEDFRAME_LINUX)
+  setWindowTitle(QStringLiteral("PrimedFrame v%1").arg(LauncherVersion()));
+#else
   setWindowTitle(QStringLiteral("PrimedGun v%1").arg(LauncherVersion()));
+#endif
   setWindowIcon(QIcon(QStringLiteral(":/PrimedGun.png")));
   setMinimumSize(700, 720);
   resize(700, 720);
@@ -173,6 +183,13 @@ LauncherWindow::LauncherWindow()
   // The disc kept from the last session gets its name, PAL tag and warning too
   // (SetSelectedDisc does this only for a new pick); it also sets the buttons.
   UpdateSelectedGame();
+#if defined(PRIMEDFRAME_LINUX)
+  // First start: offer the PrimedFrame 1.0 save once the window is up.
+  if (!m_ini.value(QStringLiteral("frame1_save_offered"), false).toBool() &&
+      !FindLegacyFrameFolder(std::getenv("XDG_DATA_HOME"), std::getenv("HOME")).empty()) {
+    QTimer::singleShot(0, this, [this] { OfferFrame1Save(); });
+  }
+#endif
 }
 
 void LauncherWindow::BuildSetupTab(QTabWidget* tabs) {
@@ -182,7 +199,7 @@ void LauncherWindow::BuildSetupTab(QTabWidget* tabs) {
   auto* notesButton = new QPushButton(tr("Setup Notes"));
   StyleGameButton(notesButton);
   layout->addWidget(notesButton);
-  auto* updates = new QPushButton(tr("Check for updates..."));
+  auto* updates = new QPushButton(tr("Check for Updates..."));
   StyleGameButton(updates);
   layout->addWidget(updates);
   connect(updates, &QPushButton::clicked, this, [this] { CheckForUpdates(m_ctx); });
@@ -212,6 +229,10 @@ void LauncherWindow::BuildSetupTab(QTabWidget* tabs) {
   layout->addWidget(m_selectButton);
   layout->addWidget(m_playButton);
   layout->addWidget(m_stopButton);
+#if defined(PRIMEDFRAME_LINUX)
+  // Play hands the process over to the game, so there is nothing to stop here.
+  m_stopButton->setVisible(false);
+#endif
   m_runStatus = new QLabel;
   m_runStatus->setObjectName(QStringLiteral("PrimedGunMuted"));
   m_runStatus->setWordWrap(true);
@@ -523,8 +544,8 @@ void LauncherWindow::ShowSetupNotes() {
   dialog.exec();
 }
 
-void LauncherWindow::TransferOldSave() {
-  const QString title = tr("Transfer Old Memory Card");
+void LauncherWindow::TransferOldSave(bool fromFrame1) {
+  const QString title = fromFrame1 ? tr("Bring Over PrimedFrame 1.0 Save") : tr("Transfer Old Memory Card");
   if (m_game != nullptr) {
     QMessageBox::warning(this, title, tr("Stop the game before transferring a memory card save."));
     return;
@@ -535,7 +556,21 @@ void LauncherWindow::TransferOldSave() {
   // Dolphin's EUR card (GC/EUR/Card A, MemoryCardA.EUR.raw). PortGci copies
   // only the game code set here, and FindDolphinCard looks in that region's
   // folders. USA when no disc is selected.
-  const bool pal = IsPalDisc(SelectedDisc());
+  bool pal = IsPalDisc(SelectedDisc());
+  // PrimedFrame 1.0's own folder, when it is there: Transfer starts from it.
+  std::filesystem::path frame1;
+#if defined(PRIMEDFRAME_LINUX)
+  frame1 = FindLegacyFrameFolder(std::getenv("XDG_DATA_HOME"), std::getenv("HOME"));
+#endif
+  OldCard frame1Card;
+  if (!frame1.empty()) {
+    frame1Card = FindOldCardUnder(frame1, pal ? "EUR" : "USA");
+    if (!frame1Card.Found() && SelectedDisc().isEmpty()) {
+      // No disc chosen yet: take whichever card the old install has.
+      frame1Card = FindOldCardUnder(frame1, "EUR");
+      pal = frame1Card.Found();
+    }
+  }
   const char* const region = pal ? "EUR" : "USA";
   const QString discRegion = pal ? QStringLiteral("PAL") : QStringLiteral("USA");
   PortGci::SetGameCode(pal ? "GM8P" : "GM8E");
@@ -550,12 +585,21 @@ void LauncherWindow::TransferOldSave() {
   QPushButton* transfer = prompt.addButton(tr("Transfer"), QMessageBox::AcceptRole);
   QPushButton* choose = prompt.addButton(tr("Choose Folder..."), QMessageBox::ActionRole);
   prompt.addButton(QMessageBox::Cancel);
-  prompt.exec();
+  if (!fromFrame1) {
+    prompt.exec();
+  }
 
   OldCard card;
-  if (prompt.clickedButton() == choose) {
+  if (fromFrame1) {
+    card = frame1Card;
+    if (!card.Found()) {
+      QMessageBox::critical(this, title, tr("No PrimedFrame 1.0 memory card was found."));
+      return;
+    }
+  } else if (prompt.clickedButton() == choose) {
     const QString folder = QFileDialog::getExistingDirectory(
-        this, tr("Select your old PrimedGun folder"), m_paths.exeFolder);
+        this, tr("Select your old PrimedGun folder"),
+        frame1.empty() ? m_paths.exeFolder : FromPath(frame1));
     if (folder.isEmpty()) {
       return;
     }
@@ -566,7 +610,7 @@ void LauncherWindow::TransferOldSave() {
       return;
     }
   } else if (prompt.clickedButton() == transfer) {
-    card = FindNearbyOldCard(ToPath(m_paths.exeFolder), region);
+    card = frame1Card.Found() ? frame1Card : FindNearbyOldCard(ToPath(m_paths.exeFolder), region);
     if (!card.Found()) {
       const PortGci::DolphinCard dolphin = PortGci::FindDolphinCard();
       if (dolphin.Found()) {
@@ -653,6 +697,22 @@ void LauncherWindow::TransferOldSave() {
   QMessageBox::information(this, title, message);
 }
 
+void LauncherWindow::OfferFrame1Save() {
+  m_ini.setValue(QStringLiteral("frame1_save_offered"), true);
+  m_ini.sync();
+  QMessageBox box(this);
+  box.setWindowTitle(tr("Bring Over PrimedFrame 1.0 Save"));
+  box.setText(tr("A PrimedFrame 1.0 save was found."));
+  box.setInformativeText(tr("Bring over its memory card and settings? Save states are not transferred. "
+                            "Transfer on the Setup tab does this later."));
+  QPushButton* bring = box.addButton(tr("Bring Over Save"), QMessageBox::AcceptRole);
+  box.addButton(tr("Skip"), QMessageBox::RejectRole);
+  box.exec();
+  if (box.clickedButton() == bring) {
+    TransferOldSave(true);
+  }
+}
+
 // --- the game --------------------------------------------------------------
 
 void LauncherWindow::OpenPortOptions() {
@@ -684,6 +744,23 @@ void LauncherWindow::Play(bool optionsOnly) {
     return;
   }
 
+#if defined(PRIMEDFRAME_LINUX)
+  if (!optionsOnly) {
+    // Steam Frame: Play starts the game in VR in place of the launcher, so
+    // Steam sees one app and the window is gone.
+    m_ini.setValue(QStringLiteral("geometry"), saveGeometry());
+    m_ini.sync();
+    qputenv("MP_USER_PATH", QFile::encodeName(m_paths.userFolder));
+    if (chdir(QFile::encodeName(m_paths.exeFolder).constData()) == 0) {
+      const QByteArray game = QFile::encodeName(m_paths.gameExe);
+      const QByteArray discArg = QFile::encodeName(disc);
+      char* args[] = {const_cast<char*>(game.constData()), const_cast<char*>(discArg.constData()), nullptr};
+      execv(game.constData(), args);
+    }
+    QMessageBox::critical(this, tr("Play"), tr("The game could not be started:\n%1").arg(QDir::toNativeSeparators(m_paths.gameExe)));
+    return;
+  }
+#endif
   m_game = new QProcess(this);
   m_game->setProgram(m_paths.gameExe);
   // The first argument that is not an option is the disc (platform/main.cpp

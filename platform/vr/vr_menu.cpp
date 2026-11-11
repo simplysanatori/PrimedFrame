@@ -37,6 +37,11 @@
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <spawn.h>
+#include <unistd.h>
+extern char** environ;
+#endif
 
 #include <chrono>
 #include <cstdint>
@@ -73,6 +78,45 @@ void GoToArea(CWorld& world, int area) {
     }
 }
 
+#if defined(__linux__) && !defined(__ANDROID__)
+// The launcher binary (PrimedGun) in the game's own folder, or empty. Only the
+// Steam Frame build ships it beside the game.
+std::string LauncherPath() {
+    static const std::string path = [] {
+        const char* base = SDL_GetBasePath();
+        if (base == nullptr) {
+            return std::string();
+        }
+        std::string candidate = std::string(base) + "PrimedGun";
+        return access(candidate.c_str(), X_OK) == 0 ? candidate : std::string();
+    }();
+    return path;
+}
+
+// Starts the launcher once this process is gone: a detached shell waits for
+// the game's pid to end (SteamVR and the settings are closed by then), then
+// execs the launcher in the game's folder with the same user data path.
+bool StartLauncherAfterExit() {
+    const std::string launcher = LauncherPath();
+    if (launcher.empty()) {
+        return false;
+    }
+    const std::string pid = std::to_string(static_cast<long>(getpid()));
+    const std::string user = PortPaths::UserFolder();
+    const std::string folder = launcher.substr(0, launcher.find_last_of('/'));
+    const std::string script = "i=0; while kill -0 \"$1\" 2>/dev/null && [ $i -lt 600 ]; do sleep 0.2; i=$((i+1)); done; "
+                               "cd \"$4\" && MP_USER_PATH=\"$3\" exec \"$2\"";
+    const char* argv[] = {"sh", "-c", script.c_str(), "sh", pid.c_str(), launcher.c_str(), user.c_str(), folder.c_str(), nullptr};
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+    pid_t child = 0;
+    const int result = posix_spawn(&child, "/bin/sh", nullptr, &attr, const_cast<char* const*>(argv), environ);
+    posix_spawnattr_destroy(&attr);
+    return result == 0;
+}
+#endif
+
 // The menu's actions on the port: the settings file, the port's save states
 // (PortSaveState, the overlay's States page) and the launcher's cannon slots.
 class GameActions final : public VrMenu::Actions {
@@ -82,6 +126,11 @@ public:
     void ExitGame() override {
         m_save = true;
         m_exit = true;
+    }
+    void OpenLauncher() override {
+        m_save = true;
+        m_exit = true;
+        m_launcher = true;
     }
 
     int StateSlot() const override {
@@ -234,6 +283,12 @@ public:
         }
         if (m_exit) {
             m_exit = false;
+#if defined(__linux__) && !defined(__ANDROID__)
+            if (m_launcher && !StartLauncherAfterExit()) {
+                PORTVR_LOG() << "VR menu: the launcher could not be started" << std::endl;
+            }
+#endif
+            m_launcher = false;
             OpenXRSetSettingsPanelOpen(false);
             SDL_Event quit{};
             quit.type = SDL_EVENT_QUIT;
@@ -250,6 +305,7 @@ private:
 
     bool m_save = false;
     bool m_exit = false;
+    bool m_launcher = false;
 };
 
 // The game's frame rate, from its own frames: aurora_get_fps counts the
@@ -453,6 +509,9 @@ VrMenu::View BuildView(Menu& menu, const PortVrSettings& settings, double now) {
     view.foveation_live = aurora_stereo_foveation_available();
     view.multiview_available = aurora_get_stereo_multiview_available();
     view.in_game = PortDebug::StateManager() != nullptr;
+#if defined(__linux__) && !defined(__ANDROID__)
+    view.launcher_available = !LauncherPath().empty();
+#endif
     // The Steam Frame's controllers (its native profile) read their own layout text.
     for (const std::string& profile : OpenXRGetInputSnapshot().interaction_profiles) {
         if (profile == "/interaction_profiles/valve/frame_controller_valve") {
