@@ -16,6 +16,7 @@
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "MetroidPrime/Cameras/CFirstPersonCamera.hpp"
 #include "MetroidPrime/TCastTo.hpp"
+#include "port_debug.h"
 #endif
 
 CExplosion::CExplosion(const TLockedToken< CGenDescription >& particle, TUniqueId uid, bool active,
@@ -92,8 +93,9 @@ void CExplosion::Think(float dt, CStateManager& mgr) {
     SetTransformDirtySpare(false);
   }
 #ifdef TARGET_PC
-  // CExplosionMP1::Think (0xd0e300); the 15 s lifetime below still counts real time.
-  xe8_particleGen->Update(xPortFixedStep ? 1.0 / 60.0 : dt);
+  // CExplosionMP1::Think (0xd0e300); the 15 s lifetime below still counts real time. The fixed
+  // step is one 60 Hz frame per tick there; above 60 Hz a tick is a fraction of that frame.
+  xe8_particleGen->Update(xPortFixedStep ? PortDebug::TickFrames() * (1.0 / 60.0) : dt);
 #else
   xe8_particleGen->Update(dt);
 #endif

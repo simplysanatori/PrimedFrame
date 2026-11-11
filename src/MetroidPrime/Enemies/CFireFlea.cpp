@@ -14,11 +14,18 @@
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/Player/CPlayerState.hpp"
 #include "MetroidPrime/TCastTo.hpp"
+#ifdef TARGET_PC
+#include "port_debug.h"
+#endif
 
 const CColor CFireFlea::CDeathCameraEffect::skEndFadeColor(1.f, 1.f, 0.5f, 1.f);
 const CColor CFireFlea::CDeathCameraEffect::skStartFadeColor(1.f, 0.f, 0.f, 0.f);
 CColor CFireFlea::CDeathCameraEffect::sCurrentFadeColor = CColor(0.f, 0.f, 0.f, 0.f);
 int CFireFlea::sLightIdx = 0;
+#ifdef TARGET_PC
+// Port: the fraction of a 60 Hz frame the death effect's frame count has not taken yet.
+static float sPortFrameCarry = 0.f;
+#endif
 
 CFireFlea::CDeathCameraEffect::CDeathCameraEffect(TUniqueId uid, TAreaId aid,
                                                   const rstl::string& name)
@@ -59,8 +66,21 @@ void CFireFlea::CDeathCameraEffect::PreThink(float dt, CStateManager& mgr) {
     pass.DisableFilter(0.f);
     mgr.DeleteObjectRequest(GetUniqueId());
     x44_currentTime = 0;
+#ifdef TARGET_PC
+    sPortFrameCarry = 0.f;
+#endif
   } else {
+#ifdef TARGET_PC
+    // The fade times are 60 Hz frames: advance by whole frames of real time, carrying the rest,
+    // so the flash lasts as long at any tick rate. Shared like sCurrentFadeColor (one at a time).
+    sPortFrameCarry += PortDebug::TickFrames();
+    while (sPortFrameCarry >= 1.f && x44_currentTime < endTransitionTime) {
+      ++x44_currentTime;
+      sPortFrameCarry -= 1.f;
+    }
+#else
     ++x44_currentTime;
+#endif
   }
 
   if (mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Thermal) {

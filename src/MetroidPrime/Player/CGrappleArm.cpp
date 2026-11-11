@@ -487,7 +487,12 @@ const bool CGrappleArm::UpdateGrappleBeam(float dt, const CTransform4f& beamLoc,
   }
   }
   if (x3b2_25_beamActive) {
+#ifdef TARGET_PC
+    // A per-tick phase step: the beam's wave runs at the same speed at any tick rate.
+    x340_anglePhase += kPhaseDelta * PortDebug::TickFrames();
+#else
     x340_anglePhase += kPhaseDelta;
+#endif
     UpdateGrappleBeamFX(beamGunPos, beamAirPos, mgr);
     x394_grappleClawGen->Update(dt);
     x390_grappleSegmentGen->Update(dt);
