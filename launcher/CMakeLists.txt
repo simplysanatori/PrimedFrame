@@ -49,6 +49,11 @@ if(MSVC)
 endif()
 target_compile_definitions(PrimedGun PRIVATE
     PRIMEDGUN_LAUNCHER_VERSION="${PRIMEDGUN_LAUNCHER_VERSION}")
+# The Steam Frame build (PrimedFrame): Linux branding, Play starts the game in
+# VR in place of the launcher, the updater only opens the releases page.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(PrimedGun PRIVATE PRIMEDFRAME_LINUX=1)
+endif()
 target_include_directories(PrimedGun PRIVATE
     ui
     ${PROJECT_SOURCE_DIR}/platform/include)

@@ -8,6 +8,7 @@
 #include "../launcher/core/cannon_textures.h"
 #include "../launcher/core/dds_preview.h"
 #include "../launcher/core/disc_probe.h"
+#include "../launcher/core/frame_start.h"
 #include "../launcher/core/launcher_keys.h"
 #include "../launcher/core/port_settings_file.h"
 #include "../launcher/core/primedgun_import.h"
@@ -687,6 +688,56 @@ void TestCannon(const fs::path& root) {
 
 } // namespace
 
+// The Steam Frame start path: a configured disc that exists starts the game, a
+// missing setting or a vanished file opens the launcher; PrimedFrame 1.0's data
+// folder is found and its card and settings map over.
+void TestFrameStart(const fs::path& root) {
+  const fs::path disc = root / "Metroid Prime.iso";
+  WriteFile(disc, "x");
+  const fs::path ini = root / "user" / "port_settings.ini";
+  Check(!DecideFrameStart(ini, nullptr).startGame, "no settings file opens the launcher");
+  WriteFile(ini, "aspect=16:9\n# VR (PrimedGun)\nvr_enabled=1\n");
+  Check(!DecideFrameStart(ini, nullptr).startGame, "no disc_path opens the launcher");
+  WriteFile(ini, "disc_path=" + (root / "gone.iso").string() + "\n");
+  Check(!DecideFrameStart(ini, nullptr).startGame, "a disc that is gone opens the launcher");
+  WriteFile(ini, "disc_path=" + disc.string() + "\n");
+  const FrameStart ok = DecideFrameStart(ini, nullptr);
+  Check(ok.startGame && ok.disc == disc.string(), "a valid disc starts the game");
+  WriteFile(ini, "");
+  Check(DecideFrameStart(ini, disc.string().c_str()).startGame, "MP_DISC counts as a disc");
+  Check(!DecideFrameStart(ini, (root / "gone.iso").string().c_str()).startGame, "a bad MP_DISC does not");
+
+  const fs::path home = root / "home";
+  Check(FindLegacyFrameFolder(nullptr, home.string().c_str()).empty(), "no PrimedFrame 1.0 folder");
+  const fs::path legacy = home / ".local" / "share" / "PrimedFrame" / "user";
+  WriteFile(legacy / "GC" / "MemoryCardA.USA.raw", std::string(0x2000, '\0'));
+  WriteFile(legacy / "Config" / "PrimedGun.ini",
+            "[primedgun]\nenabled = true\nmetroid_hud_distance = 1.15\nmetroid_hud_offset_right = 0.07999999\n"
+            "metroid_hud_offset_up = 0.02\nworld_scale = 1.5\nrumble_hand_mode = 2\nuse_right_hand = true\n");
+  const fs::path found = FindLegacyFrameFolder(nullptr, home.string().c_str());
+  Check(found == legacy, "PrimedFrame 1.0's folder is found under the data home");
+  Check(FindLegacyFrameFolder((home / ".local" / "share").string().c_str(), nullptr) == legacy,
+        "XDG_DATA_HOME is honoured");
+  const OldCard card = FindOldCardUnder(found, "USA");
+  Check(card.Found() && card.path.filename() == "MemoryCardA.USA.raw" && card.UserFolder() == found.lexically_normal(),
+        "its card is found in GC");
+  const OldSettings old = ReadOldSettings(card.UserFolder());
+  auto value = [&old](const char* key) -> std::string {
+    for (const auto& [k, v] : old.values) {
+      if (k == key) {
+        return v;
+      }
+    }
+    return "(absent)";
+  };
+  Check(value("vr_metroid_hud_offset_right") != "(absent)" && std::atof(value("vr_metroid_hud_offset_right").c_str()) > 0.079 &&
+            std::atof(value("vr_metroid_hud_offset_right").c_str()) < 0.081,
+        "HUD offsets keep their metres");
+  Check(value("vr_metroid_hud_distance") == "1.15" && value("vr_world_scale") == "1.5" &&
+            value("vr_rumble_hand") == "right" && value("vr_use_right_hand") == "1" && value("vr_enabled") == "(absent)",
+        "settings map over");
+}
+
 int main(int argc, char** argv) {
   const fs::path root = argc > 1 ? fs::path(argv[1]) : fs::temp_directory_path() / "port_launcher_tests";
   std::error_code ec;
@@ -700,6 +751,7 @@ int main(int argc, char** argv) {
   TestRangesInsideGameClamps();
   TestDiscProbe(root);
   TestImport(root / "import");
+  TestFrameStart(root / "framestart");
   TestDds();
   TestCannon(root / "cannon");
 

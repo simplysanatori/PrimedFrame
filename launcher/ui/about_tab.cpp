@@ -45,9 +45,16 @@ QString Bullets(const QStringList& items) {
 
 void BuildAboutTab(TabContext& ctx, QTabWidget* tabs) {
   QVBoxLayout* layout = ctx.MakeScrollTab(tabs, QObject::tr("About"));
+#if defined(PRIMEDFRAME_LINUX)
+  layout->addWidget(ctx.Section(QObject::tr("PrimedFrame")));
+  layout->addWidget(Paragraph(QObject::tr(
+      "PrimedGun 2.0 by Nobbie and iChris4, for the Steam Frame. Based on PrimeDecomp and Odran's "
+      "MetroidPrimePort.")));
+#else
   layout->addWidget(ctx.Section(QObject::tr("PrimedGun")));
   layout->addWidget(Paragraph(QObject::tr(
       "Metroid Prime as a native VR game, built on the Metroid Prime decompilation's PC port.")));
+#endif
   layout->addWidget(Paragraph(
       QObject::tr("Version: %1").arg(QStringLiteral(PRIMEDGUN_LAUNCHER_VERSION)), true));
   // MP_BUILD_REVISION is a char array defined in the generated port_build_info.cpp
@@ -81,6 +88,13 @@ void BuildAboutTab(TabContext& ctx, QTabWidget* tabs) {
   layout->addSpacing(8);
   layout->addWidget(ctx.Section(QObject::tr("Links")));
   auto* links = new QVBoxLayout;
+#if defined(PRIMEDFRAME_LINUX)
+  auto* frameGithub = new QPushButton(QObject::tr("PrimedFrame — simplysanatori"));
+  links->addWidget(frameGithub, 0, Qt::AlignLeft);
+  QObject::connect(frameGithub, &QPushButton::clicked, frameGithub, [] {
+    QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/simplysanatori/PrimedFrame")));
+  });
+#endif
   auto* github = new QPushButton(QObject::tr("PrimedGun 2.0 — iChris4"));
   auto* legacyGithub = new QPushButton(QObject::tr("PrimedGun Legacy — Nobbie"));
   auto* discord = new QPushButton(QObject::tr("Dolphin VR Discord"));
