@@ -2178,6 +2178,20 @@ void draw_indexed_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t 
   draw_prims(desc, verts, vertexCount, false, indices, indexCount);
 }
 
+namespace {
+bool g_eyesOnlyFrame = false;
+}
+
+void set_eyes_only_frame(bool eyesOnly) noexcept {
+  static const bool enabled = [] {
+    const char* value = std::getenv("PF2_SCENE_COPY_SKIP");
+    return value != nullptr && value[0] == '1';
+  }();
+  g_eyesOnlyFrame = enabled && eyesOnly;
+}
+
+bool eyes_only_frame() noexcept { return g_eyesOnlyFrame; }
+
 void capture_scene(bool again) {
   gx::fifo::drain();
   if (is_offscreen()) {
@@ -2233,6 +2247,11 @@ void capture_scene(bool again) {
 }
 
 bool begin_visor_effects() {
+  if (g_eyesOnlyFrame) {
+    // Its draws are vfx draws, which the eyes do not replay: nothing would read the copy.
+    g_state.afterPost = false;
+    return false;
+  }
   gx::fifo::drain();
   g_state.afterPost = false;
   if (is_offscreen() || scene_hdr_pass_active()) {
