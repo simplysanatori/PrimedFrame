@@ -20,7 +20,8 @@ unpacks it into the app's files folder. One file serves every device:
   - the hash column is not aurora's key. aurora recomputes the key (xxh3 of the config) when
     it merges the seed, so the column only has to be unique: it holds the first 8 bytes of the
     config's blake2b digest, read as a signed little-endian integer.
-It holds retail GX rows only: no Remastered-only or shadow-pass configs, no indexed attributes,
+It holds retail GX rows only: no Remastered-only (PBR, SDF, fog volume) or shadow-pass configs
+(sun-shadow casters stay: sun_shadows is on by default), no indexed attributes,
 no clear, RmlUi, Vfx or Water rows. It keeps every row a device recorded, but not the rows a
 cache only holds because aurora merged upstream's seed into it: a cache that holds at least 90%
 of upstream's GX rows byte for byte merged it, and its rows identical to upstream's are dropped
@@ -159,6 +160,18 @@ def read_cache(path):
             sys.exit(f"primedgun_seed: {path}: not a pipeline cache ({e})")
 
 
+def remastered_reason(config):
+    """ps.remastered_reason, except that the sun-shadow caster bit alone counts as retail: the
+    Frame draws with sun_shadows on by default, so its casters (a retail draw with the shadow bit
+    set, no PBR) are part of an ordinary room's draws and have to be seeded."""
+    reason = ps.remastered_reason(config)
+    if reason != "shadow":
+        return reason
+    out = bytearray(config)
+    out[8 + 2] &= ~0x10 & 0xFF
+    return ps.remastered_reason(bytes(out))
+
+
 def drop_reason(row, version, merged=None):
     """Why a cache row can't go into the seed, or None. Checked before normalising. merged maps
     the raw configs of the seeds merged into the row's cache to the seed's name."""
@@ -175,8 +188,8 @@ def drop_reason(row, version, merged=None):
         return "blob version differs from its row"
     if config[PORT_BITS] >> 6:
         return "spare bits of ShaderConfig byte 13 set (unknown layout)"
-    if ps.remastered_reason(config):
-        return f"Remastered-only ({ps.remastered_reason(config)})"
+    if remastered_reason(config):
+        return f"Remastered-only ({remastered_reason(config)})"
     if u32(config, SHADOW_PASS):
         return "shadow pass"
     if indexed(config):
@@ -397,7 +410,7 @@ def cmd_stats(a):
         gx = [r[4] for r in rows if r[0] == ps.TYPE_GX and len(r[4]) == GX_CONFIG_SIZE]
         groups = collections.Counter(
             (u32(c, MSAA), multiview(c), native_vertices(c), map_batch(c), u32(c, SHADOW_PASS),
-             ps.remastered_reason(c) or "retail", indexed(c)) for c in gx)
+             remastered_reason(c) or "retail", indexed(c)) for c in gx)
         print("  GX rows by msaa, multiview, nativeVertices, mapBatch, shadowPass, content, attributes:")
         for (msaa, mode, native, batch, shadow, content, idx), n in sorted(groups.items()):
             print(f"    msaa {msaa}  {MODE_NAMES[mode]:<16}  native {native}  mapBatch {batch}  "
