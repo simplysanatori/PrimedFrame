@@ -97,6 +97,10 @@ VrPadState GetVrPadState() noexcept;
 // ordinary SDL pad and never set it.
 bool VrPadOwnsPort0() noexcept;
 bool VrCustomLayoutActive() noexcept;
+// Auto Fire is on (the Steam Frame shoulder's toggle, vr_autofire.h): a held fire
+// trigger repeats the beam's shots instead of charging. Off at every launch and
+// whenever the controllers let go. Read by CPlayerGun on the game thread.
+bool VrAutoFireActive() noexcept;
 // Called only when CPlayer can accept a visor change, on an actual simulation tick.
 int VrTakeWristVisorRequest() noexcept;
 
