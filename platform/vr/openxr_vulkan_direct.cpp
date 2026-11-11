@@ -1456,8 +1456,10 @@ public:
         // more periods, which located the poses that much further ahead (and stepped the game that
         // much at a time) although the next frame can be on time again.
         const XrDuration period = DisplayPeriod();
-        packet.xr_frame.predicted_display_time = last_display_time_ + static_cast<XrDuration>(periods_ahead) * period;
+        packet.xr_frame.predicted_display_time =
+            last_display_time_ + static_cast<XrDuration>(periods_ahead) * PacketPeriod();
         packet.xr_frame.predicted_display_period = period;
+        pf2_paced_ += PacketPeriod() != period ? 1u : 0u;
         packet.xr_frame.should_render = last_should_render_;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             packet.render_width[eye] = EyeWidth(pair, eye);
@@ -1505,7 +1507,8 @@ public:
         const XrDuration period = DisplayPeriod();
         packet.xr_frame.serial = next_packet_serial_++;
         packet.xr_frame.predicted_display_time =
-            last_display_time_ + static_cast<XrDuration>(ahead >= 0 ? ahead : 2) * period;
+            last_display_time_ + static_cast<XrDuration>(ahead >= 0 ? ahead : 2) * PacketPeriod();
+        pf2_paced_ += PacketPeriod() != period ? 1u : 0u;
         packet.xr_frame.predicted_display_period = period;
         packet.xr_frame.should_render = true;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
@@ -1895,6 +1898,20 @@ private:
         return end_phase_.Enabled() ? end_phase_.TruePeriod(nominal) : nominal;
     }
 
+    // How much later the frame after this one is shown: the true period, except while SteamVR paces
+    // the app at a fraction of the refresh (its half rate after a stall, motion smoothing): then
+    // xrWaitFrame blocks (a quarter period or more) and reports a whole multiple of the period, and
+    // the next frame is shown that much later. Poses located one true period ahead were then shown
+    // a period late (pose lead -1: a double image until the full rate came back). A wait that
+    // returned at once (the app was late, not paced) keeps the true period, so frames that fit
+    // again are on time at the full rate (the half-rate trap of a doubled period is not back).
+    XrDuration PacketPeriod() const {
+        const XrDuration period = DisplayPeriod();
+        const bool paced = period > 0 && last_display_period_ > period + period / 2 &&
+                           EndPhaseLock::Multiple(last_display_period_, period) >= 2 && last_wait_ns_ >= period / 4;
+        return paced ? last_display_period_ : period;
+    }
+
     void NoteDisplayTiming(const OpenXRFrame& frame) noexcept {
         last_display_time_ = frame.predicted_display_time;
         last_display_period_ = frame.predicted_display_period;
@@ -1915,7 +1932,9 @@ private:
     }
 
     OpenXRBeginStatus BeginCompositorCycle() {
+        const Clock::time_point wait_start = Clock::now();
         const OpenXRFrameStatus status = runtime_->WaitFrame(active_frame_);
+        last_wait_ns_ = (Clock::now() - wait_start).count();
         if (status != OpenXRFrameStatus::Ready) {
             if (status == OpenXRFrameStatus::Error) {
                 Fail(BeginStatusOperation(status));
@@ -2657,7 +2676,7 @@ private:
         }
         const double need_ms = static_cast<double>(P90(cpu_ms_)) + static_cast<double>(P90(gpu_own_ms_)) +
                                static_cast<double>(margin_us) / 1000.0;
-        const auto period = std::chrono::nanoseconds(DisplayPeriod());
+        const auto period = std::chrono::nanoseconds(PacketPeriod());
         return target + period - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(need_ms));
     }
 
@@ -2683,7 +2702,8 @@ private:
              << " timeouts " << pf2_fence_timeouts_ << " | gpu/set ms " << SampleStat(gpu) << " (" << gpu.size()
              << " sets), own " << SampleStat(pf2_gpu_own_ms_) << " | early locate " << pf2_overlaps_
              << " (before the end ms p50/p95/max " << SampleStat(pf2_overlap_lead_ms_) << "; cpu p90 "
-             << (cpu_ms_.empty() ? 0.0f : P90(cpu_ms_)) << ") | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
+             << (cpu_ms_.empty() ? 0.0f : P90(cpu_ms_)) << ") | paced by SteamVR " << pf2_paced_
+             << " | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
              << " +1:" << pf2_lead_[2] << " +2:" << pf2_lead_[3] << " more:" << pf2_lead_[4];
         // Simulation steps against fresh layers: fewer steps than layers means layers between steps
         // show interpolated (or repeated) game states.
@@ -2715,6 +2735,7 @@ private:
         pf2_gpu_own_ms_.clear();
         pf2_overlap_lead_ms_.clear();
         pf2_overlaps_ = 0;
+        pf2_paced_ = 0;
         pf2_lead_ = {};
         pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = pf2_end_kept_ = 0;
     }
@@ -2757,6 +2778,9 @@ private:
     std::vector<float> pf2_gpu_own_ms_;
     std::vector<float> pf2_overlap_lead_ms_;
     uint32_t pf2_overlaps_ = 0;
+    // Packets located at xrWaitFrame's multiple period (PacketPeriod), and the last wait's length.
+    uint32_t pf2_paced_ = 0;
+    int64_t last_wait_ns_ = 0;
     // Fresh layers that kept xrWaitFrame's display time (EndRetainedFrame), and xrEndFrame calls
     // refused with XR_ERROR_TIME_INVALID (all, and in a row).
     uint32_t pf2_end_kept_ = 0;
