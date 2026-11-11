@@ -802,6 +802,9 @@ private:
 
 class OpenXRVulkanDirectBackend::Impl final {
 public:
+    // The steady clock, as the end phase's.
+    using Clock = std::chrono::steady_clock;
+
     explicit Impl(OpenXRLogCallback logger) : logger_(std::move(logger)) {}
 
     ~Impl() { Shutdown(); }
@@ -1250,37 +1253,62 @@ public:
         return true;
     }
 
-    bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer) {
+    // `overlap` (PF2_OVERLAP, render-first pacing on the pacing thread): locates, arms and publishes
+    // the next packet (PrepareOverlapPacket) while this frame is still open, when waiting for this
+    // frame's end would leave the next one too little time (OverlapLocateAt).
+    bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer, const std::function<void()>& overlap = {}) {
         if (!frame_active_ || runtime_ == nullptr || frame.xr_frame.serial != active_frame_serial_) {
             return Fail("FinishFrame received a stale or inactive OpenXR frame token");
         }
         bool submission_unsafe = false;
         bool submission_done = false;
         uint64_t gpu_value = 0;
+        int64_t submitted_ns = 0;
         {
             std::lock_guard lock(submission_mutex_);
             const SubmissionResult* result = FindResultLocked(SubmissionToken(frame));
             submission_unsafe = result != nullptr && result->unsafe;
             submission_done = result != nullptr && result->success;
             gpu_value = result != nullptr ? result->gpu_value : 0;
+            submitted_ns = result != nullptr ? result->at_ns : 0;
         }
         if (submission_unsafe) {
             AbandonAcquiredSwapchains();
             Fail("Aurora's Vulkan stereo submission failed after GPU work may have been queued");
         }
-        if (submission_done) {
-            // PF2_RELEASE_FENCE: not before the GPU finished writing the images.
-            WaitGpu(gpu_value);
-        }
+        NoteOverlapSamples(active_packet_serial_, submitted_ns);
         // PF2_END_PHASE / PF2_END_DELAY_US: the release and the end together, at a phase of the
         // refresh; the layer keeps the display time and poses it was rendered for.
         const auto wake = pf2_wait_return_;
         end_phase_.NoteFrame(active_frame_.predicted_display_period);
         const bool phased = end_phase_.Enabled() && wake.time_since_epoch().count() != 0 &&
                             active_frame_.predicted_display_period > 0;
+        const Clock::time_point target =
+            phased ? end_phase_.Target(wake, active_frame_.predicted_display_period, nominal_period_)
+                   : Clock::time_point{};
+        // PF2_OVERLAP: the next packet before this frame's end, when it is due before it.
+        const Clock::time_point locate_at = overlap && phased ? OverlapLocateAt(target) : Clock::time_point::max();
+        bool overlapped = false;
+        const auto run_overlap = [&] {
+            overlapped = true;
+            const Clock::time_point now = Clock::now();
+            ++pf2_overlaps_;
+            if (diagnostics::Enabled()) {
+                pf2_overlap_lead_ms_.push_back(
+                    static_cast<float>(std::chrono::duration<double, std::milli>(target - now).count()));
+            }
+            overlap();
+        };
+        if (submission_done) {
+            // PF2_RELEASE_FENCE: not before the GPU finished writing the images.
+            WaitGpu(gpu_value, locate_at, run_overlap);
+        }
+        if (!overlapped && locate_at < target) {
+            std::this_thread::sleep_until(locate_at);
+            run_overlap();
+        }
         if (phased) {
-            std::this_thread::sleep_until(
-                end_phase_.Target(wake, active_frame_.predicted_display_period, nominal_period_));
+            std::this_thread::sleep_until(target);
             if (diagnostics::Enabled()) {
                 end_phase_.NoteEnd(std::chrono::steady_clock::now(), wake);
             }
@@ -1443,11 +1471,61 @@ public:
             pf2_locate_ms_.push_back(static_cast<float>(
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pf2_wait_return_).count()));
         }
+        NoteLocated(packet.xr_frame.serial);
         if (!packet.xr_frame.views_valid) {
             return OpenXRBeginStatus::Ready;
         }
         located_origin_ = CurrentPoseOrigin();
         return OpenXRBeginStatus::Ready;
+    }
+
+    // PF2_OVERLAP: the next packet while this packet's compositor frame is still open (FinishFrame
+    // runs this through its `overlap` callback). The poses are located for the same display time
+    // the next plain cycle would have used (the last xrWaitFrame's, here this frame's, plus
+    // PF2_AHEAD_PERIODS true periods), only earlier; the images come from the other swapchain pair
+    // and the packet queues behind this frame's (it becomes the pending packet at its end), as a
+    // pipelined packet does. Nothing is prepared (the packet expects no submission) while the eyes
+    // resize, a pair has fewer than two images, a packet is already queued or there is nothing to
+    // render; then the next cycle prepares its packet after the end, as before.
+    OpenXRBeginStatus PrepareOverlapPacket(const OpenXRPresentation& presentation, OpenXRBackendFrame& packet) {
+        packet = {};
+        packet.presentation = presentation;
+        if (!bound_ || runtime_ == nullptr || !frame_active_ || active_packet_serial_ == 0 ||
+            pending_packet_serial_ != 0 || queued_packet_serial_ != 0 || !last_should_render_ ||
+            !SupportsPipelining() || EyesResizing() || !runtime_->IsSessionRunning() || runtime_->ShouldExit() ||
+            timing_session_serial_ != runtime_->SessionRunSerial()) {
+            return OpenXRBeginStatus::Ready;
+        }
+        const int ahead = pf2::Get().ahead_periods;
+        const XrDuration period = DisplayPeriod();
+        packet.xr_frame.serial = next_packet_serial_++;
+        packet.xr_frame.predicted_display_time =
+            last_display_time_ + static_cast<XrDuration>(ahead >= 0 ? ahead : 2) * period;
+        packet.xr_frame.predicted_display_period = period;
+        packet.xr_frame.should_render = true;
+        for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
+            packet.render_width[eye] = EyeWidth(retained_swapchains_, eye);
+            packet.render_height[eye] = EyeHeight(retained_swapchains_, eye);
+        }
+        if (!runtime_->LocateViewsAt(packet.xr_frame.predicted_display_time, packet.xr_frame)) {
+            Fail("xrLocateViews failed for an overlapped packet");
+            return OpenXRBeginStatus::Error;
+        }
+        if (diagnostics::Enabled() && pf2_wait_return_.time_since_epoch().count() != 0) {
+            pf2_locate_ms_.push_back(static_cast<float>(
+                std::chrono::duration<double, std::milli>(Clock::now() - pf2_wait_return_).count()));
+        }
+        NoteLocated(packet.xr_frame.serial);
+        if (!packet.xr_frame.views_valid) {
+            return OpenXRBeginStatus::Ready;
+        }
+        located_origin_ = CurrentPoseOrigin();
+        const OpenXRBeginStatus status = PrepareTargets(packet, retained_swapchains_, retained_panel_swapchain_);
+        if (status == OpenXRBeginStatus::Ready) {
+            queued_packet_serial_ = packet.xr_frame.serial;
+            queued_origin_ = located_origin_;
+        }
+        return status;
     }
 
     // The located packet's images and Aurora's targets: on the writable pair with nothing
@@ -2231,7 +2309,8 @@ private:
             }
             self->awaiting_token_ = 0;
             self->submission_results_[1] = self->submission_results_[0];
-            self->submission_results_[0] = {token, success, !success, gpu_value};
+            self->submission_results_[0] = {token, success, !success, gpu_value,
+                                            std::chrono::steady_clock::now().time_since_epoch().count()};
         }
         self->submission_cv_.notify_all();
     }
@@ -2244,6 +2323,8 @@ private:
         bool unsafe = false;
         // PF2_RELEASE_FENCE: the timeline value that completes after the set's GPU work (0: none).
         uint64_t gpu_value = 0;
+        // When Aurora's submission reported it (steady clock ns; PF2_OVERLAP's CPU estimate).
+        int64_t at_ns = 0;
     };
 
     const SubmissionResult* FindResultLocked(uint64_t token) const noexcept {
@@ -2345,16 +2426,31 @@ private:
     }
 
     // PF2_RELEASE_FENCE: waits (up to 100 ms) for the GPU work of the set that signalled `value`.
-    void WaitGpu(uint64_t value) {
+    // With `at` before that, `at_fn` runs at `at` if the GPU is still busy then (PF2_OVERLAP); its
+    // time does not count as fence wait.
+    void WaitGpu(uint64_t value, Clock::time_point at = Clock::time_point::max(),
+                 const std::function<void()>& at_fn = {}) {
         if (fence_.CurrentMode() == GpuFence::Mode::Off) {
             return;
         }
-        const auto start = std::chrono::steady_clock::now();
-        const bool done = diagnostics::Measure(diagnostics::Stage::FenceWait,
-                                               [&] { return fence_.Wait(value, std::chrono::milliseconds(100)); });
+        const auto start = Clock::now();
+        bool done = false;
+        Clock::duration hook_time{};
+        if (at_fn && at < start + std::chrono::milliseconds(100)) {
+            done = diagnostics::Measure(diagnostics::Stage::FenceWait, [&] { return fence_.WaitUntil(value, at); });
+            if (!done) {
+                const auto hook_start = Clock::now();
+                at_fn();
+                hook_time = Clock::now() - hook_start;
+            }
+        }
+        if (!done) {
+            done = diagnostics::Measure(diagnostics::Stage::FenceWait,
+                                        [&] { return fence_.Wait(value, std::chrono::milliseconds(100)); });
+        }
         if (diagnostics::Enabled()) {
             pf2_fence_ms_.push_back(static_cast<float>(
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count()));
+                std::chrono::duration<double, std::milli>(Clock::now() - start - hook_time).count()));
         }
         if (!done) {
             ++pf2_fence_timeouts_;
@@ -2408,6 +2504,57 @@ private:
         }
     }
 
+    // ---- PF2_OVERLAP ---------------------------------------------------------------------------
+
+    void NoteLocated(uint64_t serial) {
+        located_ns_[serial % located_ns_.size()] = {serial, Clock::now().time_since_epoch().count()};
+    }
+
+    // Per finished packet: its CPU time (located to Aurora's submission: the game's step, draw,
+    // encode and submit) and the GPU time of the sets finished since (each set's own, without the
+    // time it queued behind the previous set's).
+    void NoteOverlapSamples(uint64_t serial, int64_t submitted_ns) {
+        const auto& located = located_ns_[serial % located_ns_.size()];
+        if (serial != 0 && located.first == serial && submitted_ns > located.second) {
+            PushSample(cpu_ms_, static_cast<float>(static_cast<double>(submitted_ns - located.second) / 1e6));
+        }
+        std::vector<float> gpu;
+        fence_.TakeExclusiveMs(gpu);
+        for (const float ms : gpu) {
+            PushSample(gpu_own_ms_, ms);
+            if (diagnostics::Enabled() && pf2_gpu_own_ms_.size() < 4096) pf2_gpu_own_ms_.push_back(ms);
+        }
+    }
+
+    static void PushSample(std::vector<float>& ring, float value) {
+        constexpr size_t kWindow = 45;  // half a second at 90 Hz
+        if (ring.size() >= kWindow) ring.erase(ring.begin());
+        ring.push_back(value);
+    }
+
+    // The 90th percentile of a window.
+    static float P90(std::vector<float> values) {
+        const size_t i = values.size() * 9 / 10;
+        std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(i), values.end());
+        return values[i];
+    }
+
+    // When the next packet must be located for its eyes to be finished by its own end, one true
+    // period after this frame's (`target`): that end less the recent CPU and GPU times (90th
+    // percentiles of the last half second) and PF2_OVERLAP's margin. Later than this frame's end
+    // (the usual case with time to spare) changes nothing: the next cycle locates after the end,
+    // as without PF2_OVERLAP.
+    Clock::time_point OverlapLocateAt(Clock::time_point target) const {
+        const long margin_us = pf2::Get().overlap_margin_us;
+        if (margin_us <= 0 || cpu_ms_.size() < 16 || gpu_own_ms_.size() < 16) {
+            return Clock::time_point::max();
+        }
+        const double need_ms = static_cast<double>(P90(cpu_ms_)) + static_cast<double>(P90(gpu_own_ms_)) +
+                               static_cast<double>(margin_us) / 1000.0;
+        const auto period = std::chrono::nanoseconds(DisplayPeriod());
+        return target + period - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(need_ms));
+    }
+
     // The [pf2] line, once a second with MP_VR_LOG=1 (on the pacing thread, after xrEndFrame).
     void Pf2Tick() {
         if (!diagnostics::Enabled()) {
@@ -2428,7 +2575,9 @@ private:
         line << "[pf2] packed=" << (packed_ ? 1 : 0) << " fence=" << (fence_.CurrentMode() != GpuFence::Mode::Off ? 1 : 0)
              << " ahead=" << pf2::Get().ahead_periods << " | fence-wait ms p50/p95/max " << SampleStat(pf2_fence_ms_)
              << " timeouts " << pf2_fence_timeouts_ << " | gpu/set ms " << SampleStat(gpu) << " (" << gpu.size()
-             << " sets) | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
+             << " sets), own " << SampleStat(pf2_gpu_own_ms_) << " | early locate " << pf2_overlaps_
+             << " (before the end ms p50/p95/max " << SampleStat(pf2_overlap_lead_ms_) << "; cpu p90 "
+             << (cpu_ms_.empty() ? 0.0f : P90(cpu_ms_)) << ") | pose lead vs shown frame (periods) <=-1:" << pf2_lead_[0] << " 0:" << pf2_lead_[1]
              << " +1:" << pf2_lead_[2] << " +2:" << pf2_lead_[3] << " more:" << pf2_lead_[4];
         // Simulation steps against fresh layers: fewer steps than layers means layers between steps
         // show interpolated (or repeated) game states.
@@ -2456,6 +2605,9 @@ private:
         }
         diagnostics::detail::Info(line.str());
         pf2_fence_ms_.clear();
+        pf2_gpu_own_ms_.clear();
+        pf2_overlap_lead_ms_.clear();
+        pf2_overlaps_ = 0;
         pf2_lead_ = {};
         pf2_end_exact_ = pf2_end_moved_ = pf2_end_backwards_ = 0;
     }
@@ -2491,6 +2643,13 @@ private:
     std::chrono::steady_clock::time_point pf2_window_start_{};
     std::vector<float> pf2_fence_ms_;
     std::vector<float> pf2_locate_ms_;
+    // PF2_OVERLAP: recent CPU and own GPU times per packet, locate times by serial, [pf2] figures.
+    std::vector<float> cpu_ms_;
+    std::vector<float> gpu_own_ms_;
+    std::array<std::pair<uint64_t, int64_t>, 8> located_ns_{};
+    std::vector<float> pf2_gpu_own_ms_;
+    std::vector<float> pf2_overlap_lead_ms_;
+    uint32_t pf2_overlaps_ = 0;
     std::chrono::steady_clock::time_point pf2_wait_return_{};
     uint32_t pf2_fresh_layers_ = 0;
     uint64_t pf2_fence_timeouts_ = 0;
@@ -2594,6 +2753,14 @@ bool OpenXRVulkanDirectBackend::TryCancelPendingFrame(OpenXRBackendFrame& frame)
 bool OpenXRVulkanDirectBackend::RepeatFrame(const OpenXRBackendFrame& frame) { return m_impl->RepeatFrame(frame); }
 bool OpenXRVulkanDirectBackend::FinishFrame(OpenXRBackendFrame& frame, bool submit_layer) {
     return m_impl->FinishFrame(frame, submit_layer);
+}
+bool OpenXRVulkanDirectBackend::FinishFrame(OpenXRBackendFrame& frame, bool submit_layer,
+                                            const std::function<void()>& overlap) {
+    return m_impl->FinishFrame(frame, submit_layer, overlap);
+}
+OpenXRBeginStatus OpenXRVulkanDirectBackend::PrepareOverlapPacket(const OpenXRPresentation& presentation,
+                                                                  OpenXRBackendFrame& packet) {
+    return m_impl->PrepareOverlapPacket(presentation, packet);
 }
 OpenXRBeginStatus OpenXRVulkanDirectBackend::PreparePacket(const OpenXRPresentation& presentation,
                                                            OpenXRBackendFrame& packet) {

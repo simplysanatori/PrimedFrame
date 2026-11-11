@@ -12,6 +12,7 @@
 #endif
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -53,6 +54,11 @@ public:
     bool TryCancelPendingFrame(OpenXRBackendFrame& frame);
     bool RepeatFrame(const OpenXRBackendFrame& frame);
     bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer);
+    // PF2_OVERLAP (vr/pf2_switches.h): FinishFrame calls `overlap` on this thread while the frame is
+    // still open when the next packet is due before the frame's end; `overlap` prepares it with
+    // PrepareOverlapPacket (which queues it behind this frame, as ArmPacket does) and publishes it.
+    bool FinishFrame(OpenXRBackendFrame& frame, bool submit_layer, const std::function<void()>& overlap);
+    OpenXRBeginStatus PrepareOverlapPacket(const OpenXRPresentation& presentation, OpenXRBackendFrame& packet);
 
     // Render-first pacing: PreparePacket acquires the images Aurora copies the eyes into while no
     // compositor frame is open; BeginFrameForPacket accepts only a completed packet, and
