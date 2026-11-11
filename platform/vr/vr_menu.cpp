@@ -343,10 +343,14 @@ struct Menu {
     double readouts_at = 0.0;
     // Resume questions take priority over compilation progress while the menu is closed.
     // PF2_LABEL (vr/pf2_switches.h) goes first, for kLabelSeconds from the session's first frames.
-    enum class Toast { None, Compile, Resume, Label };
+    enum class Toast { None, Compile, Resume, Label, Notice };
     Toast toast = Toast::None;
     uint32_t toast_key = 0;
     double label_until = -1.0;
+    // VrShowNotice's text and its deadline; notice_seq tells a new one from the last.
+    std::string notice;
+    double notice_until = -1.0;
+    uint32_t notice_seq = 0;
 };
 
 constexpr double kLabelSeconds = 3.0;
@@ -354,6 +358,7 @@ constexpr double kLabelSeconds = 3.0;
 const char* ToastName(Menu::Toast toast) noexcept {
     return toast == Menu::Toast::Resume ? "resume question"
            : toast == Menu::Toast::Label ? "PF2_LABEL toast"
+           : toast == Menu::Toast::Notice ? "notice toast"
                                          : "shader compilation toast";
 }
 
@@ -409,7 +414,9 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
         PORTVR_LOG() << "PF2_LABEL: " << label << std::endl;
     }
     const bool labelling = !label.empty() && OpenXRIsRunning() && now < menu.label_until;
+    const bool noticing = !menu.notice.empty() && OpenXRIsRunning() && now < menu.notice_until;
     const Menu::Toast toast = menu_open ? Menu::Toast::None
+                              : noticing ? Menu::Toast::Notice
                               : labelling ? Menu::Toast::Label
                               : asking  ? Menu::Toast::Resume
                               : compiling ? Menu::Toast::Compile
@@ -430,6 +437,7 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
     const uint32_t key = toast == Menu::Toast::Resume
                              ? (question.afterCrash ? 1u : 0u) | (question.crashedAgain ? 2u : 0u)
                          : toast == Menu::Toast::Label ? 0u
+                         : toast == Menu::Toast::Notice ? menu.notice_seq
                                                        : VrMenu::CompileToastKey(done, total);
     if (toast != menu.toast || key != menu.toast_key) {
         const VrMenu::Pixels pixels =
@@ -437,6 +445,7 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
                 ? VrMenu::BuildResumeToastPixels(question.room, saved, question.afterCrash,
                                                  question.crashedAgain)
             : toast == Menu::Toast::Label ? BuildLabelToastPixels(label)
+            : toast == Menu::Toast::Notice ? BuildLabelToastPixels(menu.notice)
                                           : VrMenu::BuildCompileToastPixels(done, total);
         aurora_set_stereo_panel_image(pixels.data(), VrMenu::kWidth, VrMenu::kImageHeight);
         menu.toast_key = key;
@@ -451,6 +460,8 @@ void UpdateToast(Menu& menu, bool compiling, uint32_t done, uint32_t total) noex
                          << std::endl;
         } else if (toast == Menu::Toast::Label) {
             PORTVR_LOG() << "PF2_LABEL toast shown" << std::endl;
+        } else if (toast == Menu::Toast::Notice) {
+            PORTVR_LOG() << "notice toast shown: " << menu.notice << std::endl;
         } else {
             PORTVR_LOG() << "shader compilation toast shown: " << done << " / " << total << std::endl;
         }
@@ -543,6 +554,18 @@ Menu& TheMenu() {
 
 } // namespace
 #endif
+
+void VrShowNotice(const char* text, double seconds) noexcept {
+#if defined(MP_ENABLE_OPENXR)
+    Menu& menu = TheMenu();
+    menu.notice = text != nullptr ? text : "";
+    menu.notice_until = NowSeconds() + seconds;
+    ++menu.notice_seq;
+#else
+    (void)text;
+    (void)seconds;
+#endif
+}
 
 void VrMenuUpdate() noexcept {
 #if defined(MP_ENABLE_OPENXR)

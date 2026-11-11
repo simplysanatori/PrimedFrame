@@ -144,6 +144,7 @@ struct PortVrSettings {
     float rumble_intensity = 1.0f;
     RumbleHand rumble_hand = RumbleHand::Split;
     bool grip_inputs_enabled = true;
+    bool auto_fire_button = true; // the Steam Frame shoulder toggles Auto Fire (the mode itself is never saved)
     bool grip_inputs_use_trackpad = false;
     float trackpad_press_threshold = 0.5f;
     float index_grip_press_threshold = 0.5f;

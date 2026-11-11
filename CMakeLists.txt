@@ -966,6 +966,8 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include)
     mp_port_test(port_vr_controller_layout_tests SOURCES tests/port_vr_controller_layout.cpp
         INCLUDES platform/include)
+    mp_port_test(port_vr_autofire_tests SOURCES tests/port_vr_autofire.cpp
+        INCLUDES platform/include)
     mp_port_test(port_vr_smooth_turn_tests SOURCES tests/port_vr_smooth_turn.cpp
         INCLUDES platform/include)
     mp_port_test(port_vr_action_view_tests SOURCES tests/port_vr_action_view.cpp

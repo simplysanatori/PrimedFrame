@@ -188,8 +188,8 @@ inline constexpr std::array<const char*, kTabCount> kTabLabels = {
     "LAYOUT", "CONFIG", "CALIBRATION", "CONTROL", "MOVEMENT", "TEXTURES", "STATES", "DEBUG"};
 inline constexpr uint32_t kCalibrationFirstPageItems = 12;
 inline constexpr uint32_t kCalibrationTotalItems = 25;
-inline constexpr uint32_t kControlFirstPageItems = 8;
-inline constexpr uint32_t kControlTotalItems = 16;
+inline constexpr uint32_t kControlFirstPageItems = 9;
+inline constexpr uint32_t kControlTotalItems = 17;
 // The most rows a page of the port's tabs holds, as PrimedGun's longest page.
 inline constexpr uint32_t kRowsPerPage = 12;
 // PREVIOUS (left) and NEXT (right), under the longest list and clear of the
@@ -725,7 +725,7 @@ inline bool RowIsNumeric(const State& s, const View& view, uint32_t index) {
     }
     case kControlTab: {
         const int actual = ControlActualIndex(s, index);
-        return actual == 3 || actual == 9 || (actual >= 11 && actual <= 14);
+        return actual == 3 || actual == 10 || (actual >= 12 && actual <= 15);
     }
     case kMovementTab:
         return (index >= 3 && index <= 7) || index == 9;
@@ -1063,6 +1063,7 @@ inline std::vector<Row> BuildRows(const State& s, const PortVrSettings& v, const
             rows.push_back({"A BUTTON JUMP", OnOff(v.combat_jump_use_primary_button)});
             rows.push_back({"LONGER HELD PRESS FOR VR MENU", OnOff(v.vr_menu_hold_left_stick)});
             rows.push_back({"MENU REQUIRES HAND NEAR HEAD", OnOff(v.vr_menu_requires_head_zone)});
+            rows.push_back({"AUTO FIRE BUTTON", v.auto_fire_button ? (v.use_right_hand ? "RIGHT SHOULDER" : "LEFT SHOULDER") : "OFF"});
         } else {
             rows.push_back({"INDEX GRIP SOURCE", v.grip_inputs_use_trackpad ? "TRACKPAD" : "GRIP"});
             rows.push_back({"INDEX TOUCHPAD PRESSURE", FloatText(v.trackpad_press_threshold, 2)});
@@ -1174,8 +1175,8 @@ inline LayoutRows FrameLayoutRows(const PortVrSettings& v) {
                      "LEFT TRIGGER - LOCK ON"};
         rows.right = {"RIGHT STICK - LOOK/JUMP",        "B BUTTON - BEAM SELECT", "A BUTTON - SELECT",
                       "RIGHT STICK CLICK - SET HEIGHT", "RIGHT GRIP - MISSILES",  "RIGHT TRIGGER - SHOOT",
-                      "MENU - NO ACTION"};
-        rows.footer = "NO ACTION - X, Y, SHOULDERS, D-PAD LEFT/RIGHT";
+                      "RIGHT SHOULDER - AUTO FIRE"};
+        rows.footer = "NO ACTION - MENU, X, Y, LEFT SHOULDER, D-PAD LEFT/RIGHT";
         return rows;
     }
     const auto line = [](const char* action, int binding) { return std::string(action) + " - " + FrameInputName(binding); };
@@ -1468,7 +1469,7 @@ inline uint32_t ResetActionForSelection(const State& s, const View& view) {
     if (s.tab == kCalibrationTab && CalibrationActualIndex(s, s.selected) == 19) {
         return kResetCalibration;
     }
-    if (s.tab == kControlTab && ControlActualIndex(s, s.selected) == 15) {
+    if (s.tab == kControlTab && ControlActualIndex(s, s.selected) == 16) {
         return kResetController;
     }
     if (s.tab == kMovementTab && s.selected == 10) {
@@ -1533,6 +1534,7 @@ inline void ResetController(PortVrSettings& v) {
     v.rumble_intensity = 1.0f;
     v.rumble_hand = RumbleHand::Split;
     v.grip_inputs_enabled = true;
+    v.auto_fire_button = true;
     v.grip_inputs_use_trackpad = false;
     v.trackpad_press_threshold = 0.5f;
     v.index_grip_press_threshold = 0.5f;
@@ -1583,6 +1585,7 @@ inline void ResetAll(PortVrSettings& v) {
     v.rumble_intensity = d.rumble_intensity;
     v.rumble_hand = d.rumble_hand;
     v.grip_inputs_enabled = d.grip_inputs_enabled;
+    v.auto_fire_button = d.auto_fire_button;
     v.grip_inputs_use_trackpad = d.grip_inputs_use_trackpad;
     v.trackpad_press_threshold = d.trackpad_press_threshold;
     v.index_grip_press_threshold = d.index_grip_press_threshold;
@@ -1755,19 +1758,19 @@ inline void Adjust(State& s, PortVrSettings& v, const View& view, int direction)
         case 3:
             step(v.rumble_intensity, 0.05f, 0.0f, 1.0f);
             break;
-        case 9:
+        case 10:
             step(v.trackpad_press_threshold, 0.01f, 0.05f, 1.0f);
             break;
-        case 11:
+        case 12:
             step(v.index_grip_press_threshold, 0.01f, 0.05f, 1.0f);
             break;
-        case 12:
+        case 13:
             step(v.xr_dpad_head_radius, 0.01f, 0.05f, 0.60f);
             break;
-        case 13:
+        case 14:
             step(v.xr_dpad_head_y_below, 0.01f, 0.0f, 0.60f);
             break;
-        case 14:
+        case 15:
             step(v.xr_dpad_deadzone, 0.05f, 0.05f, 0.95f);
             break;
         default:
@@ -1921,12 +1924,15 @@ inline void Activate(State& s, PortVrSettings& v, const View& view, double now, 
             v.vr_menu_requires_head_zone = !v.vr_menu_requires_head_zone;
             break;
         case 8:
+            v.auto_fire_button = !v.auto_fire_button;
+            break;
+        case 9:
             v.grip_inputs_use_trackpad = !v.grip_inputs_use_trackpad;
             break;
-        case 10:
+        case 11:
             v.xr_dpad_enabled = !v.xr_dpad_enabled;
             break;
-        case 15:
+        case 16:
             if (ConfirmReset(s, reset_action, now)) {
                 ResetController(v);
             }
