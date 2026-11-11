@@ -28,9 +28,10 @@ DRY=0
 [ "$1" = --dry-run ] && { DRY=1; shift; }
 
 # ---- the command this entry runs ---------------------------------------------------------------------------
-# PLACEHOLDER for lane L: the launcher's start mode that opens its window when no disc is set up and goes
-# straight into VR otherwise. Replace this line (and only this line) with the final command.
-START_CMD=("$HERE/PrimedGun" --frame-start)   # LANE-L-PLACEHOLDER
+# The launcher's start mode: with a saved, valid disc it execs the game in place (no window, VR); without one it
+# opens its window, and Play execs the game in place. One process either way. PrimedGun must sit next to
+# metroid_prime_port (the in-VR Open Launcher row only appears then).
+START_CMD=("$HERE/PrimedGun" --frame-start)
 CMD=("${START_CMD[@]}" "$@")
 
 # ---- environment for the program -----------------------------------------------------------------------------
