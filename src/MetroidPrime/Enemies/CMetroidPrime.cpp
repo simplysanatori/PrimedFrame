@@ -35,6 +35,7 @@
 #include "rstl/math.hpp"
 
 #ifdef TARGET_PC
+#include "port_debug.h"
 #include "port_synthetic_effect.h"
 #endif
 
@@ -1119,7 +1120,13 @@ void CMetroidPrime::PushPlayer(CStateManager& mgr, const CVector3f& direction, f
   if (!mgr.RayCollideWorld(
           player.GetTranslation(), player.GetTranslation() + 0.2f * CVector3f::Down(),
           CMaterialFilter::MakeInclude(CMaterialList(kMT_Floor, kMT_Platform)), this)) {
+#ifdef TARGET_PC
+    // Called on every tick of the push while she is off the floor: a per-60 Hz-frame impulse.
+    player.ApplyImpulseWR((PortDebug::TickFrames() * (10.f * player.GetMass())) * CVector3f::Up(),
+                          CAxisAngle::Identity());
+#else
     player.ApplyImpulseWR((10.f * player.GetMass()) * CVector3f::Up(), CAxisAngle::Identity());
+#endif
     player.SetMoveState(NPlayer::kMS_ApplyJump, mgr);
   }
   if (!close_enough(horizontal, CVector3f::Zero(), 0.0001f)) {
