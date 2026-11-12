@@ -55,7 +55,7 @@ case "$HZ" in 72 | 80 | 90 | 96 | 108 | 120 | 144) ;; *) echo "primedframe: PRIM
 case "$EYE" in [0-9][0-9][0-9][0-9]) ;; *) echo "primedframe: PRIMEDFRAME_EYE=$EYE is not a pixel size, using 1728" >&2; EYE=1728 ;; esac
 APPID=${PRIMEDFRAME_APPID:-$SteamAppId}
 SMOOTH=2; [ "${PRIMEDFRAME_SMOOTHING:-0}" = 1 ] && SMOOTH=1   # SteamVR: 1 = force on, 2 = force off
-KEYS=("preferredRefreshRate=$HZ" "motionSmoothingOverride=$SMOOTH" "resolutionOverride=$EYE" "framesToThrottle=0")   # 2 = motion smoothing off; 0 = no half-rate throttle (PrimedFrame 1.0 left 1 on this entry)
+KEYS=("preferredRefreshRate=$HZ" "motionSmoothingOverride=$SMOOTH" "resolutionOverride=$EYE" "framesToThrottle=0" "additionalFramesToPredict=0")   # 2 = motion smoothing off; 0 = no half-rate throttle (PrimedFrame 1.0 left 1 on this entry); 0 extra frames of prediction, as 1.0 set and the 2.0 headset tests ran with
 
 # vrcmd read of one per-app key: prints the value, empty when unset or unreadable.
 vr_get() { env -u LD_PRELOAD timeout 5 "$VRCMD" --settings-int "steam.app.$APPID.$1" 2> /dev/null | sed -n "s/^steam\.app\.$APPID\.$1=//p" | head -n 1; }
