@@ -1109,6 +1109,22 @@ static double PortMsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration< double, std::milli >(std::chrono::steady_clock::now() - start).count();
 }
 
+// PrimedFrame (PF2_IDLE_CAP_US=<us>, Linux default 2000, 0 = no cap): the loader's budget after the
+// seal. It is the frame period less the update and the draw, which leaves out the FIFO and the
+// encode, so a heavy frame still gave the loader 7-8 ms and a busy load list delayed the next
+// packet's pickup. 2 ms is the loader's floor (CMain::AsyncIdle), i.e. its budget in every frame.
+static uint Pf2SealedIdleMicros(uint idleMicros) {
+  static const uint cap = [] {
+    const char* value = std::getenv("PF2_IDLE_CAP_US");
+#if defined(__linux__) && !defined(__ANDROID__)
+    return value != nullptr && *value != '\0' ? static_cast< uint >(std::strtoul(value, nullptr, 10)) : 2000u;
+#else
+    return value != nullptr ? static_cast< uint >(std::strtoul(value, nullptr, 10)) : 0u;
+#endif
+  }();
+  return cap != 0 && idleMicros > cap ? cap : idleMicros;
+}
+
 int CMain::RsMain(int argc, const char* const* argv) {
   PPCSetFpIEEEMode();
   CStopwatch timer;
@@ -1519,8 +1535,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
         if (idleAfterSeal) {
           aurora::phase::set(aurora::phase::Main, "resource loading (AsyncIdle after the seal)");
           const auto sealedIdleStart = std::chrono::steady_clock::now();
-          AsyncIdle(idleMicros);
+          AsyncIdle(Pf2SealedIdleMicros(idleMicros));
           sFrameSpan.Add(kSpanIdle, PortMsSince(sealedIdleStart));
+          aurora::phase::set(aurora::phase::Main, "after the seal (frame end messages, audio)");
         }
         presented = true;
 
