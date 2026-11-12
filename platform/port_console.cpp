@@ -44,6 +44,7 @@
 #include "port_tracker.h"
 #include "port_viewmodel.h"
 #include "touch_pad.h"
+#include "vr/vr_pad.h"
 #include "Kyoto/CResFactory.hpp"
 #include "Kyoto/CSimplePool.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
@@ -4507,6 +4508,15 @@ const CommandSpec kCommands[] = {
      "hint show                  show the hint the game would show next"},
     {"memo", nullptr, [](CStateManager& mgr) { CmdMemo(mgr); },
      "memo <text> | pause <strg> show text as a HUD message, or a string table as the boxed one"},
+    {"autofire", nullptr,
+     [](CStateManager&) {
+       PortVr::VrDevToggleAutoFire();
+       bool on = false;
+       PortVr::VrAutoFireNotice(on);
+       Out("auto fire %s", on ? "on" : "off");
+       Finish();
+     },
+     "autofire                   flip Auto Fire as the Steam Frame shoulder does (its HUD message too)"},
     {"strg", nullptr, [](CStateManager&) { CmdStrg(); },
      "strg <id> [index]          a string table as the game loads it (mods included)"},
     {"language", nullptr, [](CStateManager&) { CmdLanguage(); },

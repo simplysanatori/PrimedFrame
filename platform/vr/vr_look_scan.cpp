@@ -359,8 +359,11 @@ void VrLookTargetUpdate(CStateManager& mgr, const CPlayer& player) noexcept {
     CVector3f origin;
     CVector3f direction;
     const CTransform4f camera = VrRoomScaleCameraTransform(player.GetFirstPersonCameraTransform(mgr));
+    // The scan visor looks through its window, which is centred on the HUD
+    // (CPlayerVisor::DrawScanEffect): the gaze turns with a moved HUD.
     if (!(cannonTargeting ? VrCannonAim(player, camera, origin, direction)
-                         : VrHeadGaze(camera, origin, direction))) {
+          : scanVisor     ? VrHudCentreGaze(camera, origin, direction)
+                          : VrHeadGaze(camera, origin, direction))) {
         return;
     }
     s_look.active = scanVisor;
