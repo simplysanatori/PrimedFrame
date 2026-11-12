@@ -27,11 +27,34 @@ inline int64_t now_ns() noexcept {
       .count();
 }
 
+namespace detail {
+// PF2_PHASE_LOG=1 (diagnostics): the main thread's time per phase, logged by Aurora every few
+// seconds (aurora.cpp). Off: one relaxed load per set().
+inline std::atomic<bool>& accounting() noexcept {
+  static std::atomic<bool> s_on{false};
+  return s_on;
+}
+void account(const char* name, int64_t sinceNs, int64_t nowNs) noexcept;
+// The game thread (marked when accounting starts): other threads' sets of the main slot (the FIFO
+// processor's pipeline compiles) are left out while accounting, so they do not split its phases.
+inline bool& on_main_thread() noexcept {
+  thread_local bool s_main = false;
+  return s_main;
+}
+} // namespace detail
+
 // `name` must outlive the process (a string literal).
 inline void set(Slot slot, const char* name) noexcept {
   State& s = state(slot);
+  const int64_t now = now_ns();
+  if (slot == Main && detail::accounting().load(std::memory_order_relaxed)) {
+    if (!detail::on_main_thread()) {
+      return;
+    }
+    detail::account(s.name.load(std::memory_order_relaxed), s.sinceNs.load(std::memory_order_relaxed), now);
+  }
   s.name.store(name, std::memory_order_relaxed);
-  s.sinceNs.store(now_ns(), std::memory_order_relaxed);
+  s.sinceNs.store(now, std::memory_order_relaxed);
 }
 
 // Sets a phase and puts the previous one back on exit.
