@@ -24,6 +24,7 @@
 
 #ifdef TARGET_PC
 #include "port_pointer.h"
+#include "vr/vr_view.h"
 
 namespace {
 // Port: with pointer menus, a mouse click anywhere turns the scan page, as A
@@ -510,6 +511,20 @@ void CScanDisplay::Draw() const {
   }
   gpRender->SetDepthReadWrite(false, false);
   gpRender->SetViewportOrtho(true, -4096.f, 4096.f);
+#ifdef TARGET_PC
+  // PortVr: with the HUD moved (vr_metroid_hud_offset_*) the dots seek round the scan window
+  // and fly to the panes, both moved with it (CPlayerVisor::DrawScanEffect, CGuiCamera::Draw),
+  // while their places here (ConvertToDrawnScreenSpace) leave that move out: the view moves
+  // the other way.
+  float shiftX = 0.f;
+  float shiftY = 0.f;
+  const bool moved = PortVr::VrScanWindowShift(shiftX, shiftY);
+  if (moved) {
+    CGraphics::SetViewPointMatrix(CTransform4f::Translate(
+        -shiftX * 0.5f * static_cast< float >(CGraphics::GetViewportWidth()), 0.f,
+        -shiftY * 0.5f * static_cast< float >(CGraphics::GetViewportHeight())));
+  }
+#endif
   gpRender->SetBlendMode_AdditiveAlpha();
   CGraphics::SetTevOp(kTS_Stage0, CGraphics::kEnvModulate);
   texture->Load(GX_TEXMAP0, CTexture::kCM_Repeat);
@@ -518,6 +533,11 @@ void CScanDisplay::Draw() const {
   for (int i = 0; i < 4; ++i) {
     mDataDots[i].Draw(color, radius);
   }
+#ifdef TARGET_PC
+  if (moved) {
+    CGraphics::SetViewPointMatrix(CTransform4f::Identity());
+  }
+#endif
 }
 
 float CScanDisplay::GetDownloadStartTime(const int bucket) const {
