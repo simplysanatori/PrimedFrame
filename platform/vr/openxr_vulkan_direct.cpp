@@ -1459,6 +1459,7 @@ public:
         packet.xr_frame.predicted_display_time =
             last_display_time_ + static_cast<XrDuration>(periods_ahead) * PacketPeriod();
         packet.xr_frame.predicted_display_period = period;
+        packet.xr_frame.packet_period = PacketPeriod();
         pf2_paced_ += PacketPeriod() != period ? 1u : 0u;
         packet.xr_frame.should_render = last_should_render_;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
@@ -1513,6 +1514,7 @@ public:
             last_display_time_ + static_cast<XrDuration>(ahead >= 0 ? ahead : 2) * PacketPeriod();
         pf2_paced_ += PacketPeriod() != period ? 1u : 0u;
         packet.xr_frame.predicted_display_period = period;
+        packet.xr_frame.packet_period = PacketPeriod();
         packet.xr_frame.should_render = true;
         for (uint32_t eye = 0; eye < kOpenXREyeCount; ++eye) {
             packet.render_width[eye] = EyeWidth(retained_swapchains_, eye);
@@ -2723,7 +2725,8 @@ private:
              << pf2::g_draw_steps[0].exchange(0, std::memory_order_relaxed)
              << " 1:" << pf2::g_draw_steps[1].exchange(0, std::memory_order_relaxed)
              << " 2+:" << pf2::g_draw_steps[2].exchange(0, std::memory_order_relaxed)
-             << "; sim lock " << pf2::g_locked_draws.exchange(0, std::memory_order_relaxed) << "; alpha by display time "
+             << "; sim lock " << pf2::g_locked_draws.exchange(0, std::memory_order_relaxed) << ", slowed "
+             << pf2::g_slowed_steps.exchange(0, std::memory_order_relaxed) << "; alpha by display time "
              << by_display << ", wall clock " << by_wall << ") | locate after wait ms p50/p95/max "
              << SampleStat(pf2_locate_ms_);
         pf2_fresh_layers_ = 0;
