@@ -704,7 +704,7 @@ void LauncherWindow::OfferFrame1Save() {
   box.setWindowTitle(tr("Bring Over PrimedFrame 1.0 Save"));
   box.setText(tr("A PrimedFrame 1.0 save was found."));
   box.setInformativeText(tr("Bring over its memory card and settings? Save states are not transferred. "
-                            "Transfer on the Setup tab does this later."));
+                            "Use Transfer PrimedGun Memory Card / Settings on the Setup tab to do this later."));
   QPushButton* bring = box.addButton(tr("Bring Over Save"), QMessageBox::AcceptRole);
   box.addButton(tr("Skip"), QMessageBox::RejectRole);
   box.exec();
