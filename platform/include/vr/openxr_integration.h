@@ -127,6 +127,7 @@ struct OpenXRFrameRequest {
     uint64_t serial = 0;
     int64_t predicted_display_time = 0; // XrTime
     int64_t predicted_display_period = 0; // XrDuration (PF2_SIM_LOCK)
+    int64_t packet_period = 0;            // XrDuration per packet, 0 = the period (PF2_SIM_SLOWDOWN)
     uint64_t display_time_nanos = 0;    // steady_clock, 0 when unconvertible
     bool immersive = false;
     uint64_t content_tag = 0;

@@ -218,6 +218,9 @@ static bool sPf2Locked = false;
 // (display period x stride; 0 before the first locked packet).
 static int sPf2LockCarry = 0;
 static double sPf2LockPeriod = 0.0;
+// PF2_SIM_SLOWDOWN: the second of display time being counted and the steps left out in it.
+static int64_t sPf2SlowSecond = 0;
+static int sPf2SlowSteps = 0;
 
 // PF2_SIM_LOCK: the steps for this frame and their period, or -1 when the lock does not step
 // this frame (off, no headset, no new packet: the wall clock then steps the game, at the lock's
@@ -252,6 +255,28 @@ static int Pf2SimLockSteps(double& period) {
         static_cast< double >(request.predicted_display_time - sPf2LockDisplay) / request.predicted_display_period;
     const int most = std::max(stride, static_cast< int >(0.25 / displayPeriod));
     moved = std::clamp(static_cast< int >(std::lround(periods)), 0, most);
+    // PF2_SIM_SLOWDOWN: a packet later than planned (a missed refresh) takes the planned steps
+    // only (one, or the half-rate multiple while SteamVR paces the app), so an overloaded game
+    // slows down instead of spending more CPU time on catch-up steps; on time it is real time.
+    // At most (100 - min %) of a second's steps are left out per second of display time.
+    if (const int minPct = PortVr::pf2::Get().sim_slowdown_min_pct; minPct > 0) {
+      const int64_t packetPeriod =
+          request.packet_period > 0 ? request.packet_period : request.predicted_display_period;
+      const int planned = std::max(
+          1, static_cast< int >(std::lround(static_cast< double >(packetPeriod) / request.predicted_display_period)));
+      if (request.predicted_display_time - sPf2SlowSecond >= 1000000000 ||
+          request.predicted_display_time < sPf2SlowSecond) {
+        sPf2SlowSecond = request.predicted_display_time;
+        sPf2SlowSteps = 0;
+      }
+      const int budget = static_cast< int >(std::lround((100 - minPct) / 100.0 / displayPeriod));
+      const int skip = std::min(moved - planned, budget - sPf2SlowSteps);
+      if (skip > 0) {
+        PortVr::pf2::g_slowed_steps.fetch_add(static_cast< uint32_t >(skip), std::memory_order_relaxed);
+        sPf2SlowSteps += skip;
+        moved -= skip;
+      }
+    }
   }
   if (stride == 1) {
     sPf2LockCarry = 0;
@@ -764,6 +789,7 @@ bool CGameArchitectureSupport::UpdateTicks() {
       }
       break;
     }
+    PortVr::pf2::DevCpuLoad(PortVr::pf2::Get().dev_cpu_step_us);
     PortDebug::BeginFrameMouse();
     // A tick that doesn't reach CStateManager::Update (paused) leaves every
     // actor's snapshot stale, so actors don't blend between old transforms.

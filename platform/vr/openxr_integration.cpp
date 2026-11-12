@@ -941,6 +941,10 @@ private:
                 std::this_thread::sleep_for(std::chrono::milliseconds(stall.dev_stall_ms));
             }
         }
+        // PF2_DEV_CPU_LOAD (tests only): the per-packet part of the game thread's extra CPU time.
+        if (self->published_.load() != nullptr) {
+            pf2::DevCpuLoad(pf2::Get().dev_cpu_frame_us);
+        }
 #endif
         // The packet storage is reused by the XR thread. Claim and copy it
         // under one short lock so cancellation cannot begin the next packet
@@ -2109,6 +2113,7 @@ private:
         OpenXRFrameRequest request{};
         request.predicted_display_time = source.xr_frame.predicted_display_time;
         request.predicted_display_period = source.xr_frame.predicted_display_period;
+        request.packet_period = source.xr_frame.packet_period;
         request.display_time_nanos = published_frame_.frame.displayTimeNanos;
         request.immersive = immersive;
         request.content_tag = policy.content_tag;

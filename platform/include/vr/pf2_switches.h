@@ -3,9 +3,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 // Steam Frame headset switches (PrimedFrame 2.0), read once from the environment.
@@ -59,6 +61,18 @@
 //                         (at most 0.25 s, and no more than the tick budget lets run), so the game
 //                         keeps real time; without a new packet (a stall) the wall clock steps it
 //                         at the display rate. Linux default: on.
+//   PF2_SIM_SLOWDOWN=<min %> | 0  with PF2_SIM_LOCK, a packet that comes later than planned (the
+//                         game missed a refresh) still takes one step (two while SteamVR paces the
+//                         app at half rate): while frames do not fit the game slows down slightly
+//                         instead of catching up with double steps, which cost CPU time when it is
+//                         already short and show as jumps. Once frames fit again each packet is one
+//                         step, which is real time; the time lost is not made up. The game never
+//                         runs slower than <min %> of real time (50..99, 1/on = 75) in any second
+//                         of display time: past that the late packets catch up as before.
+//                         Linux default: 75. [pf2] counts the steps left out ("slowed").
+//   PF2_DEV_CPU_LOAD=<frame_us>[,<step_us>][@<on_s>/<every_s>]  (tests only) busy-waits the game
+//                         thread <frame_us> per packet and <step_us> per simulation step, for <on_s>
+//                         seconds out of every <every_s> (default: always).
 //   PF2_SIM_LOCK_MAX_HZ=<hz>  the highest refresh rate the lock steps once per packet (default 96;
 //                         the game's per-tick logic is checked up to 90 steps a second). Above it
 //                         the lock takes one step of two periods per two packets (60 steps a second
@@ -122,6 +136,8 @@ struct Switches {
     bool sim_lock = false;
     // PF2_SIM_LOCK_MAX_HZ: one step per packet up to this rate, one per two packets above.
     int sim_lock_max_hz = 96;
+    // PF2_SIM_SLOWDOWN: the lowest game speed in percent of real time (0: off, catch up).
+    int sim_slowdown_min_pct = 0;
     bool idle_after_seal = false;
     // PF2_OVERLAP: the margin in us (0: off).
     long overlap_margin_us = 0;
@@ -130,6 +146,11 @@ struct Switches {
     // PF2_DEV_STALL: 0 off.
     int dev_stall_ms = 0;
     int dev_stall_every_s = 10;
+    // PF2_DEV_CPU_LOAD: 0 off.
+    int dev_cpu_frame_us = 0;
+    int dev_cpu_step_us = 0;
+    int dev_cpu_on_s = 0;
+    int dev_cpu_every_s = 0;
     // PF2_HZ: 0 unset.
     int hz = 0;
     std::string alpha_trace;
@@ -153,6 +174,10 @@ struct Switches {
         text += " ahead=" + (ahead_periods >= 0 ? std::to_string(ahead_periods) : std::string("built-in"));
         if (late_locate_ms > 0) text += " late-locate=" + std::to_string(late_locate_ms) + "ms";
         text += sim_lock ? " sim-lock(1 step/packet to " + std::to_string(sim_lock_max_hz) + " Hz)" : " sim-wallclock";
+        if (sim_lock)
+            text += sim_slowdown_min_pct > 0 ? " sim-slowdown(min " + std::to_string(sim_slowdown_min_pct) + "%)"
+                                             : " sim-catch-up";
+        if (dev_cpu_frame_us > 0 || dev_cpu_step_us > 0) text += " dev-cpu-load";
         if (alpha_display) text += " alpha-display";
         if (!end_phase.empty()) {
             text += " end-phase=" + end_phase + (end_phase_us >= 0 ? ":" + std::to_string(end_phase_us) : "") +
@@ -244,6 +269,13 @@ inline const Switches& Get() {
         s.timing_reader = flag("PF2_TIMING_READER", true);
         s.alpha_display = flag("PF2_ALPHA_DISPLAY", false);
         s.sim_lock = flag("PF2_SIM_LOCK", kFrameDefaults);
+        s.sim_slowdown_min_pct = kFrameDefaults ? 75 : 0;
+        if (const char* slow = get("PF2_SIM_SLOWDOWN")) {
+            const long pct = std::strtol(slow, nullptr, 10);
+            s.sim_slowdown_min_pct = std::string(slow) == "on" || pct == 1 ? 75
+                                     : pct >= 50 && pct <= 99            ? static_cast<int>(pct)
+                                                                         : 0;
+        }
         if (const char* max = get("PF2_SIM_LOCK_MAX_HZ")) {
             const long hz = std::strtol(max, nullptr, 10);
             if (hz >= 30 && hz <= 240) {
@@ -269,6 +301,20 @@ inline const Switches& Get() {
             if (std::sscanf(stall, "%d@%d", &ms, &every) >= 1 && ms > 0 && ms <= 2000 && every >= 1) {
                 s.dev_stall_ms = ms;
                 s.dev_stall_every_s = every;
+            }
+        }
+        if (const char* load = get("PF2_DEV_CPU_LOAD")) {
+            int frame = 0, step = 0, on = 0, every = 0;
+            const char* at = std::strchr(load, '@');
+            std::sscanf(load, "%d,%d", &frame, &step);
+            if (at != nullptr && (std::sscanf(at + 1, "%d/%d", &on, &every) != 2 || on < 1 || every < on)) {
+                on = every = 0;
+            }
+            if (frame >= 0 && frame <= 50000 && step >= 0 && step <= 20000) {
+                s.dev_cpu_frame_us = frame;
+                s.dev_cpu_step_us = step;
+                s.dev_cpu_on_s = on;
+                s.dev_cpu_every_s = every;
             }
         }
         if (const char* hz = get("PF2_HZ")) {
@@ -317,6 +363,28 @@ inline std::atomic<uint32_t> g_alpha_wall{0};
 // draws PF2_SIM_LOCK stepped (the rest: no new packet, or the lock off).
 inline std::atomic<uint32_t> g_draw_steps[3] = {};
 inline std::atomic<uint32_t> g_locked_draws{0};
+// PF2_SIM_SLOWDOWN: the steps late packets left out (game time not made up).
+inline std::atomic<uint32_t> g_slowed_steps{0};
+
+// PF2_DEV_CPU_LOAD (tests only): busy-wait us on the calling thread while the load is on (its
+// on/every window counts from the first call).
+inline void DevCpuLoad(int us) noexcept {
+    const auto& s = Get();
+    if (us <= 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (s.dev_cpu_every_s > 0) {
+        static const auto start = now;
+        const auto in = std::chrono::duration_cast<std::chrono::seconds>(now - start).count() % s.dev_cpu_every_s;
+        if (in >= s.dev_cpu_on_s) {
+            return;
+        }
+    }
+    const auto until = now + std::chrono::microseconds(us);
+    while (std::chrono::steady_clock::now() < until) {
+    }
+}
 
 // The widest packed swapchain image (two eyes): SteamVR downsamples images wider than 3458.
 inline constexpr unsigned kPackedMaxWidth = 3456;

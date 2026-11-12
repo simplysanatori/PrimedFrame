@@ -91,6 +91,9 @@ struct OpenXRFrame {
     uint64_t serial = 0;
     XrTime predicted_display_time = 0;
     XrDuration predicted_display_period = 0;
+    // How far the display time moves per packet: the period, or xrWaitFrame's multiple of it while
+    // SteamVR paces the app at half rate (0: unknown, the period).
+    XrDuration packet_period = 0;
     bool should_render = false;
     bool views_valid = false;
     XrViewStateFlags view_state_flags = 0;
