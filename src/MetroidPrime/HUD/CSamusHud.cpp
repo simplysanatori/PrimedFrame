@@ -2276,6 +2276,8 @@ void CSamusHud::UpdateCameraDebugSettings() {
 #ifdef TARGET_PC
 // The port's own messages type silently: the typing sound's counter is held past any text.
 static const float kPortSilentChars = 1.0e9f;
+// A typing clock past the end of any memo (40 characters a second): the text shows whole.
+static const float kPortTypedTime = 3600.f;
 
 void CSamusHud::PortShowMemo(const wchar_t* text, float seconds) {
   // A game message on screen is kept to put back (not when the port's own is up: that one
@@ -2318,8 +2320,9 @@ void CSamusHud::PortUpdateAutoFireMemo(float dt) {
         xPortMemoSetting = true;
         SetMessage(xPortMemoSavedText, CHUDMemoParms(xPortMemoSavedTime, true, false, false));
         xPortMemoSetting = false;
-        CGuiTextSupport& support = x59c_base_textpane_message->TextSupport();
-        support.SetCurTime(support.GetTotalAnimationTime());
+        // Past any typing: SetText dropped the render buffer, so the total animation time
+        // reads 0 until the text is laid out again.
+        x59c_base_textpane_message->TextSupport().SetCurTime(kPortTypedTime);
         x55c_lastSfxChars = kPortSilentChars;
         xPortMemoSavedText = rstl::wstring();
       }
