@@ -12,6 +12,7 @@
 #   PF_RELEASE_OUT       where everything goes (default ~/Games/PrimedFrame/v2/release-out)
 #   PF_BUILD_DIR         build folder (default <repo>/build-portable; see build.sh for its other variables)
 #   PF_KIT               the portable kit (default ~/Games/frame-portable: tools-audit.py and the glibc 2.39 tree)
+#   PF_LICENSE_BUILD     folder whose _deps/*-src hold the fetched packages' licences (default: the build folder)
 #   PF_DAWN_PACKAGE      the patched Dawn package (required for a build)
 # It never installs anything and never touches Steam.
 set -euo pipefail
@@ -49,6 +50,8 @@ for p in "$GAME" "$LAUNCHER"; do
   cp "$p" "$APPDIR/$base"
   objcopy --only-keep-debug "$p" "$OUT/work/symbols/$base.debug"
   strip --strip-debug "$APPDIR/$base"
+  # a cross build may already carry a debuglink: drop it so the one added points at the .debug file made here
+  objcopy --remove-section=.gnu_debuglink "$APPDIR/$base" 2> /dev/null || true
   objcopy --add-gnu-debuglink="$OUT/work/symbols/$base.debug" "$APPDIR/$base"
 done
 # Qt, ICU, OpenSSL and the other libraries the allowlist does not cover, the Qt plugins, qt.conf
@@ -59,7 +62,11 @@ for f in primedframe.sh install.sh uninstall.sh collect-logs.sh steam-cef.py doc
 cp -a "$HERE/art" "$APPDIR/art"
 chmod +x "$APPDIR"/*.sh "$APPDIR"/*.py
 mkdir -p "$APPDIR/licenses"
-"$SRC/tools/collect_licenses.sh" "$B" "$APPDIR/licenses" > /dev/null
+# the fetched packages' notices live in <build>/_deps; a cross build copies only executables back, so
+# PF_LICENSE_BUILD names a folder holding its _deps (default: the build folder). None found = no release.
+LICBUILD=${PF_LICENSE_BUILD:-$B}
+"$SRC/tools/collect_licenses.sh" "$LICBUILD" "$APPDIR/licenses" > /dev/null
+ls "$APPDIR"/licenses/*-src.txt > /dev/null 2>&1 || fail "no fetched-dependency licences (_deps) under $LICBUILD: set PF_LICENSE_BUILD"
 cp "$SRC/LICENSE" "$APPDIR/LICENSE"
 cp "$SRC/NOTICE" "$APPDIR/NOTICE" 2> /dev/null || true
 cp "$HERE/THIRD_PARTY_NOTICES.md" "$APPDIR/THIRD_PARTY_NOTICES.md"
