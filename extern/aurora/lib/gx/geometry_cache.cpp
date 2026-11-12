@@ -16,6 +16,8 @@ struct FreeBlock {
 };
 
 absl::flat_hash_map<Key, Entry> g_entries;
+// Entries per set: free_set of a set with none (most models, CModel's own sets) skips the scan.
+absl::flat_hash_map<u32, u32> g_setEntries;
 std::vector<FreeBlock> g_free; // by offset, neighbours merged
 u64 g_capacity = 0;
 u64 g_residentBytes = 0;
@@ -27,6 +29,7 @@ void publish_gauges() noexcept {
 
 void reset_blocks(u64 capacity) {
   g_entries.clear();
+  g_setEntries.clear();
   g_free.clear();
   g_capacity = capacity;
   g_residentBytes = 0;
@@ -109,6 +112,9 @@ const Entry* insert(const Key& key, u32 stride, std::span<const u8> records, con
   if (const auto old = g_entries.find(key); old != g_entries.end()) {
     drop(old->second);
     g_entries.erase(old);
+    if (const auto count = g_setEntries.find(key.set); count != g_setEntries.end() && --count->second == 0) {
+      g_setEntries.erase(count);
+    }
   }
   u32 offset = 0;
   if (!allocate(bytes, stride, offset)) {
@@ -129,11 +135,17 @@ const Entry* insert(const Key& key, u32 stride, std::span<const u8> records, con
   gfx::queue_geometry_upload(offset, records.data(), bytes);
   g_residentBytes += bytes;
   const auto [it, inserted] = g_entries.emplace(key, std::move(entry));
+  ++g_setEntries[key.set];
   publish_gauges();
   return &it->second;
 }
 
 void free_set(u32 set) noexcept {
+  const auto count = g_setEntries.find(set);
+  if (count == g_setEntries.end()) {
+    return;
+  }
+  g_setEntries.erase(count);
   absl::erase_if(g_entries, [set](const auto& item) {
     if (item.first.set != set) {
       return false;
