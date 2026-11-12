@@ -17,7 +17,9 @@
 
 namespace PortVr::AutoFire {
 
-inline constexpr double kLabelSeconds = 1.5;
+// How long the toggle's HUD message stays up (CSamusHud's memo time, its last
+// second a fade, as the game's own short memos).
+inline constexpr float kLabelSeconds = 2.0f;
 
 // The toggle's state machine, run once a frame. `down` is the shoulder, `allowed`
 // whether the button may act now (setting on, first-person gameplay, no menu).
@@ -26,7 +28,7 @@ struct Toggle {
     bool on = false;
     bool was_down = false;
 
-    // True when `on` changed this call (the label's cue). A press made while
+    // True when `on` changed this call (the message's cue). A press made while
     // not allowed does not count when it becomes allowed still held.
     bool Update(bool down, bool allowed) noexcept {
         const bool edge = down && !was_down;
@@ -44,7 +46,8 @@ struct Toggle {
         return changed;
     }
     void Reset() noexcept { *this = {}; }
-    static const char* Label(bool on) noexcept { return on ? "Auto Fire On" : "Auto Fire Off"; }
+    // The HUD message (CSamusHud::PortUpdateAutoFireMemo), in the HUD memo's font.
+    static const wchar_t* Label(bool on) noexcept { return on ? L"AUTO FIRE ON" : L"AUTO FIRE OFF"; }
 };
 
 // The hold's mode is decided at the trigger's press and kept until its release,

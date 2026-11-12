@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <initializer_list>
 
 using namespace PortVr::AutoFire;
@@ -45,8 +46,8 @@ void TestToggle() {
     t.Update(true, true);
     t.Reset();
     Check(!t.on && !t.was_down, "reset: off at every launch");
-    Check(std::strcmp(Toggle::Label(true), "Auto Fire On") == 0 &&
-              std::strcmp(Toggle::Label(false), "Auto Fire Off") == 0,
+    Check(std::wcscmp(Toggle::Label(true), L"AUTO FIRE ON") == 0 &&
+              std::wcscmp(Toggle::Label(false), L"AUTO FIRE OFF") == 0,
           "labels");
 }
 

@@ -285,9 +285,4 @@ CVector3f VrCannonModelOffsetWorld() noexcept;
 // (vr_menu.cpp). Nothing without OpenXR.
 void VrMenuUpdate() noexcept;
 
-// A short in-headset label on the toast panel (the PF2_LABEL path), upper case,
-// for `seconds`: "Auto Fire On". Game thread; shown only while the VR menu is
-// closed and replaced by the next one. Silent, nothing without OpenXR.
-void VrShowNotice(const char* text, double seconds) noexcept;
-
 } // namespace PortVr

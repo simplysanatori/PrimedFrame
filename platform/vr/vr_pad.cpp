@@ -93,6 +93,8 @@ bool g_in_game_menu = false; // VrNoteInGameMenu, from the game thread like VrPa
 uint32_t g_gameplay_samples = 0;
 AutoFire::Toggle g_autofire;           // game thread only; never saved, off at every launch
 std::atomic<bool> g_autofire_on{false}; // the toggle's state for CPlayerGun
+std::atomic<unsigned> g_autofire_notice{0}; // its changes, for CSamusHud's message
+std::atomic<bool> g_autofire_notice_on{false}; // the state the last change left
 std::atomic<bool> g_custom_layout{false};
 std::atomic<bool> g_owns_motor{false}; // port 0's rumble goes to the headset controllers
 
@@ -601,7 +603,9 @@ void VrPadUpdate(const CStateManager* mgr) noexcept {
         changed |= g_autofire.Update(AutoFireDown(snapshot.controllers, weapon_hand, settings), allowed);
         g_autofire_on.store(g_autofire.on, std::memory_order_relaxed);
         if (changed) {
-            VrShowNotice(AutoFire::Toggle::Label(g_autofire.on), AutoFire::kLabelSeconds);
+            // Shown as a HUD message in the game's font (CSamusHud::PortUpdateAutoFireMemo).
+            g_autofire_notice_on.store(g_autofire.on, std::memory_order_relaxed);
+            g_autofire_notice.fetch_add(1, std::memory_order_release);
         }
     }
 
@@ -691,6 +695,22 @@ VrPadState GetVrPadState() noexcept {
 // The motor claim is the port claim: VrPadUpdate sets it when the controllers
 // take port 0 and clears it with PADClearVirtualStatus when they let go.
 bool VrAutoFireActive() noexcept { return g_autofire_on.load(std::memory_order_relaxed); }
+
+unsigned VrAutoFireNotice(bool& on) noexcept {
+    const unsigned count = g_autofire_notice.load(std::memory_order_acquire);
+    on = g_autofire_notice_on.load(std::memory_order_relaxed);
+    return count;
+}
+
+void VrDevToggleAutoFire() noexcept {
+    // From the last message's state: without headset controllers (the mock runtime) VrPadUpdate
+    // turns the mode itself back off every frame, but the messages still alternate.
+    const bool on = !g_autofire_notice_on.load(std::memory_order_relaxed);
+    g_autofire.on = on;
+    g_autofire_on.store(on, std::memory_order_relaxed);
+    g_autofire_notice_on.store(on, std::memory_order_relaxed);
+    g_autofire_notice.fetch_add(1, std::memory_order_release);
+}
 
 bool VrCustomLayoutActive() noexcept { return g_custom_layout.load(std::memory_order_relaxed); }
 
