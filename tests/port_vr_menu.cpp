@@ -1050,6 +1050,8 @@ void TestLiveSettings() {
 
 void TestFrameLayoutText() {
   PortVrSettings v{};
+  Check(v.auto_fire_button && FrameLayoutRows(v).right[6] == "RIGHT SHOULDER - AUTO FIRE", "frame rows default to auto fire on");
+  v.auto_fire_button = false;
   const LayoutRows standard = FrameLayoutRows(v);
   Check(standard.left.size() == 7 && standard.right.size() == 7 && standard.left[4] == "VIEW - VR SETTINGS" && standard.right[6] == "MENU - NO ACTION", "frame rows");
   Check(standard.left[1] == "D-PAD UP - START/PAUSE" && standard.left[2] == "D-PAD DOWN - MORPH BALL",
