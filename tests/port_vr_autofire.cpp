@@ -46,8 +46,8 @@ void TestToggle() {
     t.Update(true, true);
     t.Reset();
     Check(!t.on && !t.was_down, "reset: off at every launch");
-    Check(std::wcscmp(Toggle::Label(true), L"AUTO FIRE ON") == 0 &&
-              std::wcscmp(Toggle::Label(false), L"AUTO FIRE OFF") == 0,
+    Check(std::wcscmp(Toggle::Label(true), L"&just=center;AUTO FIRE ON") == 0 &&
+              std::wcscmp(Toggle::Label(false), L"&just=center;AUTO FIRE OFF") == 0,
           "labels");
 }
 
