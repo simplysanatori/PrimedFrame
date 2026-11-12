@@ -129,6 +129,9 @@ void BuildAboutTab(TabContext& ctx, QTabWidget* tabs) {
     layout->addSpacing(6);
   };
   addCredit(QObject::tr("Created by"), QObject::tr("Nobbie and iChris4"));
+#if defined(PRIMEDFRAME_LINUX)
+  addCredit(QObject::tr("Steam Frame Port"), QObject::tr("simplysanatori"));
+#endif
   addCredit(QObject::tr("Quest Port & Early VR Development"),
             QObject::tr("iChris4\n"
                         "Creator of Dolphin ReduX for PC and Quest. Ported PrimedGun to Quest, "

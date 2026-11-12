@@ -108,7 +108,12 @@ LauncherWindow::LauncherWindow()
 #endif
   setWindowIcon(QIcon(QStringLiteral(":/PrimedGun.png")));
   setMinimumSize(700, 720);
+#if defined(PRIMEDFRAME_LINUX)
+  // The Steam Frame shows the window on a 16:9 screen: this size fills it.
+  resize(1280, 720);
+#else
   resize(700, 720);
+#endif
 
   auto* page = new QWidget(this);
   page->setStyleSheet(Style::kPage);
@@ -143,7 +148,9 @@ LauncherWindow::LauncherWindow()
   BuildFooter(layout);
   setCentralWidget(page);
 
+#if !defined(PRIMEDFRAME_LINUX)
   restoreGeometry(m_ini.value(QStringLiteral("geometry")).toByteArray());
+#endif
 
   m_forceStopTimer = new QTimer(this);
   m_forceStopTimer->setSingleShot(true);
@@ -277,7 +284,11 @@ void LauncherWindow::BuildFooter(QVBoxLayout* layout) {
   m_footerStatus->setObjectName(QStringLiteral("PrimedGunMuted"));
   // Never wider than the room the credit leaves it.
   m_footerStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+#if defined(PRIMEDFRAME_LINUX)
+  auto* credit = new QLabel(tr("By Nobbie, iChris4 and simplysanatori   v%1").arg(LauncherVersion()));
+#else
   auto* credit = new QLabel(tr("By Nobbie and iChris4   v%1").arg(LauncherVersion()));
+#endif
   credit->setObjectName(QStringLiteral("PrimedGunMuted"));
   footer->addWidget(m_resetAllButton);
   footer->addWidget(m_saveButton);
