@@ -19,6 +19,29 @@
 
 #ifdef TARGET_PC
 #include <algorithm>
+#include <cstdlib>
+
+#include <dolphin/gx/GXAurora.h>
+
+namespace {
+// PF2_MODEL_GEOMETRY_CACHE (Linux default on, 0 = off): a model's surfaces drawn with its own
+// arrays (not a skinning workspace) are cached as resolved geometry on the GPU like the static
+// world's (CCubeSurface::PortCallDisplayList), so the FIFO processor no longer de-indexes and
+// stages their vertices every frame. Each model is its own geometry set, freed with the model.
+// Its sets count from kPortModelSetBase, apart from the world's (CCubeRenderer::AddStaticGeometry).
+constexpr uint kPortModelSetBase = 0x80000000u;
+bool PortModelGeometryCache() {
+  static const bool enabled = [] {
+    const char* value = std::getenv("PF2_MODEL_GEOMETRY_CACHE");
+#if defined(__linux__) && !defined(__ANDROID__)
+    return value == nullptr || *value == '\0' || value[0] == '1';
+#else
+    return value != nullptr && value[0] == '1';
+#endif
+  }();
+  return enabled;
+}
+} // namespace
 #endif
 static bool sIsTextureTimeoutEnabled = true;
 uint CModel::sTotalMemory = 0;
@@ -117,6 +140,12 @@ CModel::CModel(const rstl::auto_ptr< uchar[] >& data, int length, IObjectStore& 
                         (visorFlags ? 1 : 0) | (nbtNormals ? CCubeModel::kNbtNormals : 0) |
                             (nbtNormals && nbtNormals5 ? CCubeModel::kNbtNormals5 : 0), true, -1, positionsSize, normalsSize, colorsSize,
                         floatUvsSize, shortUvsSize);
+#ifdef TARGET_PC
+  if (PortModelGeometryCache()) {
+    static uint sPortModelSets = kPortModelSetBase;
+    x28_modelInstance->PortSetGeometrySet(++sPortModelSets);
+  }
+#endif
   sThisFrameList = this;
   if (x34_next != nullptr) {
     x34_next->x30_prev = this;
@@ -127,6 +156,13 @@ CModel::CModel(const rstl::auto_ptr< uchar[] >& data, int length, IObjectStore& 
 }
 
 CModel::~CModel() {
+#ifdef TARGET_PC
+  // Its cached geometry goes with it. No draw of it follows; the FIFO processor frees the blocks
+  // in stream order, after the draws already queued.
+  if (x28_modelInstance.get() != nullptr && x28_modelInstance->PortGeometrySet() > kPortModelSetBase) {
+    AuroraFreeGeometrySet(x28_modelInstance->PortGeometrySet());
+  }
+#endif
   RemoveFromList();
   RemoveFromTotal(x4_dataLen);
   const int frame = CGraphics::GetFrameCounter();
