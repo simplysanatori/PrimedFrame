@@ -47,7 +47,11 @@ struct Toggle {
     }
     void Reset() noexcept { *this = {}; }
     // The HUD message (CSamusHud::PortUpdateAutoFireMemo), in the HUD memo's font.
-    static const wchar_t* Label(bool on) noexcept { return on ? L"AUTO FIRE ON" : L"AUTO FIRE OFF"; }
+    // The game's own memo strings carry their centring in the text (&just=center;):
+    // the memo pane itself is left-justified, so a raw string needs the same tag.
+    static const wchar_t* Label(bool on) noexcept {
+        return on ? L"&just=center;AUTO FIRE ON" : L"&just=center;AUTO FIRE OFF";
+    }
 };
 
 // The hold's mode is decided at the trigger's press and kept until its release,
