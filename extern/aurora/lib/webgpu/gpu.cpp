@@ -128,14 +128,15 @@ void wgpu_log(wgpu::LoggingType type, wgpu::StringView message) {
 #if defined(WEBGPU_DAWN) && defined(__linux__) && defined(WGPU_DAWN_RENDER_PASS_MULTIVIEW_INIT)
 // Whether this platform asks for Vulkan multiview at all. The Quest always does. On the Steam Frame
 // (desktop Linux, OpenXR on the game's own Vulkan device: vulkan_direct_interop.cpp) it is asked for
-// only with PF2_MULTIVIEW=1 until headset tests confirm it; the vr_multiview setting still applies
+// by default (PF2_MULTIVIEW=0 turns it off); the vr_multiview setting still applies
 // on top (gfx/stereo_multiview.cpp).
 bool multiview_wanted_on_platform() noexcept {
 #if defined(__ANDROID__)
   return true;
 #else
+  // On by default on the Frame (desktop Linux); PF2_MULTIVIEW=0 turns it off.
   const char* value = std::getenv("PF2_MULTIVIEW");
-  return value != nullptr && value[0] == '1';
+  return value == nullptr || *value == '\0' || value[0] == '1';
 #endif
 }
 
@@ -1442,7 +1443,7 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
       if (g_config.xrInterop && g_backendType == wgpu::BackendType::Vulkan &&
           feature == wgpu::FeatureName::DawnMultiview) {
         if (!multiview_wanted_on_platform()) {
-          Log.info("Vulkan multiview available but off: a pass per eye (PF2_MULTIVIEW=1 turns it on)");
+          Log.info("Vulkan multiview available but off: a pass per eye (PF2_MULTIVIEW=0 set)");
         } else if (multiview_unsafe_on_adapter()) {
           Log.info("Vulkan multiview left off on {}: a pass per eye (MP_MULTIVIEW_ADRENO6=1 forces it)",
                    std::string_view{g_adapterInfo.device});

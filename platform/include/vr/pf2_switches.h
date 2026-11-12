@@ -79,6 +79,10 @@
 //   PF2_STALL_REPEAT=<periods> | 0  render-first pacing: when the game hands over no eyes for that
 //                         many display periods (a room load), the last layer is repeated at every
 //                         refresh until it does (Linux default 2; 0: only after 50 ms, as before).
+//   PF2_MULTIVIEW=0 | PF2_MONO_SKIP=0 | PF2_SCENE_COPY_SKIP=0   Linux defaults, all on: both eyes in
+//                         one Vulkan multiview pass; frames showing only the eyes leave out the mono
+//                         image and the scene copy. Read in Aurora (webgpu/gpu.cpp, gfx/recording.cpp,
+//                         gfx/vfx.cpp); 0 turns each off (Windows/Quest: MULTIVIEW as before, skips off).
 //   PF2_DEV_GPU_LOAD_MB=<MB>  tests only: each eye set also fills that many MB on the GPU.
 //   PF2_DEV_STALL=<ms>@<s>  tests only: the game thread stalls <ms> every <s> s at a packet pickup.
 //   PF2_HZ=<hz>           the refresh rate the game asks the headset for (72..144), over the
@@ -129,6 +133,10 @@ struct Switches {
     // PF2_HZ: 0 unset.
     int hz = 0;
     std::string alpha_trace;
+    // Read by Aurora itself; kept here for the startup line (same rule: unset = Frame default).
+    bool multiview = false;
+    bool mono_skip = false;
+    bool scene_copy_skip = false;
     // The PF2_* variables that were set, as given ("PF2_X=v ...").
     std::string env;
 
@@ -157,6 +165,9 @@ struct Switches {
         text += idle_after_seal ? " idle-after-seal" : " idle-before-seal";
         text += overlap_margin_us > 0 ? " overlap(margin " + std::to_string(overlap_margin_us) + " us)" : " no-overlap";
         if (hz > 0) text += " hz=" + std::to_string(hz);
+        text += multiview ? " multiview" : " no-multiview";
+        text += mono_skip ? " mono-skip" : " no-mono-skip";
+        text += scene_copy_skip ? " scene-copy-skip" : " no-scene-copy-skip";
         if (stamp) text += " stamp";
         if (!alpha_trace.empty()) text += " alpha-trace";
         text += kFrameDefaults ? " (Frame defaults" : " (defaults off";
@@ -186,6 +197,9 @@ inline const Switches& Get() {
         s.packed = flag("PF2_STEREO_PACKED", kFrameDefaults);
         s.fence = flag("PF2_RELEASE_FENCE", kFrameDefaults);
         s.stamp = flag("PF2_FRAME_STAMP", false);
+        s.multiview = flag("PF2_MULTIVIEW", kFrameDefaults);
+        s.mono_skip = flag("PF2_MONO_SKIP", kFrameDefaults);
+        s.scene_copy_skip = flag("PF2_SCENE_COPY_SKIP", kFrameDefaults);
         s.ahead_periods = kFrameDefaults ? 1 : -1;
         if (const char* ahead = get("PF2_AHEAD_PERIODS")) {
             char* end = nullptr;

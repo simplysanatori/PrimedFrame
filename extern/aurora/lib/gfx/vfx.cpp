@@ -2184,8 +2184,14 @@ bool g_eyesOnlyFrame = false;
 
 void set_eyes_only_frame(bool eyesOnly) noexcept {
   static const bool enabled = [] {
+    // On by default on the Frame (desktop Linux); PF2_SCENE_COPY_SKIP=0 turns it off.
+#if defined(__linux__) && !defined(__ANDROID__)
+    const char* value = std::getenv("PF2_SCENE_COPY_SKIP");
+    return value == nullptr || *value == '\0' || value[0] == '1';
+#else
     const char* value = std::getenv("PF2_SCENE_COPY_SKIP");
     return value != nullptr && value[0] == '1';
+#endif
   }();
   g_eyesOnlyFrame = enabled && eyesOnly;
 }
