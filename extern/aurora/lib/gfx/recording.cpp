@@ -987,8 +987,14 @@ void log_pass(const FramePacket& frame, const RenderPass& p) {
 
 bool mono_skip_enabled() noexcept {
   static const bool enabled = [] {
+    // On by default on the Frame (desktop Linux); PF2_MONO_SKIP=0 turns it off.
+#if defined(__linux__) && !defined(__ANDROID__)
+    const char* value = std::getenv("PF2_MONO_SKIP");
+    return value == nullptr || *value == '\0' || value[0] == '1';
+#else
     const char* value = std::getenv("PF2_MONO_SKIP");
     return value != nullptr && value[0] == '1';
+#endif
   }();
   return enabled;
 }
