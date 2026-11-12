@@ -76,8 +76,8 @@ void BuildAboutTab(TabContext& ctx, QTabWidget* tabs) {
   layout->addSpacing(8);
   layout->addWidget(ctx.Section(QObject::tr("Useful Information")));
   layout->addWidget(Paragraph(Bullets({
-      QObject::tr("Leave the game from its own menu, by closing its window, or with Stop on the "
-                  "Setup tab. The game saves its settings and shader caches as it exits."),
+      QObject::tr("Leave the game from the VR menu. It saves its settings and shader caches as it "
+                  "exits."),
       QObject::tr("The first start after an update compiles shaders in the background; later starts "
                   "are faster."),
       QObject::tr("Your memory card is in USA/Card A (EUR/Card A for a PAL disc): Game Options > "
@@ -149,7 +149,7 @@ void BuildAboutTab(TabContext& ctx, QTabWidget* tabs) {
   layout->addSpacing(8);
   layout->addWidget(ctx.Section(QObject::tr("Native Port")));
   layout->addWidget(Paragraph(Bullets({
-      QObject::tr("PrimedGun v2 runs on a native PC build of the Metroid Prime decompilation "
+      QObject::tr("PrimedGun v2 is a native port of the Metroid Prime decompilation "
                   "(PrimeDecomp), through Odran's MetroidPrimePort, drawn by Aurora."),
       QObject::tr("Its OpenXR stereo rendering, head tracking and PrimedGun controls build on the "
                   "OpenXR work from Wiicompiled VR."),
