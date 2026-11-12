@@ -195,10 +195,12 @@ struct PortVrSettings {
     // view offset preserved. Body physics always keeps its target-facing basis.
     bool look_lock_no_camera_turn = false;
     float frustum_culling_degrees = 115.0f;
-    float metroid_hud_distance = 0.10f;
+    // The default placement: 0.75 m away (as 1.x), at 0.75 of its authored size, and
+    // 0.15 m below the view's centre (about 11 degrees: offset / distance).
+    float metroid_hud_distance = 0.75f;
     float metroid_hud_size = 0.75f;
     float metroid_hud_offset_up = 0.0f;
-    float metroid_hud_offset_down = 0.0f;
+    float metroid_hud_offset_down = 0.15f;
     float metroid_hud_offset_left = 0.0f;
     float metroid_hud_offset_right = 0.0f;
     bool position_marker_enabled = true;

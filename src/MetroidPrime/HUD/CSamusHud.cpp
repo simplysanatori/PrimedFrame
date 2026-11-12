@@ -57,6 +57,8 @@
 #include "rstl/math.hpp"
 
 #ifdef TARGET_PC
+#include "vr/vr_autofire.h"
+#include "vr/vr_pad.h"
 #include "vr/vr_view.h"
 #include "MetroidPrime/CActor.hpp"
 #include "port_debug.h"
@@ -1530,6 +1532,9 @@ void CSamusHud::Update(float dt, const CStateManager& mgr, uint helmetVis, bool 
                                   : 1.f);
   }
 #endif
+#ifdef TARGET_PC
+  PortUpdateAutoFireMemo(dt);
+#endif
   if (!x550_hudMemoString.null() && x550_hudMemoString->IsLoaded()) {
     SetMessage(rstl::wstring((**x550_hudMemoString)->GetString(x554_hudMemoIdx)),
                x548_hudMemoParms);
@@ -2268,7 +2273,92 @@ void CSamusHud::UpdateCameraDebugSettings() {
   x310_cameraPos = CVector3f(0.f, y, z);
 }
 
+#ifdef TARGET_PC
+// The port's own messages type silently: the typing sound's counter is held past any text.
+static const float kPortSilentChars = 1.0e9f;
+// A typing clock past the end of any memo (40 characters a second): the text shows whole.
+static const float kPortTypedTime = 3600.f;
+
+void CSamusHud::PortShowMemo(const wchar_t* text, float seconds) {
+  // A game message on screen is kept to put back (not when the port's own is up: that one
+  // already holds whatever it covered).
+  if (xPortMemoTime <= 0.f && !xPortMemoSaved && x59c_base_textpane_message->GetIsVisible() &&
+      !x598_base_basewidget_message->GetIsVisible() &&
+      x59c_base_textpane_message->TextSupport().GetText().size() > 0) {
+    xPortMemoSavedText = x59c_base_textpane_message->TextSupport().GetText();
+    xPortMemoSavedTime = x558_messageTextTime;
+    xPortMemoSaved = true;
+  }
+  xPortMemoSetting = true;
+  SetMessage(rstl::wstring(text), CHUDMemoParms(seconds, true, false, false));
+  xPortMemoSetting = false;
+  x55c_lastSfxChars = kPortSilentChars;
+  xPortMemoTime = seconds;
+}
+
+void CSamusHud::PortUpdateAutoFireMemo(float dt) {
+  bool on = false;
+  const uint count = PortVr::VrAutoFireNotice(on);
+  if (!xPortAutoFireSeenValid) {
+    xPortAutoFireSeenValid = true;
+    xPortAutoFireSeen = count;
+  }
+  if (count != xPortAutoFireSeen) {
+    xPortAutoFireSeen = count;
+    xPortAutoFirePending = true;
+    xPortAutoFireOn = on;
+    xPortAutoFirePendingAge = 0.f;
+  }
+  if (xPortMemoTime > 0.f) {
+    xPortMemoTime -= dt;
+    if (xPortMemoTime <= 0.f) {
+      xPortMemoTime = 0.f;
+      // Put back the game message it covered, whole (no typing again), for the time it had
+      // left. Without one, the message's own time runs out with it and it fades.
+      if (xPortMemoSaved) {
+        xPortMemoSaved = false;
+        xPortMemoSetting = true;
+        SetMessage(xPortMemoSavedText, CHUDMemoParms(xPortMemoSavedTime, true, false, false));
+        xPortMemoSetting = false;
+        // Past any typing: SetText dropped the render buffer, so the total animation time
+        // reads 0 until the text is laid out again.
+        x59c_base_textpane_message->TextSupport().SetCurTime(kPortTypedTime);
+        x55c_lastSfxChars = kPortSilentChars;
+        xPortMemoSavedText = rstl::wstring();
+      }
+    }
+  }
+  if (xPortAutoFirePending) {
+    // A hint memo's box (x598) takes no other message while it is up (SetMessage): wait a little.
+    if (x598_base_basewidget_message->GetIsVisible()) {
+      xPortAutoFirePendingAge += dt;
+      if (xPortAutoFirePendingAge > 3.f) {
+        xPortAutoFirePending = false;
+      }
+    } else {
+      xPortAutoFirePending = false;
+      PortShowMemo(PortVr::AutoFire::Toggle::Label(xPortAutoFireOn), PortVr::AutoFire::kLabelSeconds);
+    }
+  }
+}
+#endif
+
 void CSamusHud::SetMessage(const rstl::wstring& text, const CHUDMemoParms& info) {
+#ifdef TARGET_PC
+  if (!xPortMemoSetting) {
+    // A game message: the port's own gives way, and nothing it covered comes back. A line the
+    // game adds goes after what the game itself showed.
+    if (xPortMemoTime > 0.f && !info.IsClearMemoWindow()) {
+      x59c_base_textpane_message->TextSupport().SetText(
+          xPortMemoSaved ? xPortMemoSavedText : rstl::wstring_l(L""));
+    }
+    xPortMemoTime = 0.f;
+    xPortMemoSaved = false;
+    if (x55c_lastSfxChars >= kPortSilentChars) {
+      x55c_lastSfxChars = x59c_base_textpane_message->TextSupport().GetNumCharactersPrinted();
+    }
+  }
+#endif
   bool visible = x598_base_basewidget_message->GetIsVisible();
   if (!visible || info.IsHintMemo()) {
     if (info.IsFadeOutOnly()) {

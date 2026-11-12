@@ -46,6 +46,11 @@ CTransform4f VrHeadFacingTransform(const CTransform4f& cameraXf) noexcept;
 // (the game camera plus the head's offset from the tracking base) along its
 // forward, lean back included. False when not immersive or the head is unknown.
 bool VrHeadGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& direction) noexcept;
+// As VrHeadGaze, but toward the head-locked HUD's centre: with the HUD moved
+// (vr_metroid_hud_offset_*) the gaze turns with it, so the scan visor picks
+// what its window, centred on that HUD, frames. The head's own forward when
+// the HUD is not moved.
+bool VrHudCentreGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& direction) noexcept;
 
 // The eyes' facing in the world, as VrHeadGaze sees it (lean back included),
 // kept upright: `cameraXf`'s rotation with the head's yaw and pitch composed
@@ -164,6 +169,18 @@ void VrHeadLockedScales(float& xy, float& depth) noexcept;
 // camera in game units. Off, nothing moves. Game thread.
 void VrSetHudOffsetActive(bool active) noexcept;
 void VrHudCameraShift(float depth, float& x, float& z) noexcept;
+// The same offsets as a move of a HUD camera's whole picture, in its view's
+// NDC (x right, y up), for 2D draws that should stay registered with the
+// moved HUD: the camera's view spans tanHalfWidth / tanHalfHeight. Zero when
+// nothing moves or the tangents are unknown.
+void VrHudOffsetNdc(float tanHalfWidth, float tanHalfHeight, float& x, float& y) noexcept;
+// The scan visor's 2D layer (its window, the window's shield and the data dots)
+// is centred on the HUD: CInGameGuiManager::Draw sets the base HUD camera's
+// picture shift (VrHudOffsetNdc, zero in the morph ball's HUD) once a frame
+// before the visor draws, CPlayerVisor and CScanDisplay read it back. False
+// when it is zero. Game thread.
+void VrSetScanWindowShift(float ndcX, float ndcY) noexcept;
+bool VrScanWindowShift(float& ndcX, float& ndcY) noexcept;
 // Every eye's depth back to the far plane (an orthographic quad through a
 // far-only depth window, depth written, no colour), keeping the projection,
 // view and model. Draw it on a route that covers the whole eye (WORLD).
@@ -267,10 +284,5 @@ CVector3f VrCannonModelOffsetWorld() noexcept;
 // hover and clicks and hands Aurora the menu's image when it changes
 // (vr_menu.cpp). Nothing without OpenXR.
 void VrMenuUpdate() noexcept;
-
-// A short in-headset label on the toast panel (the PF2_LABEL path), upper case,
-// for `seconds`: "Auto Fire On". Game thread; shown only while the VR menu is
-// closed and replaced by the next one. Silent, nothing without OpenXR.
-void VrShowNotice(const char* text, double seconds) noexcept;
 
 } // namespace PortVr

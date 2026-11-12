@@ -212,15 +212,15 @@ void TestClicks() {
 
   // Numeric: right half up, left half down.
   Click(s, v, view, kPlusX, RowY(kCalibrationTab, 1), now, actions);
-  Check(s.selected == 1 && Near(v.metroid_hud_distance, 0.15f), "HUD distance up");
+  Check(s.selected == 1 && Near(v.metroid_hud_distance, 0.80f), "HUD distance up");
   Click(s, v, view, kMinusX, RowY(kCalibrationTab, 1), now, actions);
-  Check(Near(v.metroid_hud_distance, 0.10f), "HUD distance down");
+  Check(Near(v.metroid_hud_distance, 0.75f), "HUD distance down");
   // Toggle anywhere else on the row.
   Click(s, v, view, kLabelX, RowY(kCalibrationTab, 0), now, actions);
   Check(!v.cinematic_screen_enabled, "cinema screen toggle");
   // HUD VERTICAL keeps up and down apart.
   Click(s, v, view, kMinusX, RowY(kCalibrationTab, 3), now, actions);
-  Check(Near(v.metroid_hud_offset_down, 0.01f) && Near(v.metroid_hud_offset_up, 0.0f), "HUD vertical split");
+  Check(Near(v.metroid_hud_offset_down, 0.16f) && Near(v.metroid_hud_offset_up, 0.0f), "HUD vertical split");
 
   // Pages: PREVIOUS does nothing on page 1, NEXT turns to page 2 (and lets go
   // of a pending reset); page 3 holds the X-ray blur toggle.

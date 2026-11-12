@@ -278,6 +278,21 @@ private:
   // made on first use.
   rstl::single_ptr< CHudRadialSelect > xPortRadial[2];
   float PortRadialOpen() const;
+  // The Auto Fire toggle's message (PortVr::VrAutoFireNotice) as a HUD memo, in the memo's own
+  // font and place, for a short time. A game message it covers comes back when it ends; a game
+  // message that arrives meanwhile replaces it at once. Run once an Update.
+  void PortUpdateAutoFireMemo(float dt);
+  void PortShowMemo(const wchar_t* text, float seconds);
+  uint xPortAutoFireSeen = 0;          // the last toggle count shown
+  bool xPortAutoFireSeenValid = false; // set at the first Update: toggles before the HUD are not shown
+  bool xPortAutoFirePending = false;   // a toggle waiting for the hint box (x598) to close
+  bool xPortAutoFireOn = false;
+  float xPortAutoFirePendingAge = 0.f;
+  float xPortMemoTime = 0.f;           // > 0 while the port's message is up
+  bool xPortMemoSetting = false;       // SetMessage is showing the port's message (or putting the covered one back)
+  bool xPortMemoSaved = false;         // a covered game message to put back
+  rstl::wstring xPortMemoSavedText;
+  float xPortMemoSavedTime = 0.f;      // its x558_messageTextTime when covered
 #endif
 
   rstl::reserved_vector< bool, 4 > BuildPlayerHasVisors(const CStateManager& mgr) const;

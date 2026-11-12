@@ -448,6 +448,21 @@ static bool PortScanWindowPointer(float& x, float& y) {
                                                 y);
 }
 
+// The window's centre in the same units (half-view, +y down): the pointer's, else the HUD's own
+// centre when the HUD is moved (vr_metroid_hud_offset_*: PortVr::VrScanWindowShift, set by
+// CInGameGuiManager::Draw from the shift CGuiCamera::Draw gives the HUD's picture), so the
+// window, its shield and the data dots stay centred on the HUD. False at the view's centre.
+static bool PortScanWindowOffset(float& x, float& y) {
+  if (PortScanWindowPointer(x, y))
+    return true;
+  float ndcX = 0.f;
+  float ndcY = 0.f;
+  const bool moved = PortVr::VrScanWindowShift(ndcX, ndcY);
+  x = ndcX;
+  y = -ndcY;
+  return moved;
+}
+
 // Same area as retail's window, held while the pointer is locked so the window keeps its shape.
 // Only the idle (search) window takes it: as the window grows to its scan size it returns to
 // retail's, which sits above the scan text box. 0 = idle size, 1 = scan size (UpdateScanWindow).
@@ -479,7 +494,7 @@ bool CPlayerVisor::PortScanZoom(const CStateManager& mgr, float& zoom, int& widt
   // per eye. The headset's window keeps the retail copy (unmagnified with vr_scan_zoom off).
   // PortDebug::SharpScanWindow() is already off while the headset runs (debug_ui.cpp);
   // this keeps the immersive case safe on its own.
-  if (!PortDebug::SharpScanWindow() || PortVr::VrImmersive() || PortScanWindowPointer(pointerX, pointerY) ||
+  if (!PortDebug::SharpScanWindow() || PortVr::VrImmersive() || PortScanWindowOffset(pointerX, pointerY) ||
       mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Scan ||
       mgr.GetPlayerState()->GetVisorTransitionFactor() <= 0.f ||
       x108_newScanPane.GetObject() == nullptr) {
@@ -736,7 +751,10 @@ void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
   const float windowAlpha = trilogy ? windowOpen * transFactor : transFactor;
   float pointerX = 0.f;
   float pointerY = 0.f;
-  const bool portPointer = PortScanWindowPointer(pointerX, pointerY);
+  // The pointer, or the moved HUD's centre (PortScanWindowOffset). In the headset the copy
+  // below is taken through the head-locked plane, so the moved window still shows (and,
+  // with vr_scan_zoom, magnifies) what lies behind it in each eye.
+  const bool portPointer = PortScanWindowOffset(pointerX, pointerY);
   // The window's centre in pixels from the view's centre (+y down).
   const float portShiftX = pointerX * 0.5f * static_cast< float >(vpWidth);
   const float portShiftY = pointerY * 0.5f * static_cast< float >(vpHeight);
@@ -786,7 +804,8 @@ void CPlayerVisor::DrawScanEffect(const CStateManager& mgr,
 #ifdef TARGET_PC
   if (!windowOn)
     return;
-  // Moving the view the other way draws the window and its frame around the pointer.
+  // Moving the view the other way draws the window and its frame around the pointer (or the
+  // moved HUD's centre).
   if (portPointer)
     CGraphics::SetViewPointMatrix(CTransform4f::Translate(-portShiftX, 0.f, portShiftY));
 #endif
@@ -1204,7 +1223,7 @@ bool CPlayerVisor::DrawScanObjectIndicators(const CStateManager& mgr) const {
   // The shield masks the reticle lines outside the window by depth: it moves with the window.
   float pointerX = 0.f;
   float pointerY = 0.f;
-  if (PortScanWindowPointer(pointerX, pointerY))
+  if (PortScanWindowOffset(pointerX, pointerY))
     CGraphics::SetViewPointMatrix(CTransform4f::Translate(
         -pointerX * 0.5f * static_cast< float >(CGraphics::GetViewportWidth()), 0.f,
         pointerY * 0.5f * static_cast< float >(CGraphics::GetViewportHeight())));
