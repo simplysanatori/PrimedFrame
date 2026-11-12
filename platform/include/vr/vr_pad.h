@@ -101,6 +101,13 @@ bool VrCustomLayoutActive() noexcept;
 // trigger repeats the beam's shots instead of charging. Off at every launch and
 // whenever the controllers let go. Read by CPlayerGun on the game thread.
 bool VrAutoFireActive() noexcept;
+// Counts the toggle's changes (made by the shoulder, or the setting turning it
+// off), with the state the last one left in `on`: CSamusHud shows a new count
+// as a HUD message. Lock-free, any thread.
+unsigned VrAutoFireNotice(bool& on) noexcept;
+// Developer hook (the console's "autofire"): flips the toggle as a shoulder
+// press would, for the mock runtime, which has no shoulder. Game thread.
+void VrDevToggleAutoFire() noexcept;
 // Called only when CPlayer can accept a visor change, on an actual simulation tick.
 int VrTakeWristVisorRequest() noexcept;
 
