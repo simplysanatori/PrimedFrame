@@ -3,14 +3,17 @@
 // PrimedGun.exe: the PrimedGun launcher for the native Metroid Prime port.
 //
 // PrimedGun --frame-start (Steam Frame build, Linux): with a valid disc in
-// port_settings.ini (or MP_DISC) the game is started at once, straight into VR,
-// in place of this process; without one the launcher window opens.
+// port_settings.ini, the launcher's own selected disc (primedgun_launcher.ini) or MP_DISC
+// the game is started at once, straight into VR, in place of this process; without one
+// the launcher window opens.
 
 #include "ui/launcher_window.h"
 #include "ui/style.h"
 
 #include <QApplication>
+#include <QFileInfo>
 #include <QIcon>
+#include <QSettings>
 #include <QStyleFactory>
 
 #if defined(__linux__)
@@ -37,8 +40,19 @@ void StartGameInPlace() {
   const fs::path folder = exe.parent_path();
   const fs::path game = folder / "metroid_prime_port";
   const std::string& user = PortPaths::UserFolder();
-  const PrimedGunLauncher::FrameStart start = PrimedGunLauncher::DecideFrameStart(
+  PrimedGunLauncher::FrameStart start = PrimedGunLauncher::DecideFrameStart(
       fs::path(std::u8string(user.begin(), user.end())) / "port_settings.ini", std::getenv("MP_DISC"));
+  if (!start.startGame) {
+    // Play keeps the disc in the launcher's own settings (the game saves disc_path only
+    // when its own picker chose it), so a disc picked in the launcher counts too.
+    const QSettings launcherIni(QString::fromStdString(user) + QStringLiteral("/primedgun_launcher.ini"),
+                                QSettings::IniFormat);
+    const QString disc = launcherIni.value(QStringLiteral("selected_disc")).toString();
+    if (!disc.isEmpty() && QFileInfo(disc).isFile()) {
+      start.startGame = true;
+      start.disc = disc.toStdString();
+    }
+  }
   if (!start.startGame || !fs::exists(game, ec)) {
     return;
   }
