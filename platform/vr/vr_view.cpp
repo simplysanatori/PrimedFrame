@@ -267,7 +267,11 @@ CTransform4f VrHeadFacingTransform(const CTransform4f& cameraXf) noexcept {
     return facing;
 }
 
-bool VrHeadGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& direction) noexcept {
+namespace {
+// VrHeadGaze along `forward`, a direction in the head's own space (Prime axes:
+// x right, y forward, z up).
+bool HeadGazeAlong(const CTransform4f& cameraXf, const CVector3f& forward, CVector3f& origin,
+                   CVector3f& direction) noexcept {
     if (!ImmersiveNow()) {
         return false;
     }
@@ -281,7 +285,7 @@ bool VrHeadGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& dire
     const float leanBack = GetVrSettings().lean_back_degrees * kDegreesToRadians;
     const CQuaternion leanInverse = AxisQuaternion(1.f, 0.f, 0.f, -leanBack);
     const CQuaternion head = (leanInverse * PrimeFromXr(request.head_orientation)).BuildNormalized();
-    direction = cameraXf.Rotate(head.Transform(CVector3f(0.f, 1.f, 0.f)));
+    direction = cameraXf.Rotate(head.Transform(forward));
     if (!direction.CanBeNormalized()) {
         return false;
     }
@@ -297,6 +301,20 @@ bool VrHeadGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& dire
     }
     origin = cameraXf.GetTranslation() + cameraXf.Rotate(offset);
     return true;
+}
+} // namespace
+
+bool VrHeadGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& direction) noexcept {
+    return HeadGazeAlong(cameraXf, CVector3f(0.f, 1.f, 0.f), origin, direction);
+}
+
+bool VrHudCentreGaze(const CTransform4f& cameraXf, CVector3f& origin, CVector3f& direction) noexcept {
+    // The offsets move the HUD by the angle offset / distance (VrHudCameraShift).
+    const PortVrSettings settings = GetVrSettings();
+    const float distance = settings.metroid_hud_distance;
+    const float right = distance > 0.f ? (settings.metroid_hud_offset_right - settings.metroid_hud_offset_left) / distance : 0.f;
+    const float up = distance > 0.f ? (settings.metroid_hud_offset_up - settings.metroid_hud_offset_down) / distance : 0.f;
+    return HeadGazeAlong(cameraXf, CVector3f(right, 1.f, up), origin, direction);
 }
 
 CTransform4f VrHeadViewTransform(const CTransform4f& cameraXf) noexcept {
@@ -566,6 +584,37 @@ void VrHudCameraShift(float depth, float& x, float& z) noexcept {
     const float perMetre = depth / (settings.metroid_hud_size * settings.metroid_hud_distance);
     x = -(settings.metroid_hud_offset_right - settings.metroid_hud_offset_left) * perMetre;
     z = -(settings.metroid_hud_offset_up - settings.metroid_hud_offset_down) * perMetre;
+}
+
+void VrHudOffsetNdc(float tanHalfWidth, float tanHalfHeight, float& x, float& y) noexcept {
+    x = 0.f;
+    y = 0.f;
+    const PortVrSettings settings = GetVrSettings();
+    const float scale = settings.metroid_hud_size * settings.metroid_hud_distance;
+    if (!(tanHalfWidth > 0.f) || !(tanHalfHeight > 0.f) || !(scale > 0.f)) {
+        return;
+    }
+    // VrHudCameraShift moves the camera by -offset * depth / scale at the HUD body's
+    // depth: its contents there move by offset / scale over depth, which is
+    // offset / (scale * tanHalf) of the view's half width or height.
+    x = (settings.metroid_hud_offset_right - settings.metroid_hud_offset_left) / (scale * tanHalfWidth);
+    y = (settings.metroid_hud_offset_up - settings.metroid_hud_offset_down) / (scale * tanHalfHeight);
+}
+
+namespace {
+float s_scanWindowShiftX = 0.f; // game thread only
+float s_scanWindowShiftY = 0.f;
+} // namespace
+
+void VrSetScanWindowShift(float ndcX, float ndcY) noexcept {
+    s_scanWindowShiftX = ndcX;
+    s_scanWindowShiftY = ndcY;
+}
+
+bool VrScanWindowShift(float& ndcX, float& ndcY) noexcept {
+    ndcX = s_scanWindowShiftX;
+    ndcY = s_scanWindowShiftY;
+    return ndcX != 0.f || ndcY != 0.f;
 }
 
 void VrResetEyeDepth() noexcept {

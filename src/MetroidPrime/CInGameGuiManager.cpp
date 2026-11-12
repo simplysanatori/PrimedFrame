@@ -497,11 +497,21 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
     // about twenty units from their camera), so they stay registered with the
     // HUD; the window's framebuffer copy is taken from each eye through that
     // plane, so it magnifies what is straight ahead of the head.
+    // The HUD's placement offsets (vr_metroid_hud_offset_*) move the HUD's picture
+    // (CGuiCamera::Draw), not this plane: the visor's 2D layer moves by the same
+    // shift of the base HUD camera's picture, so the window stays centred on the HUD.
+    float scanShiftX = 0.f;
+    float scanShiftY = 0.f;
     if (x14c_basehud_camera != nullptr) {
       static const float kHudBodyDepth = 20.f;
       AuroraSetStereoHeadLockedPlane(x14c_basehud_camera->GetDrawTanHalfWidth(),
                                      x14c_basehud_camera->GetDrawTanHalfHeight(), kHudBodyDepth);
+      if (!x34_samusHud->PortVrBallHudShown()) {
+        PortVr::VrHudOffsetNdc(x14c_basehud_camera->GetDrawTanHalfWidth(),
+                               x14c_basehud_camera->GetDrawTanHalfHeight(), scanShiftX, scanShiftY);
+      }
     }
+    PortVr::VrSetScanWindowShift(scanShiftX, scanShiftY);
 #endif
     CGraphics::SetDepthRange(1.f / 64.f, 1.f / 32.f);
     const bool scanVisor = mgr.GetPlayerState()->GetActiveVisor(mgr) == CPlayerState::kPV_Scan;
