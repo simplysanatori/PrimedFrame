@@ -144,7 +144,7 @@ struct PortVrSettings {
     float rumble_intensity = 1.0f;
     RumbleHand rumble_hand = RumbleHand::Split;
     bool grip_inputs_enabled = true;
-    bool auto_fire_button = false; // off by default; on, the Steam Frame shoulder toggles Auto Fire (the mode itself is never saved)
+    bool auto_fire_button = true; // on by default; on, the Steam Frame shoulder toggles Auto Fire (the mode itself is never saved)
     bool grip_inputs_use_trackpad = false;
     float trackpad_press_threshold = 0.5f;
     float index_grip_press_threshold = 0.5f;
@@ -195,14 +195,14 @@ struct PortVrSettings {
     // view offset preserved. Body physics always keeps its target-facing basis.
     bool look_lock_no_camera_turn = false;
     float frustum_culling_degrees = 115.0f;
-    // The default placement: 0.75 m away (as 1.x), at 0.75 of its authored size, and
-    // 0.15 m below the view's centre (about 11 degrees: offset / distance).
+    // The default placement: 0.75 m away (as 1.x), at 0.75 of its authored size,
+    // 0.06 m below and 0.06 m right of the view's centre (about 4.6 degrees each: offset / distance).
     float metroid_hud_distance = 0.75f;
     float metroid_hud_size = 0.75f;
     float metroid_hud_offset_up = 0.0f;
-    float metroid_hud_offset_down = 0.15f;
+    float metroid_hud_offset_down = 0.06f;
     float metroid_hud_offset_left = 0.0f;
-    float metroid_hud_offset_right = 0.0f;
+    float metroid_hud_offset_right = 0.06f;
     bool position_marker_enabled = true;
     bool xr_dpad_enabled = true;
     float xr_dpad_head_radius = 0.28f;

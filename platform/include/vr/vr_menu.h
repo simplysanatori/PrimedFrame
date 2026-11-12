@@ -1536,7 +1536,7 @@ inline void ResetController(PortVrSettings& v) {
     v.rumble_intensity = 1.0f;
     v.rumble_hand = RumbleHand::Split;
     v.grip_inputs_enabled = true;
-    v.auto_fire_button = false;
+    v.auto_fire_button = true;
     v.grip_inputs_use_trackpad = false;
     v.trackpad_press_threshold = 0.5f;
     v.index_grip_press_threshold = 0.5f;

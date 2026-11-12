@@ -22,8 +22,8 @@ stick selections in the editor replace the standard stick assignment.
   for Combat (up), Thermal (down), Scan (left) and X-ray (right). Its right X/Y
   buttons and shoulders are separate assignable inputs. The native profile is
   used when the runtime advertises XR_VALVE_frame_controller_interaction.
-- **Auto Fire (Steam Frame):** off by default; turn on **Controller > Auto Fire
-  Button** in the VR menu and the weapon hand's shoulder (right, or left when
+- **Auto Fire (Steam Frame):** on by default (**Controller > Auto Fire Button**
+  in the VR menu turns it off); the weapon hand's shoulder (right, or left when
   left-handed) toggles Auto Fire in first-person play, with a short HUD message
   (AUTO FIRE ON / AUTO FIRE OFF) where the game shows its own. While it is on, holding the fire trigger repeats the beam's shots at its
   own cooldown and never charges; missiles, grapple, scan visor and the Morph Ball
