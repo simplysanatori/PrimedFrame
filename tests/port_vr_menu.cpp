@@ -220,7 +220,7 @@ void TestClicks() {
   Check(!v.cinematic_screen_enabled, "cinema screen toggle");
   // HUD VERTICAL keeps up and down apart.
   Click(s, v, view, kMinusX, RowY(kCalibrationTab, 3), now, actions);
-  Check(Near(v.metroid_hud_offset_down, 0.16f) && Near(v.metroid_hud_offset_up, 0.0f), "HUD vertical split");
+  Check(Near(v.metroid_hud_offset_down, 0.07f) && Near(v.metroid_hud_offset_up, 0.0f), "HUD vertical split");
 
   // Pages: PREVIOUS does nothing on page 1, NEXT turns to page 2 (and lets go
   // of a pending reset); page 3 holds the X-ray blur toggle.
@@ -280,19 +280,19 @@ void TestClicks() {
   v.rumble_hand = RumbleHand::Right;
   Click(s, v, view, kLabelX, RowY(kControlTab, 2), now, actions);
   Check(v.rumble_hand == RumbleHand::Split, "rumble cycles back to split");
-  // AUTO FIRE BUTTON: RIGHT SHOULDER (LEFT when left-handed) or OFF, off by default.
-  Check(!v.auto_fire_button && BuildRows(s, v, view)[8].label == "AUTO FIRE BUTTON" &&
-            BuildRows(s, v, view)[8].value == "OFF", "auto fire button default off");
-  Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
-  Check(v.auto_fire_button && BuildRows(s, v, view)[8].value == "RIGHT SHOULDER", "auto fire button on");
+  // AUTO FIRE BUTTON: RIGHT SHOULDER (LEFT when left-handed) or OFF, on by default.
+  Check(v.auto_fire_button && BuildRows(s, v, view)[8].label == "AUTO FIRE BUTTON" &&
+            BuildRows(s, v, view)[8].value == "RIGHT SHOULDER", "auto fire button default on");
   v.use_right_hand = false;
   Check(BuildRows(s, v, view)[8].value == "LEFT SHOULDER", "auto fire button mirrors for the left hand");
   v.use_right_hand = true;
   Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
   Check(!v.auto_fire_button && BuildRows(s, v, view)[8].value == "OFF", "auto fire button off");
-  v.auto_fire_button = true;
+  Click(s, v, view, kLabelX, RowY(kControlTab, 8), now, actions);
+  Check(v.auto_fire_button && BuildRows(s, v, view)[8].value == "RIGHT SHOULDER", "auto fire button on");
+  v.auto_fire_button = false;
   ResetController(v);
-  Check(!v.auto_fire_button, "reset controller restores auto fire off");
+  Check(v.auto_fire_button, "reset controller restores auto fire on");
   v.rumble_hand = RumbleHand::Both;
   // The control tab's second page: VISOR GESTURE, then back.
   Click(s, v, view, kNextX, kPageY, now, actions);

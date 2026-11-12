@@ -88,9 +88,9 @@ void TestRefire() {
 
 void TestSettingDefault() {
     PortVr::PortVrSettings v{};
-    Check(!v.auto_fire_button, "the Auto Fire Button setting is off by default");
-    v.auto_fire_button = true;
-    Check(v.auto_fire_button, "the Auto Fire Button setting can be turned on");
+    Check(v.auto_fire_button, "the Auto Fire Button setting is on by default");
+    v.auto_fire_button = false;
+    Check(!v.auto_fire_button, "the Auto Fire Button setting can be turned off");
 }
 } // namespace
 
