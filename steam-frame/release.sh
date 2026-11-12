@@ -1,8 +1,10 @@
 #!/bin/bash
 # Builds the PrimedFrame release for the Steam Frame, checks it, and packs it:
 #   primedframe-<version>-linux-arm64.tar.gz           the app folder (install.sh at its top level: Frametanium runs it)
-#   primedframe-<version>-linux-arm64-symbols.tar.gz   the debug symbols of the game and the launcher (for crash reports)
-#   SHA256SUMS                                          of both
+#   primedframe-<version>-framedrop-linux-arm64.zip     the same app folder plus run.sh (FrameDrop runs it: install.sh, then the game)
+#   primedframe.framedrop.json                          FrameDrop's manifest (the zip's GitHub release url and sha256)
+#   SHA256SUMS                                          of the tarball, the zip and the manifest
+# The debug symbols are made (the binaries' debuglinks point at them) but kept in work/symbols, not packed or published.
 # It fails, and writes no release, unless every check passes: check-bundle.sh against all four SteamOS builds in
 # tools/host-sonames, the audit (glibc symbols up to 2.39, nothing unbundled), and the glibc 2.39 loader tests.
 #   steam-frame/release.sh [--no-build]
@@ -42,7 +44,7 @@ LAUNCHER=$B/PrimedGun
 [ -x "$LAUNCHER" ] || fail "no $LAUNCHER"
 
 # ---- 2. lay out the app folder ---------------------------------------------------------------------------------------
-rm -rf "$OUT/work" "$OUT/$NAME.tar.gz" "$OUT/$NAME-symbols.tar.gz" "$OUT/SHA256SUMS"
+rm -rf "$OUT/work" "$OUT/$NAME.tar.gz" "$OUT/$NAME-symbols.tar.gz" "$OUT/primedframe-$VERSION-framedrop-linux-arm64.zip" "$OUT/primedframe.framedrop.json" "$OUT/SHA256SUMS"
 mkdir -p "$APPDIR" "$OUT/work/symbols"
 # programs: debug info goes to the symbols tarball, the symbol table stays (crash reports name functions)
 for p in "$GAME" "$LAUNCHER"; do
@@ -125,6 +127,8 @@ rm -rf "$tmp"
 
 # ---- 4. pack ------------------------------------------------------------------------------------------------------------------
 tar --owner=0 --group=0 --numeric-owner --sort=name -cf - -C "$APPDIR" . | gzip -n > "$OUT/$NAME.tar.gz"
-tar --owner=0 --group=0 --numeric-owner --sort=name -cf - -C "$OUT/work/symbols" . | gzip -n > "$OUT/$NAME-symbols.tar.gz"
-(cd "$OUT" && sha256sum "$NAME.tar.gz" "$NAME-symbols.tar.gz" | tee SHA256SUMS)
-echo "wrote $OUT/$NAME.tar.gz ($(du -h "$OUT/$NAME.tar.gz" | cut -f1)), the symbols tarball and SHA256SUMS; installed size $(du -sh "$APPDIR" | cut -f1)"
+FDZIP=primedframe-$VERSION-framedrop-linux-arm64.zip
+python3 -I "$HERE/make-framedrop-zip.py" "$OUT/$NAME.tar.gz" --run-sh "$HERE/framedrop-run.sh" --repo PrimedFrame --tag "v$VERSION" \
+  --name PrimedFrame --zip-name "$FDZIP" --version "$VERSION" --out "$OUT" > /dev/null
+(cd "$OUT" && sha256sum "$NAME.tar.gz" "$FDZIP" primedframe.framedrop.json | tee SHA256SUMS)
+echo "wrote $OUT/$NAME.tar.gz ($(du -h "$OUT/$NAME.tar.gz" | cut -f1)), $FDZIP, primedframe.framedrop.json and SHA256SUMS; installed size $(du -sh "$APPDIR" | cut -f1)"
