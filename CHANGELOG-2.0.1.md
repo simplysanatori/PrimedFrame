@@ -4,12 +4,10 @@ A fix for stutter in the heaviest scenes, like big fights and the Frigate's expl
 
 ### Fixed
 
-- In heavy scenes, frames could run late and the picture would stutter. At the end of every frame, the game stopped for about 3 ms while the GPU command queue caught up, before it could start the next frame. It now hands that last stretch to the queue's own thread and starts the next frame straight away, so heavy frames have about 3 ms more room.
-- Loading the next room could stall a single frame. Background loading could take 8 ms or more of one frame, which made that frame late. Loading now gets at most 2 ms a frame and finishes over the next few frames instead.
-
-### Changed
-
-- The release files are now built by GitHub Actions from the tagged source.
+- **Stutter in heavy scenes.** Frames ran late in big fights and explosions.
+  - **FIFO:** the game no longer waits about 3 ms each frame for the GPU command queue. The queue's own thread finishes the frame while the game starts the next.
+  - **CPU optimizations:** background loading is capped at 2 ms a frame, down from 8 ms or more.
+  - **GPU optimizations:** a model cache that cuts GPU work is built in, but off until it stops stalling explosions.
 
 ### Known issues
 
