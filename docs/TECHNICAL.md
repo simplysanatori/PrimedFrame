@@ -36,6 +36,8 @@ On the Steam Frame, SteamVR shows each eye's latest released image when it reach
 - **Simulation locked to the display.** In the headset the game takes one simulation step per new frame at up to 96 Hz, as 1.0 locked Dolphin to the display. A frame that misses its refresh still takes one step: the game slows down slightly instead of catching up with double steps, which cost CPU time when it is already short and show as jumps. It never runs slower than 75% of real time in any second; past that, late frames catch up as before. At 120 Hz and above it takes one step of two periods per two frames.
 - **Overlap.** When the next frame is due before this one finishes, its poses are located and the game's next step runs while the GPU finishes this one.
 - **Stalls.** While the game hands over no eyes for two display periods (a room load), the last layer is repeated at every refresh.
+- **Async seal.** The game thread ends a headset frame without waiting for the GX FIFO processor to work through it. The processor finishes the frame (recording and queueing it) on its own thread while the game starts its next step.
+- **Loading budget.** Background loading after a frame is sealed gets at most 2 ms per frame.
 - **Foveation off.** Valve's foveation layer (`VK_LAYER_VALVE_fdm_injection`) is not loaded: `primedframe.sh` removes it from `VK_INSTANCE_LAYERS`, where Steam lists it explicitly, and the game sets `DISABLE_VULKAN_FDM_INJECTION_LAYER` before the Vulkan loader starts.
 
 ## Performance
@@ -89,7 +91,7 @@ For `primedframe.sh`:
 
 For `install.sh` and `uninstall.sh`: `PRIMEDFRAME_APP`, `PRIMEDFRAME_HOME`, `PRIMEDFRAME_SKIP_STEAM=1`, `PRIMEDFRAME_CEF_PORT`. `install.sh --dry-run` lists every file and Steam call without making them.
 
-The game reads `PF2_*` switches for the pacing described above. On Linux the setup is the default; `0` turns a switch off: `PF2_STEREO_PACKED`, `PF2_RELEASE_FENCE`, `PF2_MULTIVIEW`, `PF2_MONO_SKIP`, `PF2_SCENE_COPY_SKIP`, `PF2_SIM_LOCK`, `PF2_SIM_SLOWDOWN` (or the lowest game speed in percent, 50 to 99; default 75), `PF2_OVERLAP`, `PF2_STALL_REPEAT`, `PF2_TIMING_READER`. `PF2_HZ` overrides the refresh rate the game asks for. The full list is in `platform/include/vr/pf2_switches.h`.
+The game reads `PF2_*` switches for the pacing described above. On Linux the setup is the default; `0` turns a switch off: `PF2_STEREO_PACKED`, `PF2_RELEASE_FENCE`, `PF2_MULTIVIEW`, `PF2_MONO_SKIP`, `PF2_SCENE_COPY_SKIP`, `PF2_SIM_LOCK`, `PF2_SIM_SLOWDOWN` (or the lowest game speed in percent, 50 to 99; default 75), `PF2_OVERLAP`, `PF2_STALL_REPEAT`, `PF2_TIMING_READER`, `PF2_ASYNC_SEAL`, `PF2_IDLE_CAP_US` (or the loading budget in microseconds; default 2000). `PF2_MODEL_GEOMETRY_CACHE=1` turns on a per-model geometry cache that is off by default: explosions that spawn many new models stalled while each built its cache. `PF2_HZ` overrides the refresh rate the game asks for. The full list is in `platform/include/vr/pf2_switches.h`.
 
 ## Install
 

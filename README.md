@@ -45,12 +45,12 @@ Details: [docs/TECHNICAL.md](docs/TECHNICAL.md#performance).
 
 ## Install
 
-1. Download `primedframe-2.0.0-linux-arm64.tar.gz` and `SHA256SUMS` from [Releases](https://github.com/simplysanatori/PrimedFrame/releases).
+1. Download `primedframe-2.0.1-linux-arm64.tar.gz` and `SHA256SUMS` from [Releases](https://github.com/simplysanatori/PrimedFrame/releases).
 2. In a terminal, in the download folder:
 
    ```sh
    sha256sum -c --ignore-missing SHA256SUMS
-   mkdir -p ~/Downloads/primedframe && tar xf primedframe-2.0.0-linux-arm64.tar.gz -C ~/Downloads/primedframe
+   mkdir -p ~/Downloads/primedframe && tar xf primedframe-2.0.1-linux-arm64.tar.gz -C ~/Downloads/primedframe
    ~/Downloads/primedframe/install.sh
    ```
 
@@ -114,7 +114,7 @@ It writes `~/primedframe-logs-<date-time>.tar.gz`. Personal details are masked o
 
 - [Controls](docs/CONTROLS.md)
 - [How the port works](docs/TECHNICAL.md)
-- [Changelog](CHANGELOG-2.0.0.md)
+- [Changelog](CHANGELOG-2.0.1.md)
 - [PrimedGun 2.0's own README](README.upstream.md)
 
 ## Support

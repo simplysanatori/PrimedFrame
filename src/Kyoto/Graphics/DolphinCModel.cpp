@@ -24,20 +24,18 @@
 #include <dolphin/gx/GXAurora.h>
 
 namespace {
-// PF2_MODEL_GEOMETRY_CACHE (Linux default on, 0 = off): a model's surfaces drawn with its own
+// PF2_MODEL_GEOMETRY_CACHE (off by default, 1 = on): a model's surfaces drawn with its own
 // arrays (not a skinning workspace) are cached as resolved geometry on the GPU like the static
 // world's (CCubeSurface::PortCallDisplayList), so the FIFO processor no longer de-indexes and
 // stages their vertices every frame. Each model is its own geometry set, freed with the model.
 // Its sets count from kPortModelSetBase, apart from the world's (CCubeRenderer::AddStaticGeometry).
+// Off by default: in the headset, explosions that spawn many new models stalled for several
+// seconds while each new model built its geometry on its first draw.
 constexpr uint kPortModelSetBase = 0x80000000u;
 bool PortModelGeometryCache() {
   static const bool enabled = [] {
     const char* value = std::getenv("PF2_MODEL_GEOMETRY_CACHE");
-#if defined(__linux__) && !defined(__ANDROID__)
-    return value == nullptr || *value == '\0' || value[0] == '1';
-#else
     return value != nullptr && value[0] == '1';
-#endif
   }();
   return enabled;
 }
