@@ -65,7 +65,24 @@ licenses)
   echo "licence texts: $(find "$L" -type f | wc -l) files in $L"
   ;;
 dawn)
-  "$SRC/tools/build-linux-dawn.sh" "$W/dawn"
+  # tools/build-linux-dawn.sh downloads its pinned Dawn source from Odrannnn/dawn, which is gone (404 since
+  # 2026-11-13). The same commit is in Dawn's fork network and GitHub's archive of it is byte-identical, so fetch it
+  # here first from whichever still has it; build-linux-dawn.sh then finds it and checks the pinned SHA-256 itself.
+  d=$W/dawn; mkdir -p "$d"
+  rev=$(sed -n 's/^revision=//p' "$SRC/tools/build-linux-dawn.sh")
+  sum=$(sed -n 's/^archive_sha256=//p' "$SRC/tools/build-linux-dawn.sh")
+  a=$d/dawn-${rev:0:12}.tar.gz
+  if [ -n "$rev" ] && [ ! -f "$a" ]; then
+    for r in Odrannnn/dawn google/dawn encounter/dawn; do
+      if curl -fsSL --retry 3 -o "$a.partial" "https://github.com/$r/archive/$rev.tar.gz" &&
+        [ "$(sha256sum "$a.partial" | cut -d' ' -f1)" = "$sum" ]; then
+        mv "$a.partial" "$a"; echo "Dawn source $rev from $r"; break
+      fi
+      rm -f "$a.partial"
+    done
+    [ -f "$a" ] || { echo "ci-build: no source of Dawn $rev matches the pinned SHA-256 $sum"; exit 1; }
+  fi
+  "$SRC/tools/build-linux-dawn.sh" "$d"
   ;;
 build)
   m=$W/dawn/dawn-package.txt
