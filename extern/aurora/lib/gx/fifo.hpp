@@ -3,6 +3,7 @@
 #include "../internal.hpp"
 
 #include <cstring>
+#include <functional>
 
 namespace aurora::gx::fifo {
 
@@ -33,6 +34,9 @@ void shutdown();
 
 void begin_frame() noexcept;
 void end_frame() noexcept;
+// The FIFO processor's part of end_frame (its draw cache), for a seal_async tail; seal_async
+// itself ends the producer's frame.
+void end_frame_processor_state() noexcept;
 
 // Whether a frame is currently being recorded, i.e. publish() will be honored.
 bool frame_active() noexcept;
@@ -109,8 +113,30 @@ void begin_display_list(uint8_t* buf, uint32_t size);
 uint32_t end_display_list();
 bool in_display_list();
 
-// Ensure all buffered commands have been processed.
+// Ensure all buffered commands have been processed (after the frame tail of seal_async).
 void drain();
+
+// PF2_ASYNC_SEAL: ends the frame without waiting for the FIFO processor. Everything written
+// so far is published and `tail` (the rest of the frame's end: finish, end_frame) runs on the
+// FIFO processor right after the last of it is processed, while the producer goes on. Commands
+// written meanwhile stay unpublished until the next frame. join() waits for the tail; begin of
+// the next frame, drain(), gfx::synchronize and shutdown join first.
+void seal_async(std::function<void()> tail) noexcept;
+// A tail queued by seal_async and not yet joined.
+bool seal_pending() noexcept;
+// Waits for a queued frame tail (no-op without one, or on the FIFO processor itself).
+void join() noexcept;
+// Since the last call: joined tails, how many and how long the producer waited for one, and
+// the time from seal to tail done (all ns).
+struct JoinStats {
+  uint32_t joins = 0;
+  uint32_t waited = 0;
+  int64_t waitedNs = 0;
+  int64_t maxWaitNs = 0;
+  int64_t sealToDoneNs = 0;
+  int64_t maxSealToDoneNs = 0;
+};
+JoinStats take_join_stats() noexcept;
 
 // Internal buffer inspection
 const uint8_t* get_buffer_data();

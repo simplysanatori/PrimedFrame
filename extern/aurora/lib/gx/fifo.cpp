@@ -6,9 +6,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <mutex>
+#include <thread>
+#include <utility>
 
 #include <tracy/Tracy.hpp>
 
@@ -43,6 +47,44 @@ thread::Thread sWorkerThread;
 // The kernel's id for the worker, for an OpenXR runtime's scheduling hints.
 std::atomic<uint32_t> sWorkerNativeId{0};
 std::atomic<DrawDoneCallback> sDrawDoneCallback{nullptr};
+// The FIFO processor's own thread (drain and join are no-ops there).
+thread_local bool tOnWorker = false;
+
+// PF2_ASYNC_SEAL (seal_async): the frame's tail, run by the FIFO processor once the stream
+// has been processed up to sTailTarget. sTail and sTailTarget are written by the producer
+// before sTailState goes to Queued (release) and read by the worker after it sees Queued.
+enum TailState : uint32_t { TailNone = 0, TailQueued = 1, TailDone = 2 };
+std::function<void()> sTail;
+uint64_t sTailTarget = 0;
+std::atomic<uint32_t> sTailState{TailNone};
+// The thread that queued it (the game thread); join() waits only there.
+std::atomic<std::thread::id> sProducerThread{};
+// Diagnostics: when the tail was queued and when it finished (steady ns), and how long
+// the producer blocked in join() for it.
+std::atomic<int64_t> sTailQueuedNs{0};
+std::atomic<int64_t> sTailDoneNs{0};
+JoinStats sJoinStats;
+
+int64_t steady_ns() noexcept {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+// Runs the queued tail once everything before it is processed (worker thread).
+bool run_tail_if_due(uint64_t processed) noexcept {
+  if (sTailState.load(std::memory_order_acquire) != TailQueued || processed < sTailTarget) {
+    return false;
+  }
+  auto tail = std::move(sTail);
+  sTail = nullptr;
+  if (tail) {
+    tail();
+  }
+  sTailDoneNs.store(steady_ns(), std::memory_order_relaxed);
+  sTailState.store(TailDone, std::memory_order_release);
+  sTailState.notify_all();
+  return true;
+}
 
 void dispatch_draw_done() noexcept {
   if (const auto callback = sDrawDoneCallback.load(std::memory_order_acquire); callback != nullptr) {
@@ -91,6 +133,7 @@ void process_to(uint64_t target, std::memory_order order) noexcept {
 
 void worker_main(std::stop_token token) noexcept {
   std::stop_callback wakeOnStop{token, wake_worker};
+  tOnWorker = true;
 #if defined(__ANDROID__)
   sWorkerNativeId.store(static_cast<uint32_t>(gettid()), std::memory_order_release);
 #endif
@@ -100,6 +143,9 @@ void worker_main(std::stop_token token) noexcept {
     const uint64_t published = sPublished.load(std::memory_order_acquire);
     if (published != processed) {
       process_to(published, std::memory_order_release);
+      continue;
+    }
+    if (run_tail_if_due(processed)) {
       continue;
     }
 
@@ -125,6 +171,7 @@ void stop_worker() {
   if (!sWorkerThread.joinable()) {
     return;
   }
+  join();
   sWorkerThread.request_stop();
   sWorkerThread.join();
   sWorkerNativeId.store(0, std::memory_order_release);
@@ -171,6 +218,8 @@ void end_frame() noexcept {
   sFrameActive = false;
   clear_draw_cache(); // command_processor
 }
+
+void end_frame_processor_state() noexcept { clear_draw_cache(); }
 
 bool frame_active() noexcept { return sFrameActive; }
 
@@ -260,6 +309,11 @@ uint32_t end_display_list() {
 bool in_display_list() { return detail::sInDisplayList; }
 
 void drain() {
+  if (tOnWorker) {
+    // A frame tail (seal_async) runs here after everything before it was processed.
+    return;
+  }
+  join();
   if (detail::sBufferSize == 0) {
     return;
   }
@@ -299,6 +353,68 @@ void drain() {
   }
   sPendingDraws = 0;
 }
+
+void seal_async(std::function<void()> tail) noexcept {
+  AURORA_ASSERT(kProcessingMode == ProcessingMode::Thread && sWorkerThread.joinable() && !tOnWorker,
+                "fifo::seal_async needs the FIFO processor thread");
+  join();
+  sProducerThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
+  sFrameActive = false;
+  const uint64_t target = sStreamBase + detail::sBufferSize;
+  sTail = std::move(tail);
+  sTailTarget = target;
+  sTailQueuedNs.store(steady_ns(), std::memory_order_relaxed);
+  sTailState.store(TailQueued, std::memory_order_release);
+  sPendingDraws = 0;
+  sPublished.store(target, std::memory_order_release);
+  wake_worker();
+}
+
+bool seal_pending() noexcept { return sTailState.load(std::memory_order_acquire) != TailNone; }
+
+void join() noexcept {
+  // Other threads (the render worker, the pacing thread) never wait for it: the tail may itself
+  // wait for the render worker's queue, and only the producer owns the buffer.
+  if (tOnWorker || sTailState.load(std::memory_order_acquire) == TailNone ||
+      sProducerThread.load(std::memory_order_relaxed) != std::this_thread::get_id()) {
+    return;
+  }
+  uint32_t state = sTailState.load(std::memory_order_acquire);
+  int64_t waitedNs = 0;
+  if (state == TailQueued) {
+    const int64_t start = steady_ns();
+    do {
+      sTailState.wait(state, std::memory_order_acquire);
+      state = sTailState.load(std::memory_order_acquire);
+    } while (state == TailQueued);
+    waitedNs = steady_ns() - start;
+  }
+  // The stream up to the tail is processed: what the producer wrote since (commands issued
+  // between frames) moves to the front of the buffer.
+  {
+    std::lock_guard lock{sBufferMutex};
+    const auto consumed = static_cast<uint32_t>(sTailTarget - sStreamBase);
+    const uint32_t rest = detail::sBufferSize - consumed;
+    if (rest != 0 && consumed != 0) {
+      std::memmove(detail::sBufferData, detail::sBufferData + consumed, rest);
+    }
+    sStreamBase = sTailTarget;
+    detail::sBufferSize = rest;
+  }
+  sJoinStats.joins += 1;
+  sJoinStats.waitedNs += waitedNs;
+  sJoinStats.maxWaitNs = std::max(sJoinStats.maxWaitNs, waitedNs);
+  sJoinStats.waited += waitedNs > 0 ? 1 : 0;
+  const int64_t queued = sTailQueuedNs.load(std::memory_order_relaxed);
+  const int64_t done = sTailDoneNs.load(std::memory_order_relaxed);
+  if (done > queued) {
+    sJoinStats.sealToDoneNs += done - queued;
+    sJoinStats.maxSealToDoneNs = std::max(sJoinStats.maxSealToDoneNs, done - queued);
+  }
+  sTailState.store(TailNone, std::memory_order_release);
+}
+
+JoinStats take_join_stats() noexcept { return std::exchange(sJoinStats, JoinStats{}); }
 
 const uint8_t* get_buffer_data() { return detail::sBufferData; }
 uint32_t get_buffer_size() { return detail::sBufferSize; }
