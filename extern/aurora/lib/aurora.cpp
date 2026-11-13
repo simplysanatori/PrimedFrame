@@ -43,9 +43,12 @@
 #include <magic_enum.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <vector>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -230,9 +233,91 @@ constexpr std::array<AuroraBackend, 0> PreferredBackendOrder{};
 #endif
 
 bool g_initialFrame = false;
+// Whether the frame being recorded carries a headset packet (begin_frame), for PF2_ASYNC_SEAL.
+bool g_frameHasStereo = false;
+
+#ifdef AURORA_ENABLE_GX
+// PF2_PHASE_LOG=1 (diagnostics): the game thread's time per phase (phase::set on the main slot),
+// and per frame the time from the seal (end_frame) until the frame went to the render worker and
+// how long the game thread blocked for it, logged every PhaseLogFrames frames.
+constexpr uint32_t PhaseLogFrames = 450;
+struct PhaseBucket {
+  const char* name = nullptr;
+  int64_t ns = 0;
+  int64_t maxNs = 0;
+};
+std::array<PhaseBucket, 40> g_phaseBuckets{};
+size_t g_phaseBucketCount = 0;
+uint32_t g_phaseFrames = 0;
+std::mutex g_sealSampleMutex;
+std::vector<float> g_sealMs;  // seal -> handed to the render worker, per frame
+std::vector<float> g_blockMs; // the game thread blocked for it (end_frame wait + join), per frame
+uint32_t g_asyncSeals = 0;
+
+void note_seal_sample(float sealMs, float blockMs, bool async) noexcept {
+  if (!phase::detail::accounting().load(std::memory_order_relaxed)) {
+    return;
+  }
+  std::lock_guard lock{g_sealSampleMutex};
+  if (g_sealMs.size() < 4096) {
+    g_sealMs.push_back(sealMs);
+    if (blockMs >= 0.f) {
+      g_blockMs.push_back(blockMs);
+    }
+  }
+  g_asyncSeals += async ? 1 : 0;
+}
+
+std::string pct_string(std::vector<float> v) {
+  if (v.empty()) {
+    return "-";
+  }
+  std::sort(v.begin(), v.end());
+  const auto at = [&](double q) { return v[std::min(v.size() - 1, static_cast<size_t>(q * static_cast<double>(v.size())))]; };
+  return fmt::format("{:.2f}/{:.2f}/{:.2f}", at(0.5), at(0.9), v.back());
+}
+
+void log_phases() noexcept {
+  if (!phase::detail::accounting().load(std::memory_order_relaxed) || g_phaseFrames < PhaseLogFrames) {
+    return;
+  }
+  const double frames = g_phaseFrames;
+  std::string line;
+  for (size_t i = 0; i < g_phaseBucketCount; ++i) {
+    auto& b = g_phaseBuckets[i];
+    if (b.ns == 0) {
+      continue;
+    }
+    line += fmt::format("{}{} {:.2f}/{:.2f}", line.empty() ? "" : "; ", b.name, static_cast<double>(b.ns) / 1e6 / frames,
+                        static_cast<double>(b.maxNs) / 1e6);
+    b.ns = 0;
+    b.maxNs = 0;
+  }
+  std::vector<float> seal;
+  std::vector<float> block;
+  uint32_t asyncSeals = 0;
+  {
+    std::lock_guard lock{g_sealSampleMutex};
+    seal.swap(g_sealMs);
+    block.swap(g_blockMs);
+    asyncSeals = std::exchange(g_asyncSeals, 0);
+  }
+  const auto join = gx::fifo::take_join_stats();
+  Log.info("phases: game thread per frame over {} frames, avg/max ms: {}", g_phaseFrames, line);
+  Log.info("phases: seal to render worker p50/p90/max {} ms; game thread blocked for it p50/p90/max {} ms; "
+           "{} async seals, joins waited {} times ({:.2f} ms total, max {:.2f})",
+           pct_string(std::move(seal)), pct_string(std::move(block)), asyncSeals, join.waited,
+           static_cast<double>(join.waitedNs) / 1e6, static_cast<double>(join.maxWaitNs) / 1e6);
+  g_phaseFrames = 0;
+}
+#endif
 
 AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexcept {
   g_config = config;
+  if (const char* value = std::getenv("PF2_PHASE_LOG"); value != nullptr && value[0] == '1') {
+    phase::detail::on_main_thread() = true;
+    phase::detail::accounting().store(true, std::memory_order_relaxed);
+  }
   Log.info("Aurora initializing");
   log_system_information();
   if (g_config.appName == nullptr) {
@@ -375,6 +460,11 @@ void shutdown() noexcept {
 
 const AuroraEvent* update() noexcept {
   ZoneScoped;
+#ifdef AURORA_ENABLE_GX
+  // PF2_ASYNC_SEAL: the last frame's tail is done before anything here touches Aurora.
+  gx::fifo::join();
+  log_phases();
+#endif
   phase::set(phase::Main, "window event pump");
   if (g_initialFrame) {
     g_initialFrame = false;
@@ -414,6 +504,7 @@ static bool service_surface(const char* caller) noexcept {
 
 void release_lost_surface() noexcept {
 #ifdef AURORA_ENABLE_GX
+  gx::fifo::join();
   if (g_surface) {
     service_surface("release_lost_surface");
   }
@@ -423,6 +514,11 @@ void release_lost_surface() noexcept {
 bool begin_frame(uint64_t contentTag) noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
+  // PF2_ASYNC_SEAL: the last frame's tail (finish, end_frame) has run on the FIFO processor.
+  if (gx::fifo::seal_pending()) {
+    phase::set(phase::Main, "begin_frame (joining the last frame's seal)");
+    gx::fifo::join();
+  }
   {
     if (!service_surface("begin_frame")) {
       return false;
@@ -451,7 +547,11 @@ bool begin_frame(uint64_t contentTag) noexcept {
     return false;
   }
   // The stereo packet for this frame, before the first uniform is staged.
-  gfx::set_frame_stereo(stereo_host::begin_frame(contentTag));
+  {
+    const auto stereo = stereo_host::begin_frame(contentTag);
+    g_frameHasStereo = stereo.active;
+    gfx::set_frame_stereo(stereo);
+  }
   // What end_frame asks before rendering the final pass's eyes only, asked for the whole frame.
   {
     const bool eyesOnly = (stereo_host::headset_owns_display() || stereo_host::mirror_skips_mono()) &&
@@ -467,25 +567,11 @@ bool begin_frame(uint64_t contentTag) noexcept {
   return true;
 }
 
-void end_frame(uint64_t contentTag) noexcept {
-  ZoneScoped;
-  // The frames just after an EFB resize, timed for its log line (webgpu::resize_swapchain).
-  struct ResizeFrameTimer {
-    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    bool timed = webgpu::g_resizeFramesToTime > 0;
-    ~ResizeFrameTimer() {
-      if (timed) {
-        const int index = 3 - webgpu::g_resizeFramesToTime--;
-        const double ms =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        Log.info("EFB resize: frame {} after it took {:.1f} ms to record, submit and present", index, ms);
-      }
-    }
-  } resizeFrameTimer;
 #ifdef AURORA_ENABLE_GX
-  phase::set(phase::Main, "end_frame (recording and queueing the frame)");
-  gx::fifo::drain();
-  gx::fifo::end_frame();
+// The frame's end once the FIFO processor has processed all of it: the game thread right after
+// the drain, or the FIFO processor itself (PF2_ASYNC_SEAL, `frozenImgui` then frozen by the game
+// thread at the seal).
+static void seal_frame(uint64_t contentTag, std::optional<imgui::DrawData> frozenImgui) noexcept {
   gx::texture::end_frame();
   // On a standalone headset nothing shows the mono image of an immersive frame's
   // final pass (no EFB copy follows it, the window is not presented), so only its
@@ -505,7 +591,7 @@ void end_frame(uint64_t contentTag) noexcept {
     gfx::set_final_pass_mono_unneeded(monoUnneeded);
   }
   gfx::finish();
-  auto imguiDrawData = imgui::freeze();
+  auto imguiDrawData = frozenImgui ? std::move(*frozenImgui) : imgui::freeze();
   const uint32_t logicalFrame = gfx::current_frame();
 
   const auto& presentSource = webgpu::present_source();
@@ -753,7 +839,76 @@ void end_frame(uint64_t contentTag) noexcept {
     TracyPlot("aurora: lastStorageSize", static_cast<int64_t>(stats.lastStorageSize));
     TracyPlot("aurora: lastTextureUploadSize", static_cast<int64_t>(stats.lastTextureUploadSize));
   });
+}
 
+// PF2_ASYNC_SEAL (default on on the Frame, i.e. desktop Linux; 0 turns it off): a headset frame
+// ends without the game thread waiting for the FIFO processor. The rest of the frame's end
+// (seal_frame) runs on the FIFO processor right after it has processed the frame, while the
+// game thread goes on with what comes after its seal (the loader, the frame's audio, the
+// pacing wait). Nothing waits longer: the next frame's begin (and drain, synchronize, the
+// next event pump) joins it, and the headset's next packet comes only after this frame's eyes
+// were submitted, i.e. after the tail.
+static bool async_seal_frame() noexcept {
+  static const bool enabled = [] {
+    const char* value = std::getenv("PF2_ASYNC_SEAL");
+#if defined(__linux__) && !defined(__ANDROID__)
+    const bool on = value == nullptr || *value == '\0' || value[0] == '1';
+#else
+    const bool on = value != nullptr && value[0] == '1';
+#endif
+    Log.info("PF2_ASYNC_SEAL: {}", on ? "on (headset frames end on the FIFO processor)" : "off");
+    return on;
+  }();
+  if (!enabled || !g_frameHasStereo || gx::fifo::processing_mode() != gx::fifo::ProcessingMode::Thread) {
+    return false;
+  }
+#if AURORA_ENABLE_RMLUI
+  if (rmlui::is_initialized()) {
+    return false;
+  }
+#endif
+  return true;
+}
+#endif
+
+void end_frame(uint64_t contentTag) noexcept {
+  ZoneScoped;
+  // The frames just after an EFB resize, timed for its log line (webgpu::resize_swapchain).
+  struct ResizeFrameTimer {
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    bool timed = webgpu::g_resizeFramesToTime > 0;
+    ~ResizeFrameTimer() {
+      if (timed) {
+        const int index = 3 - webgpu::g_resizeFramesToTime--;
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        Log.info("EFB resize: frame {} after it took {:.1f} ms to record, submit and present", index, ms);
+      }
+    }
+  } resizeFrameTimer;
+#ifdef AURORA_ENABLE_GX
+  ++g_phaseFrames;
+  const auto sealStart = std::chrono::steady_clock::now();
+  const auto msSince = [](std::chrono::steady_clock::time_point t) {
+    return std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t).count();
+  };
+  if (async_seal_frame()) {
+    phase::set(phase::Main, "end_frame (sealed, the FIFO processor ends it)");
+    // ImGui belongs to the game thread: its draw data is taken here.
+    gx::fifo::seal_async([contentTag, sealStart, msSince, imguiDrawData = imgui::freeze()]() mutable {
+      gx::fifo::end_frame_processor_state();
+      seal_frame(contentTag, std::move(imguiDrawData));
+      note_seal_sample(msSince(sealStart), -1.f, true);
+    });
+    return;
+  }
+  phase::set(phase::Main, "end_frame (waiting for the FIFO processor)");
+  gx::fifo::drain();
+  phase::set(phase::Main, "end_frame (recording and queueing the frame)");
+  gx::fifo::end_frame();
+  seal_frame(contentTag, std::nullopt);
+  const float sealMs = msSince(sealStart);
+  note_seal_sample(sealMs, sealMs, false);
 #endif
 }
 } // namespace
@@ -873,3 +1028,26 @@ void aurora_set_per_pixel_lighting(bool enabled) {
 }
 void aurora_set_timescale(float scale) { aurora::time::set_scale(scale); }
 float aurora_get_timescale() { return aurora::time::scale(); }
+
+namespace aurora::phase::detail {
+// The game thread only (the main slot): no locking.
+void account(const char* name, int64_t sinceNs, int64_t nowNs) noexcept {
+#ifdef AURORA_ENABLE_GX
+  if (name == nullptr || sinceNs == 0 || nowNs <= sinceNs) {
+    return;
+  }
+  const int64_t ns = nowNs - sinceNs;
+  for (size_t i = 0; i < aurora::g_phaseBucketCount; ++i) {
+    auto& b = aurora::g_phaseBuckets[i];
+    if (b.name == name) {
+      b.ns += ns;
+      b.maxNs = std::max(b.maxNs, ns);
+      return;
+    }
+  }
+  if (aurora::g_phaseBucketCount < aurora::g_phaseBuckets.size()) {
+    aurora::g_phaseBuckets[aurora::g_phaseBucketCount++] = {name, ns, ns};
+  }
+#endif
+}
+} // namespace aurora::phase::detail

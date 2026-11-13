@@ -21,6 +21,7 @@
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
 #include "texture_replacement.hpp"
+#include "../gx/fifo.hpp"
 #include "../gx/gx.hpp"
 #ifdef AURORA_ENABLE_RMLUI
 #include "../rmlui/pipeline.hpp"
@@ -1306,9 +1307,17 @@ void after_submit() noexcept {
   bloom::after_submit();
 }
 
-void gpu_synchronize() { render_worker::synchronize(); }
+// Both first join a frame tail still running on the FIFO processor (PF2_ASYNC_SEAL), whose work
+// would otherwise reach the render worker after the sync.
+void gpu_synchronize() {
+  gx::fifo::join();
+  render_worker::synchronize();
+}
 
-void synchronize() { render_worker::synchronize(); }
+void synchronize() {
+  gx::fifo::join();
+  render_worker::synchronize();
+}
 
 void after_present() noexcept {
   const auto now = PresentClock::now();
