@@ -26,11 +26,15 @@ if [ "${PF_NATIVE_GLIBC:-0}" = 1 ]; then
   [ "$(printf '%s\n2.39\n' "$g" | sort -V | tail -n 1)" = 2.39 ] || { echo "build: PF_NATIVE_GLIBC=1, but this machine has glibc $g (newer than 2.39, the oldest SteamOS)"; exit 1; }
   unset PF_GLIBC239_SYSROOT
   CC_=$(command -v "${CC:-gcc}"); CXX_=$(command -v "${CXX:-g++}")
+  # Qt is not in a system folder here, so CMake would add its lib folder to the programs' RUNPATH: keep only
+  # the $ORIGIN/lib the linker flags below set (check-bundle.sh insists on exactly that)
+  NATIVE=(-DCMAKE_SKIP_BUILD_RPATH=ON)
 else
   export PF_GLIBC239_SYSROOT=${PF_GLIBC239_SYSROOT:-$HOME/Games/frame-portable/sysroot-glibc2.39}
   [ -d "$PF_GLIBC239_SYSROOT/usr/lib" ] || { echo "build: no glibc 2.39 tree at $PF_GLIBC239_SYSROOT (PF_GLIBC239_SYSROOT)"; exit 1; }
   CC_=$PB/gcc; CXX_=$PB/g++
   export PATH=$PB:$PATH
+  NATIVE=()
 fi
 DAWN=${PF_DAWN_PACKAGE:-}
 [ -f "$DAWN" ] || { echo "build: PF_DAWN_PACKAGE must name the patched Dawn package (dawn-linux-aarch64-*.tar.gz from tools/build-linux-dawn.sh)"; exit 1; }
@@ -47,6 +51,6 @@ if [ ! -f "$B/build.ninja" ] || [ "$PF_RECONFIGURE" = 1 ]; then
     -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_KMSDRM=OFF -DSDL_IBUS=OFF -DSDL_HIDAPI_LIBUSB=OFF -DSDL_JACK=OFF -DSDL_SNDIO=OFF \
     -DSDL_LIBURING=OFF -DSDL_FRIBIDI=OFF -DSDL_LIBTHAI=OFF -DSDL_X11_XTEST=OFF -DSDL_X11_XSCRNSAVER=OFF \
     -DMP_ENABLE_OPENXR=ON -DMP_BUILD_LAUNCHER=ON -DMP_BUNDLED_DEPS=ON -DMP_EMBED_RESOURCES=ON \
-    -DMP_USE_CCACHE=ON -DMP_USE_MOLD=ON -DMP_BUILD_TESTS=OFF "${EXTRA[@]}"
+    -DMP_USE_CCACHE=ON -DMP_USE_MOLD=ON -DMP_BUILD_TESTS=OFF "${NATIVE[@]}" "${EXTRA[@]}"
 fi
 run ninja -C "$B" -j"${JOBS:-4}" metroid_prime_port PrimedGun "$@"
