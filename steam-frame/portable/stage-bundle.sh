@@ -14,10 +14,13 @@ GAME="${PF_GAME:-}"
 OUT="${2:?out dir}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ALLOW="${3:-$HERE/../tools/host-libs.allow}"
-LIBDIR=${PF_LIBDIR:-/usr/lib}
-QTPLUG=${PF_QT_PLUGINS:-$LIBDIR/qt6/plugins}
+# PF_LIBDIR: where the libraries are copied from, a colon list searched in order (CI: the Qt install's lib, then
+# /usr/lib/aarch64-linux-gnu); PF_QT_PLUGINS: Qt's plugin folder (default <first PF_LIBDIR>/qt6/plugins)
+IFS=: read -ra LIBDIRS <<< "${PF_LIBDIR:-/usr/lib}"
+QTPLUG=${PF_QT_PLUGINS:-${LIBDIRS[0]}/qt6/plugins}
+findlib() { local d; for d in "${LIBDIRS[@]}"; do [ -e "$d/$1" ] && { echo "$d/$1"; return 0; }; done; return 1; }
 for t in patchelf objdump readelf; do command -v "$t" > /dev/null || { echo "missing tool: $t"; exit 1; }; done
-[ -f "$LIBDIR/libQt6Core.so.6" ] || { echo "no Qt in $LIBDIR"; exit 1; }
+findlib libQt6Core.so.6 > /dev/null || { echo "no Qt in ${PF_LIBDIR:-/usr/lib}"; exit 1; }
 [ -f "$BIN" ] || { echo "no program at $BIN"; exit 1; }
 mapfile -t PATS < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' "$ALLOW" | grep .)
 allowed() { local p; for p in "${PATS[@]}"; do [[ "$1" == $p ]] && return 0; done; return 1; }
@@ -52,8 +55,9 @@ while :; do
         for s in $(objdump -p "$f" | awk '$1 == "NEEDED" { print $2 }'); do
             [ -e "$OUT/lib/$s" ] && continue
             allowed "$s" && continue
-            [ -e "$LIBDIR/$s" ] || { echo "${f#"$OUT"/} needs $s: not in $LIBDIR, not allowlisted"; exit 1; }
-            cp -L "$LIBDIR/$s" "$OUT/lib/$s"
+            src=$(findlib "$s") || { echo "${f#"$OUT"/} needs $s: not in ${PF_LIBDIR:-/usr/lib}, not allowlisted"; exit 1; }
+            cp -L "$src" "$OUT/lib/$s"
+            echo "  copied $s from $src"
             chmod 755 "$OUT/lib/$s"
             added=1
         done

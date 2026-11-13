@@ -13,9 +13,15 @@
 # Environment:
 #   PF_RELEASE_OUT       where everything goes (default ~/Games/PrimedFrame/v2/release-out)
 #   PF_BUILD_DIR         build folder (default <repo>/build-portable; see build.sh for its other variables)
-#   PF_KIT               the portable kit (default ~/Games/frame-portable: tools-audit.py and the glibc 2.39 tree)
+#   PF_KIT               the portable kit (default ~/Games/frame-portable: the glibc 2.39 tree)
 #   PF_LICENSE_BUILD     folder whose _deps/*-src hold the fetched packages' licences (default: the build folder)
 #   PF_DAWN_PACKAGE      the patched Dawn package (required for a build)
+#   PF_NATIVE_GLIBC=1    this machine's own glibc is 2.39 (the CI runner, Ubuntu 24.04; see build.sh): the loader tests
+#                        use its own loader, and each library copied from a Debian package carries the package's
+#                        copyright file (/usr/share/doc/<package>/copyright)
+#   PF_EXTRA_LICENSES    a folder of licence folders copied into licenses/system/ (CI: Qt's and ICU's texts, which the
+#                        Qt install does not carry); with PF_NATIVE_GLIBC=1 it covers the libraries no package owns
+#   PF_LIBDIR, PF_QT_PLUGINS  where the bundled libraries and Qt plugins come from (see portable/stage-bundle.sh)
 # It never installs anything and never touches Steam.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -24,12 +30,15 @@ VERSION=$(head -n 1 "$HERE/VERSION")
 OUT=${PF_RELEASE_OUT:-$HOME/Games/PrimedFrame/v2/release-out}
 B=${RELEASE_PREBUILT:-${PF_BUILD_DIR:-$SRC/build-portable}}
 KIT=${PF_KIT:-$HOME/Games/frame-portable}
-SYSROOT=${PF_GLIBC239_SYSROOT:-$KIT/sysroot-glibc2.39}
+if [ "${PF_NATIVE_GLIBC:-0}" = 1 ]; then SYSROOT=/; else SYSROOT=${PF_GLIBC239_SYSROOT:-$KIT/sysroot-glibc2.39}; fi
 NAME=primedframe-$VERSION-linux-arm64
 APPDIR=$OUT/work/$NAME
 fail() { echo "release: $*" >&2; exit 1; }
 [ -d "$SYSROOT/usr/lib" ] || fail "no glibc 2.39 tree at $SYSROOT"
-[ -f "$KIT/tools-audit.py" ] || fail "no $KIT/tools-audit.py"
+if [ "${PF_NATIVE_GLIBC:-0}" = 1 ]; then
+  g=$(getconf GNU_LIBC_VERSION | awk '{ print $2 }')
+  [ "$g" = 2.39 ] || fail "PF_NATIVE_GLIBC=1 needs a machine whose glibc is 2.39 (the loader tests use it); this one has $g"
+fi
 if [ -e "$HOME/.cache/headset-in-use" ]; then fail "the headset is in use ($HOME/.cache/headset-in-use): no builds now"; fi
 
 # ---- 1. build (under the shared build lock; build.sh takes it) ----------------------------------------------------
@@ -76,12 +85,32 @@ cp "$HERE/THIRD_PARTY_NOTICES.md" "$APPDIR/THIRD_PARTY_NOTICES.md"
 for d in qt6-base icu openssl systemd libcap pcre2 libb2 libxcb libxau libxdmcp md4c double-conversion graphite bzip2 libffi util-linux-libs gcc-libs; do
   [ -d "/usr/share/licenses/$d" ] && { mkdir -p "$APPDIR/licenses/system/$d"; cp -L /usr/share/licenses/$d/* "$APPDIR/licenses/system/$d/" 2> /dev/null || true; }
 done
+if [ -n "${PF_EXTRA_LICENSES:-}" ]; then
+  [ -d "$PF_EXTRA_LICENSES" ] && [ -n "$(ls -A "$PF_EXTRA_LICENSES")" ] || fail "PF_EXTRA_LICENSES ($PF_EXTRA_LICENSES) is empty"
+  mkdir -p "$APPDIR/licenses/system"
+  cp -RL "$PF_EXTRA_LICENSES"/. "$APPDIR/licenses/system/"
+fi
+if [ "${PF_NATIVE_GLIBC:-0}" = 1 ]; then
+  # every library stage-bundle.sh copied: its Debian package's copyright file, or (no package owns it: Qt and ICU
+  # from the Qt install) PF_EXTRA_LICENSES must be there. A library with neither stops the release.
+  while read -r so from; do
+    pkg=$(dpkg-query -S "$from" 2> /dev/null || dpkg-query -S "$(readlink -f "$from")" 2> /dev/null || true)
+    pkg=$(echo "$pkg" | head -n 1 | cut -d: -f1)
+    if [ -n "$pkg" ]; then
+      [ -f "/usr/share/doc/$pkg/copyright" ] || fail "$so comes from the package $pkg, which has no /usr/share/doc/$pkg/copyright"
+      mkdir -p "$APPDIR/licenses/system/$pkg"
+      cp -L "/usr/share/doc/$pkg/copyright" "$APPDIR/licenses/system/$pkg/copyright"
+    else
+      [ -n "${PF_EXTRA_LICENSES:-}" ] || fail "$so ($from) belongs to no package and PF_EXTRA_LICENSES is not set: no licence for it"
+    fi
+  done < <(sed -n 's/^  copied \([^ ]*\) from \(.*\)$/\1 \2/p' "$OUT/work/stage-bundle.log")
+fi
 
 # ---- 3. checks ------------------------------------------------------------------------------------------------------------
 echo "== check-bundle (all four SteamOS builds in tools/host-sonames)"
 "$HERE/tools/check-bundle.sh" "$APPDIR" | tee "$OUT/work/check-bundle.log"
 echo "== audit"
-python3 -I "$KIT/tools-audit.py" "$APPDIR" | tee "$OUT/work/audit.log"
+python3 -I "$HERE/tools/audit.py" "$APPDIR" | tee "$OUT/work/audit.log"
 python3 -I - "$OUT/work/audit.log" << 'PY' || fail "the audit found glibc symbols newer than 2.39 or libraries that are neither bundled nor on every SteamOS"
 import re, sys
 text = open(sys.argv[1]).read()
