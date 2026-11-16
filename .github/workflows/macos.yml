@@ -1,11 +1,9 @@
 name: macos
 
-# Experimental Apple Silicon build. Start it by hand like windows.yml; it also
-# runs weekly, as windows.yml does.
+# Experimental Apple Silicon build. Start it by hand like windows.yml. Its weekly
+# run is off for the same reason as windows.yml's.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "47 4 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
