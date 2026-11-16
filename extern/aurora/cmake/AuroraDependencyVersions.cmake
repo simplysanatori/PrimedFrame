@@ -15,7 +15,7 @@ endmacro()
 # Dependency versions
 _aurora_dependency_version(AURORA_DAWN_VERSION "v20261029.114630" "Dawn prebuilt version tag (https://github.com/Odrannnn/dawn/releases, branch mpp)"
         "v20260523.201736" "v20260603.191052" "v20260618.032059" "v20260807.225922" "v20261025.182847" "v20261025.204802" "v20261025.224144" "v20261026.114446" "v20261026.185535" "v20261027.153325" "v20261027.212404" "v20261029.111150") # Previous versions
-_aurora_dependency_version(AURORA_DAWN_REF "118436b3f8f68583eb86e811ca605dc41637e8cc" "Dawn commit ref (https://github.com/Odrannnn/dawn)"
+_aurora_dependency_version(AURORA_DAWN_REF "118436b3f8f68583eb86e811ca605dc41637e8cc" "Dawn commit ref (https://github.com/encounter/dawn)"
         "a04c63840d530f771de754a6991da392e109e0a6" "9aa45f938d4b36626722bbfdc2f18447179337e6" "13abc3bc8ea2d3c2050f9e77a12d012108ceee24" "266c1cf8de969a364afa4fa49311631fc99a881e" "1155e0ed531126f33a1279afa029349651ca1c93" "738a656da3a19d51a1d553814febebe9468a2757" "f3a9fa72535b5a333766bafcd48187bc4c055b2b" "4195093a6be1134c4e5873752e60d0b997b4bd78" "fef22023bf097ca371a9af17e2134cb631fe8912" "59d485b83b95ad075b0b812e0ce33fc2012e827b" "bfa890082bf20bc10e0a3bfe122cf0bfa7f4da61" "4f56eac83322c45f5ce82dd1c8d2bc8c9cb8bb6e") # Previous versions
 _aurora_dependency_version(AURORA_SDL3_VERSION "3.4.10" "SDL3 prebuilt version tag (https://github.com/libsdl-org/SDL/releases)")
 _aurora_dependency_version(AURORA_SDL3_REF "refs/tags/release-3.4.10" "SDL3 commit ref (https://github.com/libsdl-org/SDL)")

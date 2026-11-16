@@ -8,7 +8,7 @@ The stock prebuilt Dawn cannot create its Vulkan device through OpenXR, which Vu
 uses (the runtime creates Dawn's VkInstance and VkDevice through XR_KHR_vulkan_enable2, and the eyes
 are drawn straight into the runtime's swapchain images, platform/vr/openxr_vulkan_direct.cpp). This
 script downloads the Dawn source aurora pins (extern/aurora/cmake/AuroraDependencyVersions.cmake,
-AURORA_DAWN_REF on Odrannnn/dawn), applies quest/dawn/apply.py (the same patches as the Quest's
+AURORA_DAWN_REF, from encounter/dawn), applies quest/dawn/apply.py (the same patches as the Quest's
 Dawn), and builds it the way encounter/dawn's release workflow builds dawn-windows-amd64
 (.github/workflows/release.yml + dawn-ci.cmake: MSVC, Ninja, a shared webgpu_dawn.dll and the DXC it
 builds), so the D3D12 backend behaves as with the stock DLL. The result is a package in the stock
@@ -132,7 +132,7 @@ if (-not $Force -and (Test-Path $manifestPath)) {
 $archive = Join-Path $WorkDirectory "dawn-$($revision.Substring(0, 12)).tar.gz"
 if (-not (Test-Path -LiteralPath $archive)) {
     Write-Host "Downloading Dawn $revision"
-    Invoke-WebRequest "https://github.com/Odrannnn/dawn/archive/$revision.tar.gz" -OutFile $archive -UseBasicParsing
+    Invoke-WebRequest "https://github.com/encounter/dawn/archive/$revision.tar.gz" -OutFile $archive -UseBasicParsing
 }
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $archiveHash) {
     throw 'The Dawn source archive does not match the pinned SHA-256.'
